@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"astra/internal/tasks"
 	"astra/pkg/config"
@@ -12,6 +14,7 @@ import (
 	"astra/pkg/grpc"
 	"astra/pkg/logger"
 
+	"github.com/redis/go-redis/v9"
 	tasks_pb "astra/proto/tasks"
 )
 
@@ -31,7 +34,22 @@ func main() {
 	defer dbConn.Close()
 
 	store := tasks.NewStore(dbConn)
-	taskSrv := tasks.NewGRPCServer(store)
+	var taskStore tasks.TaskStore = store
+	if cfg.RedisAddr != "" {
+		rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := rdb.Ping(ctx).Err(); err == nil {
+			taskStore = tasks.NewCachedStore(store, rdb, 5*time.Minute)
+			defer rdb.Close()
+			slog.Info("task-service using Redis cache for GetTask/GetGraph", "ttl", "5m")
+		} else {
+			rdb.Close()
+			slog.Warn("Redis unavailable, task-service running without cache", "addr", cfg.RedisAddr, "err", err)
+		}
+		cancel()
+	}
+
+	taskSrv := tasks.NewGRPCServer(taskStore)
 	srv := grpc.NewServer()
 	tasks_pb.RegisterTaskServiceServer(srv, taskSrv)
 

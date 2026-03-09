@@ -206,7 +206,7 @@ echo "$(bold '═══ PHASE 2: Workers & Tools ═══')"
 echo "Migration:"
 assert_eq "0010 migration exists" "true" "$(test -f migrations/0010_worker_task_tracking.sql && echo true || echo false)"
 MIGRATION_COUNT=$(ls migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
-assert_eq "11 migration files total" "11" "$MIGRATION_COUNT"
+assert_eq "at least 11 migration files" "true" "$([ "$MIGRATION_COUNT" -ge 11 ] && echo true || echo false)"
 
 echo "Service health:"
 WORKER_MGR_HEALTH=$(curl -sf "http://localhost:${WORKER_MANAGER_PORT:-8082}/health" 2>/dev/null || echo "FAIL")
@@ -242,13 +242,33 @@ REQUEUE_TS=$(grep -c 'RequeueTask' internal/tasks/store.go 2>/dev/null || echo "
 assert_eq "tasks store has RequeueTask" "true" "$([ "$REQUEUE_TS" -ge 1 ] && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
-# PHASE 3 — Memory & LLM (placeholder)
+# PHASE 3 — Memory & LLM
 # ═══════════════════════════════════════════════
 echo ""
 echo "$(bold '═══ PHASE 3: Memory & LLM ═══')"
-skip_test "memory write and semantic search"
-skip_test "LLM router model selection"
-skip_test "cache-aside 10ms read SLA"
+
+echo "Phase 3 migrations:"
+assert_eq "0011 prompts migration exists" "true" "$(test -f migrations/0011_prompts.sql && echo true || echo false)"
+
+echo "Service ports (gRPC):"
+MEMORY_GRPC=$(nc -z localhost "${MEMORY_GRPC_PORT:-9092}" 2>/dev/null && echo true || echo false)
+assert_eq "memory-service on port ${MEMORY_GRPC_PORT:-9092}" "true" "$MEMORY_GRPC"
+
+LLM_GRPC=$(nc -z localhost "${LLM_GRPC_PORT:-9093}" 2>/dev/null && echo true || echo false)
+assert_eq "llm-router on port ${LLM_GRPC_PORT:-9093}" "true" "$LLM_GRPC"
+
+echo "Prompt-manager HTTP:"
+PROMPT_HEALTH=$(curl -sf "http://localhost:${PROMPT_MANAGER_PORT:-8084}/health" 2>/dev/null || echo "FAIL")
+assert_eq "prompt-manager /health" "ok" "$PROMPT_HEALTH"
+
+echo "Memory store + LLM router (structural):"
+MEMORY_WRITE=$(grep -q 'func (s \*Store) Write' internal/memory/memory.go 2>/dev/null && echo true || echo false)
+assert_eq "internal/memory has Store Write" "true" "$MEMORY_WRITE"
+LLM_COMPLETE=$(grep -q 'func (r \*routerImpl) Complete' internal/llm/router.go 2>/dev/null && echo true || echo false)
+assert_eq "internal/llm has Complete" "true" "$LLM_COMPLETE"
+
+echo "Cache-aside (task):"
+assert_eq "tasks CachedStore exists" "true" "$([ -f internal/tasks/cache.go ] && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
 # PHASE 4 — Orchestration, Eval, Security (placeholder)

@@ -1,0 +1,50 @@
+syntax = "proto3";
+package astra.memory;
+option go_package = "astra/proto/memory";
+
+service MemoryService {
+  rpc WriteMemory(WriteMemoryRequest) returns (WriteMemoryResponse);
+  rpc SearchMemories(SearchMemoriesRequest) returns (SearchMemoriesResponse);
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
+}
+
+message WriteMemoryRequest {
+  string agent_id = 1;
+  string memory_type = 2;
+  string content = 3;
+  bytes embedding = 4; // optional; 1536*4 bytes
+}
+
+message WriteMemoryResponse {
+  string id = 1;
+}
+
+message SearchMemoriesRequest {
+  string agent_id = 1;
+  bytes query_embedding = 2; // optional; 1536 floats
+  int32 top_k = 3;
+}
+
+message MemoryItem {
+  string id = 1;
+  string agent_id = 2;
+  string memory_type = 3;
+  string content = 4;
+  bytes embedding = 5; // optional
+}
+
+message SearchMemoriesResponse {
+  repeated MemoryItem items = 1;
+}
+
+message GetMemoryRequest {
+  string id = 1;
+}
+
+message GetMemoryResponse {
+  string id = 1;
+  string agent_id = 2;
+  string memory_type = 3;
+  string content = 4;
+  bytes embedding = 5; // optional
+}

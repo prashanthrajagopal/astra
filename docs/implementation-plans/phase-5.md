@@ -159,6 +159,13 @@ Harden the system for production: load testing at target scale (10k agents, 1M t
 
 ---
 
+## 3b. Mandatory vs optional (Phase 5 complete)
+
+- **Mandatory:** WP5.1–WP5.7 (load test, Grafana dashboards, Prometheus alerting, runbooks, cost/SLO, Helm hardening, observability consistency). All must be delivered for Phase 5 sign-off.
+- **Optional:** WP5.8 (sharding and multi-scheduler). Defer if single-shard meets target load; document the decision.
+
+---
+
 ## 4. Delegation hints
 
 | Work package | Primary owner | Hand-off |

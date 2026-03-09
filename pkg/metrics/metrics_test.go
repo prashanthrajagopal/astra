@@ -19,4 +19,6 @@ func TestRegister(t *testing.T) {
 	_ = prometheus.Unregister(TaskFailureTotal)
 	_ = prometheus.Unregister(ActorCount)
 	_ = prometheus.Unregister(SchedulerReadyQueueDepth)
+	_ = prometheus.Unregister(LLMTokenUsageTotal)
+	_ = prometheus.Unregister(LLMCostDollars)
 }

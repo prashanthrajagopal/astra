@@ -163,13 +163,16 @@ go build -o bin/execution-worker   ./cmd/execution-worker
 go build -o bin/worker-manager     ./cmd/worker-manager
 go build -o bin/tool-runtime       ./cmd/tool-runtime
 go build -o bin/browser-worker     ./cmd/browser-worker
+go build -o bin/memory-service     ./cmd/memory-service
+go build -o bin/llm-router         ./cmd/llm-router
+go build -o bin/prompt-manager     ./cmd/prompt-manager
 echo "Build done."
 
 echo ""
 echo "Starting services..."
 set -a; source .env 2>/dev/null || true; set +a
 
-SERVICES="task-service agent-service scheduler-service execution-worker worker-manager tool-runtime browser-worker api-gateway"
+SERVICES="task-service agent-service scheduler-service execution-worker worker-manager tool-runtime browser-worker memory-service llm-router prompt-manager api-gateway"
 for svc in $SERVICES; do
   if [[ -f "logs/${svc}.pid" ]]; then
     kill "$(cat "logs/${svc}.pid")" 2>/dev/null || true
@@ -192,6 +195,12 @@ echo $! > logs/worker-manager.pid
 echo $! > logs/tool-runtime.pid
 ./bin/browser-worker     > logs/browser-worker.log 2>&1 &
 echo $! > logs/browser-worker.pid
+./bin/memory-service     > logs/memory-service.log 2>&1 &
+echo $! > logs/memory-service.pid
+./bin/llm-router         > logs/llm-router.log 2>&1 &
+echo $! > logs/llm-router.pid
+./bin/prompt-manager    > logs/prompt-manager.log 2>&1 &
+echo $! > logs/prompt-manager.pid
 sleep 1
 ./bin/api-gateway        > logs/api-gateway.log 2>&1 &
 echo $! > logs/api-gateway.pid
@@ -199,7 +208,7 @@ echo $! > logs/api-gateway.pid
 echo ""
 echo "=== Deploy complete ==="
 echo "Infra: Postgres=$POSTGRES_SOURCE  Redis=$REDIS_SOURCE  Memcached=$MEMCACHED_SOURCE"
-echo "Services: task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, api-gateway"
+echo "Services: task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, memory-service, llm-router, prompt-manager, api-gateway"
 echo "Logs:  logs/*.log"
 echo "PIDs:  logs/*.pid"
 echo "Stop:  for f in logs/*.pid; do kill \$(cat \$f) 2>/dev/null; done"

@@ -14,10 +14,10 @@ const errTaskIDRequired = "task_id required"
 
 type GRPCServer struct {
 	tasks_pb.UnimplementedTaskServiceServer
-	store *Store
+	store TaskStore
 }
 
-func NewGRPCServer(store *Store) *GRPCServer {
+func NewGRPCServer(store TaskStore) *GRPCServer {
 	return &GRPCServer{store: store}
 }
 
