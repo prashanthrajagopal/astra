@@ -131,8 +131,18 @@ assert_eq "agent-service on port ${AGENT_GRPC_PORT:-9091}" "true" "$AGENT_SVC"
 
 echo "E2E flow: spawn agent → create goal → verify tasks:"
 
+
+# Acquire JWT if identity service is available (Phase 4+); otherwise proceed without auth.
+PHASE1_AUTH_HEADER=()
+PHASE1_TOKEN_RESP=$(curl -sf -X POST "http://localhost:${IDENTITY_PORT:-8085}/tokens" -H "Content-Type: application/json" -d '{"subject":"phase1-validator","scopes":["admin"],"ttl_seconds":600}' 2>/dev/null || echo '{}')
+PHASE1_TOKEN=$(echo "$PHASE1_TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+if [[ -n "$PHASE1_TOKEN" ]]; then
+  PHASE1_AUTH_HEADER=(-H "Authorization: Bearer $PHASE1_TOKEN")
+fi
+
 # 1. Spawn agent
 SPAWN_RESP=$(curl -sf -X POST "$API/agents" \
+  "${PHASE1_AUTH_HEADER[@]}" \
   -H "Content-Type: application/json" \
   -d '{"actor_type":"test-agent","config":"{}"}' 2>/dev/null || echo '{"error":"failed"}')
 ACTOR_ID=$(echo "$SPAWN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('actor_id',''))" 2>/dev/null || echo "")
@@ -141,6 +151,7 @@ assert_not_empty "POST /agents returns actor_id" "$ACTOR_ID"
 if [[ -n "$ACTOR_ID" ]]; then
   # 2. Create goal
   GOAL_RESP=$(curl -sf -X POST "$API/agents/$ACTOR_ID/goals" \
+    "${PHASE1_AUTH_HEADER[@]}" \
     -H "Content-Type: application/json" \
     -d '{"goal_text":"validate phase 1 e2e"}' 2>/dev/null || echo '{"error":"failed"}')
   GOAL_STATUS=$(echo "$GOAL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
@@ -271,14 +282,63 @@ echo "Cache-aside (task):"
 assert_eq "tasks CachedStore exists" "true" "$([ -f internal/tasks/cache.go ] && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
-# PHASE 4 — Orchestration, Eval, Security (placeholder)
+# PHASE 4 — Orchestration, Eval, Security
 # ═══════════════════════════════════════════════
 echo ""
 echo "$(bold '═══ PHASE 4: Orchestration & Security ═══')"
-skip_test "LLM-driven planner generates DAG"
-skip_test "evaluation service validates results"
-skip_test "JWT auth on api-gateway"
-skip_test "OPA policy enforcement"
+
+echo "Phase 4 migration:"
+assert_eq "0012 approval_requests migration exists" "true" "$(test -f migrations/0012_approval_requests.sql && echo true || echo false)"
+
+echo "Phase 4 service health:"
+IDENTITY_HEALTH=$(curl -sf "http://localhost:${IDENTITY_PORT:-8085}/health" 2>/dev/null || echo "FAIL")
+assert_eq "identity /health" "ok" "$IDENTITY_HEALTH"
+ACCESS_HEALTH=$(curl -sf "http://localhost:${ACCESS_CONTROL_PORT:-8086}/health" 2>/dev/null || echo "FAIL")
+assert_eq "access-control /health" "ok" "$ACCESS_HEALTH"
+PLANNER_HEALTH=$(curl -sf "http://localhost:${PLANNER_PORT:-8087}/health" 2>/dev/null || echo "FAIL")
+assert_eq "planner-service /health" "ok" "$PLANNER_HEALTH"
+GOAL_HEALTH=$(curl -sf "http://localhost:${GOAL_SERVICE_PORT:-8088}/health" 2>/dev/null || echo "FAIL")
+assert_eq "goal-service /health" "ok" "$GOAL_HEALTH"
+EVAL_HEALTH=$(curl -sf "http://localhost:${EVALUATION_PORT:-8089}/health" 2>/dev/null || echo "FAIL")
+assert_eq "evaluation-service /health" "ok" "$EVAL_HEALTH"
+
+echo "JWT auth on api-gateway:"
+NOAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/agents" -H "Content-Type: application/json" -d '{"actor_type":"test-agent","config":"{}"}')
+assert_eq "POST /agents without token returns 401" "401" "$NOAUTH_CODE"
+
+TOKEN_RESP=$(curl -sf -X POST "http://localhost:${IDENTITY_PORT:-8085}/tokens" -H "Content-Type: application/json" -d '{"subject":"validator","scopes":["admin"],"ttl_seconds":600}' 2>/dev/null || echo '{}')
+JWT_TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+assert_not_empty "identity issues JWT" "$JWT_TOKEN"
+
+if [[ -n "$JWT_TOKEN" ]]; then
+  AUTH_SPAWN=$(curl -sf -X POST "$API/agents" -H "Authorization: Bearer $JWT_TOKEN" -H "Content-Type: application/json" -d '{"actor_type":"phase4-agent","config":"{}"}' 2>/dev/null || echo '{}')
+  AUTH_ACTOR_ID=$(echo "$AUTH_SPAWN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('actor_id',''))" 2>/dev/null || echo "")
+  assert_not_empty "POST /agents with valid JWT returns actor_id" "$AUTH_ACTOR_ID"
+else
+  skip_test "skipping authenticated spawn (no JWT)"
+fi
+
+echo "Access-control approval gate:"
+APPROVAL_RESP=$(curl -s -X POST "http://localhost:${TOOL_RUNTIME_PORT:-8083}/execute" -H "Content-Type: application/json" -d '{"name":"terraform plan","timeout_seconds":5}' 2>/dev/null || echo '{}')
+APPROVAL_STATUS=$(echo "$APPROVAL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+assert_eq "dangerous tool returns pending_approval" "pending_approval" "$APPROVAL_STATUS"
+APPROVAL_ID=$(echo "$APPROVAL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('approval_request_id',''))" 2>/dev/null || echo "")
+assert_not_empty "approval request id returned" "$APPROVAL_ID"
+
+PENDING_JSON=$(curl -sf "http://localhost:${ACCESS_CONTROL_PORT:-8086}/approvals/pending" 2>/dev/null || echo "[]")
+PENDING_COUNT=$(echo "$PENDING_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(0 if d is None else len(d))" 2>/dev/null || echo "0")
+assert_eq "pending approvals endpoint returns at least one item" "true" "$([ "$PENDING_COUNT" -ge 1 ] && echo true || echo false)"
+
+echo "Evaluation service:"
+EVAL_RESP=$(curl -sf -X POST "http://localhost:${EVALUATION_PORT:-8089}/evaluate" -H "Content-Type: application/json" -d '{"task_id":"phase4-eval","result":"hello world","criteria":"hello"}' 2>/dev/null || echo '{}')
+EVAL_PASSED=$(echo "$EVAL_RESP" | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('passed',False)).lower())" 2>/dev/null || echo "false")
+assert_eq "evaluation passes with matching criteria" "true" "$EVAL_PASSED"
+
+echo "LLM usage async persistence (structural):"
+USAGE_PUBLISH=$(grep -q 'usageStream' cmd/llm-router/main.go 2>/dev/null && echo true || echo false)
+assert_eq "llm-router publishes to astra:usage" "true" "$USAGE_PUBLISH"
+USAGE_CONSUMER=$(grep -q 'runUsageConsumer' cmd/llm-router/main.go 2>/dev/null && echo true || echo false)
+assert_eq "llm-router runs usage consumer" "true" "$USAGE_CONSUMER"
 
 # ═══════════════════════════════════════════════
 # PHASE 5 — Scale & Hardening (placeholder)

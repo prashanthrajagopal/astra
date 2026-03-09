@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -57,33 +58,125 @@ func main() {
 	agentClient = kernel_pb.NewKernelServiceClient(agentConn)
 	taskClient = tasks_pb.NewTaskServiceClient(taskConn)
 
-	http.HandleFunc("/health", handleHealth)
-	http.HandleFunc("/agents", handleAgents)
-	http.HandleFunc("/agents/", handleAgentGoals)
-	http.HandleFunc("/tasks/", handleTasks)
-	http.HandleFunc("/graphs/", handleGraphs)
+	auth := newAuthMiddleware(cfg.IdentityAddr, cfg.AccessControlAddr)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", handleHealth)
+	mux.Handle("POST /agents", auth.protect(http.HandlerFunc(handleAgents)))
+	mux.Handle("POST /agents/{id}/goals", auth.protect(http.HandlerFunc(handleAgentGoals)))
+	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
+	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
 
 	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	slog.Info("api gateway started", "addr", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+type authMiddleware struct {
+	identityAddr      string
+	accessControlAddr string
+	client            *http.Client
+}
+
+func newAuthMiddleware(identityAddr, accessControlAddr string) *authMiddleware {
+	return &authMiddleware{
+		identityAddr:      strings.TrimSuffix(identityAddr, "/"),
+		accessControlAddr: strings.TrimSuffix(accessControlAddr, "/"),
+		client:            &http.Client{Timeout: 100 * time.Millisecond},
 	}
+}
+
+func (a *authMiddleware) protect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok := extractBearer(r)
+		if tok == "" {
+			http.Error(w, "missing or invalid authorization", http.StatusUnauthorized)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 150*time.Millisecond)
+		defer cancel()
+
+		// Call identity /validate
+		valBody, _ := json.Marshal(map[string]string{"token": tok})
+		valReq, _ := http.NewRequestWithContext(ctx, "POST", a.identityAddr+"/validate", bytes.NewReader(valBody))
+		valReq.Header.Set("Content-Type", "application/json")
+		valResp, err := a.client.Do(valReq)
+		if err != nil {
+			slog.Warn("identity validate failed", "err", err)
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
+		defer valResp.Body.Close()
+		if valResp.StatusCode == http.StatusUnauthorized {
+			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+		if valResp.StatusCode != http.StatusOK {
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
+		var valRes struct {
+			Valid   bool     `json:"valid"`
+			Subject string   `json:"subject"`
+			Scopes  []string `json:"scopes"`
+		}
+		if err := json.NewDecoder(valResp.Body).Decode(&valRes); err != nil || !valRes.Valid {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		action := r.Method + " " + r.URL.Path
+		checkBody, _ := json.Marshal(map[string]interface{}{
+			"subject":   valRes.Subject,
+			"action":    action,
+			"resource":  r.URL.Path,
+			"tool_name": "",
+		})
+		checkReq, _ := http.NewRequestWithContext(ctx, "POST", a.accessControlAddr+"/check", bytes.NewReader(checkBody))
+		checkReq.Header.Set("Content-Type", "application/json")
+		checkResp, err := a.client.Do(checkReq)
+		if err != nil {
+			slog.Warn("access-control check failed", "err", err)
+			http.Error(w, "authorization check failed", http.StatusInternalServerError)
+			return
+		}
+		defer checkResp.Body.Close()
+		var checkRes struct {
+			Allowed          bool   `json:"allowed"`
+			ApprovalRequired bool   `json:"approval_required"`
+			Reason           string `json:"reason"`
+		}
+		json.NewDecoder(checkResp.Body).Decode(&checkRes)
+		if !checkRes.Allowed {
+			http.Error(w, "forbidden: "+checkRes.Reason, http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func extractBearer(r *http.Request) string {
+	ah := r.Header.Get("Authorization")
+	if ah == "" {
+		return ""
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(ah, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(ah, prefix))
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
 func handleAgents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req struct {
 		ActorType string `json:"actor_type"`
 		Config    string `json:"config"`
@@ -109,20 +202,9 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAgentGoals(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/agents/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) < 2 || parts[1] != "goals" {
-		http.NotFound(w, r)
-		return
-	}
-	agentID := parts[0]
+	agentID := r.PathValue("id")
 	if agentID == "" {
 		http.Error(w, "agent id required", http.StatusBadRequest)
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
@@ -151,9 +233,11 @@ func handleAgentGoals(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleTasks(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/tasks/")
-	taskID := strings.TrimSuffix(path, "/complete")
-	isComplete := strings.HasSuffix(r.URL.Path, "/complete")
+	rest := r.PathValue("rest")
+	path := "/tasks/" + rest
+	taskID := strings.TrimSuffix(rest, "/complete")
+	taskID = strings.TrimSuffix(taskID, "/")
+	isComplete := strings.HasSuffix(path, "/complete")
 
 	if taskID == "" {
 		http.Error(w, "task id required", http.StatusBadRequest)
@@ -210,12 +294,8 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGraphs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	path := strings.TrimPrefix(r.URL.Path, "/graphs/")
-	graphID := strings.TrimSuffix(path, "/")
+	rest := r.PathValue("rest")
+	graphID := strings.TrimSuffix(rest, "/")
 	if graphID == "" {
 		http.Error(w, "graph id required", http.StatusBadRequest)
 		return
@@ -230,7 +310,7 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tasks":         resp.Tasks,
-		"dependencies":  resp.Dependencies,
+		"tasks":        resp.Tasks,
+		"dependencies": resp.Dependencies,
 	})
 }
