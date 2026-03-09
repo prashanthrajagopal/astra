@@ -1,4 +1,4 @@
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
   id BIGSERIAL PRIMARY KEY,
   event_type TEXT NOT NULL,
   actor_id UUID,

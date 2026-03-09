@@ -26,7 +26,7 @@
 16. [Agent Taxonomy & Workflows](#16-agent-taxonomy--workflows)
 17. [Observability, Tracing, Metrics](#17-observability-tracing-metrics)
 18. [Security, Policy, Governance](#18-security-policy-governance)
-19. [Deployment Architecture & Scaling](#19-deployment-architecture--scaling)
+19. [Deployment Architecture & Scaling](#19-deployment-architecture--scaling) (includes [Platform & Hardware Acceleration](#platform--hardware-acceleration))
 20. [Failure Modes, Recovery & Runbooks](#20-failure-modes-recovery--runbooks)
 21. [CI/CD, Testing & Release Plan](#21-cicd-testing--release-plan)
 22. [Cost Management & LLM Routing](#22-cost-management--llm-routing)
@@ -65,6 +65,7 @@
 - Observability, metrics, traces and event-sourcing
 - Policy & governance: RBAC, approval flows, tool restrictions
 - SDK for building agent applications in Go (bindings for Python/TS later)
+- **Platform-aware hardware acceleration:** On macOS, leverage Metal, Neural Engine, and GPU where beneficial for inference, embeddings, and compute; on Linux, support standard CPU and CUDA-based deployments. Astra can be deployed in production on both macOS (e.g. Mac Mini, Mac Studio) and Linux (e.g. Kubernetes, cloud, on-prem).
 
 ## Non-Goals
 
@@ -938,6 +939,59 @@ CREATE TRIGGER tasks_updated_at BEFORE UPDATE ON tasks
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 ```
 
+## Migration 0009: Phase history, LLM usage, and audit
+
+Supports phase/build history (file + DB + vector), per-request token/LLM usage persistence, and audit queries. See **docs/phase-history-usage-audit-design.md** for full design.
+
+```sql
+-- phase_runs: one row per phase (e.g. goal execution)
+CREATE TABLE phase_runs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  goal_id UUID REFERENCES goals(id) ON DELETE SET NULL,
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  name TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at TIMESTAMPTZ,
+  summary TEXT,
+  timeline JSONB DEFAULT '[]',
+  log_file_path TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Constraint: status IN ('running', 'completed', 'failed', 'cancelled')
+
+-- phase_summaries: pgvector for semantic search over "what was done"
+CREATE TABLE phase_summaries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  phase_id UUID NOT NULL REFERENCES phase_runs(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  embedding VECTOR(1536),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Index: ivfflat on embedding (same pattern as memories)
+
+-- llm_usage: one row per LLM request for analytics and audit
+CREATE TABLE llm_usage (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  request_id TEXT,
+  agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+  model TEXT NOT NULL,
+  tokens_in INT NOT NULL DEFAULT 0,
+  tokens_out INT NOT NULL DEFAULT 0,
+  latency_ms INT,
+  cost_dollars NUMERIC(12,6),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Indexes: (agent_id, created_at), (task_id, created_at), (created_at)
+
+-- Audit: time-range queries on events
+CREATE INDEX idx_events_created_at ON events(created_at);
+```
+
+Idempotent migration: `migrations/0009_phase_history_and_usage.sql`. Phase history is also written to a human-readable file per phase (configurable path); development-phase history is maintained in **docs/phase-history/** (e.g. phase-0.md).
+
 ---
 
 # 12. Message & Event Protocols
@@ -962,6 +1016,8 @@ CREATE TRIGGER tasks_updated_at BEFORE UPDATE ON tasks
 |---|---|
 | Goal lifecycle | `GoalCreated`, `PlanRequested`, `PlanGenerated` |
 | Task lifecycle | `TaskCreated`, `TaskScheduled`, `TaskStarted`, `TaskCompleted`, `TaskFailed` |
+| Phase lifecycle | `PhaseStarted`, `PhaseCompleted`, `PhaseFailed`, `PhaseSummary` |
+| LLM usage & audit | `LLMUsage` (model, tokens in/out, latency, cost; appended to `events` for audit) |
 | Memory | `MemoryWrite`, `MemoryRead` |
 | Tool execution | `ToolExecutionRequested`, `ToolExecutionCompleted` |
 | Evaluation | `EvaluationRequested`, `EvaluationCompleted` |
@@ -998,6 +1054,9 @@ Fields: `worker_id`, `event_type`, `task_id`, `metadata`, `timestamp`
 
 ### 5. `astra:evaluation` — Evaluation results
 Fields: `task_id`, `evaluator_id`, `result`, `metadata`, `timestamp`
+
+### 6. `astra:usage` — LLM usage (async persistence for audit)
+Fields: `request_id`, `agent_id`, `task_id`, `model`, `tokens_in`, `tokens_out`, `latency_ms`, `cost_dollars`, `timestamp`. Consumer writes to `llm_usage` and appends to `events` with type `LLMUsage`. Keeps API under 10 ms (no synchronous DB write on LLM response path).
 
 All streams use consumer groups. Messages acknowledged after processing. Dead letter on 3 failed processing attempts.
 
@@ -1259,6 +1318,10 @@ func (a *SimpleAgent) Reflect(ctx AgentContext, outcome Outcome) error {
 | `astra_llm_cost_dollars` | Counter | LLM cost in dollars |
 | `astra_scheduler_ready_queue_depth` | Gauge | Tasks waiting to be scheduled |
 
+## Per-request usage and audit
+
+Every request that triggers an LLM call returns **token/LLM usage** in the response (model, tokens in/out, latency, cost if available) via the response envelope (e.g. gRPC metadata or response field). Persistence is **asynchronous**: usage is published to the `astra:usage` stream; a consumer writes to `llm_usage` and appends `events` with type `LLMUsage` so the hot path stays under 10 ms. This gives the user visible usage per request and a full audit trail. See **docs/phase-history-usage-audit-design.md**.
+
 ## Tracing
 
 - Each `Task` execution creates a root span
@@ -1310,9 +1373,13 @@ func (a *SimpleAgent) Reflect(ctx AgentContext, outcome Outcome) error {
 
 ## Audit & Compliance
 
-- Immutable event log (`events` table) for forensic auditing
-- Artifact immutability (once written, cannot be modified)
-- All state transitions logged with actor_id and timestamp
+- **Immutable event log** — The `events` table is the canonical audit log. It includes task/agent lifecycle events and, for phase/usage audit: `PhaseStarted`, `PhaseCompleted`, `PhaseFailed`, `PhaseSummary`, and `LLMUsage` (per-request model, tokens in/out, latency, cost). Index on `created_at` supports time-range audit queries.
+- **Phase/build history** — Each phase run is recorded in `phase_runs` (and optionally in `phase_summaries` for semantic search) and as a human-readable file per phase; phase lifecycle events are appended to `events`. Development-phase history (what was built in each implementation phase) is maintained in **docs/phase-history/** (e.g. phase-0.md).
+- **Per-request LLM usage** — Visible to the user in the response; persisted asynchronously to `llm_usage` and to `events` as `LLMUsage` for analytics and audit.
+- Artifact immutability (once written, cannot be modified).
+- All state transitions logged with actor_id and timestamp.
+
+Full design: **docs/phase-history-usage-audit-design.md**.
 
 ---
 
@@ -1364,6 +1431,42 @@ redis:
 memcached:
   addr: memcached.infrastructure:11211
 ```
+
+## Platform & Hardware Acceleration
+
+Astra supports **platform-aware execution** so it runs efficiently and natively on the host OS while remaining portable.
+
+### macOS (Apple Silicon / Intel)
+
+When running on **darwin** (macOS):
+
+- **Production deployment** — macOS is a supported **production** deployment target. Astra can be run in production on Mac hardware (e.g. Mac Mini, Mac Studio, or on-prem Mac servers) for development, edge, or dedicated Mac-based deployments. Same services and APIs as Linux; deploy via native binaries, process managers (e.g. launchd), or container runtimes that support macOS.
+- **Metal** — Use for GPU-accelerated workloads where supported: local inference, embedding computation, and other compute-heavy paths. Prefer Metal-backed runtimes (e.g. Metal-accelerated inference or embedding backends) when available so Astra benefits from Apple GPU without requiring CUDA.
+- **Neural Engine (ANE)** — When exposed via stable APIs (e.g. Core ML, or framework support for ANE), use for inference and embedding workloads to reduce power and latency on supported Macs. Detection and fallback to Metal or CPU must be explicit.
+- **Native binaries** — Build and ship `darwin/arm64` and `darwin/amd64` so Macs run native binaries. No emulation on Apple Silicon.
+
+Detection is via runtime (`runtime.GOOS == "darwin"`) or build tags; backend selection (Metal vs CPU, ANE when available) is explicit and fallback is always to a working path (e.g. CPU).
+
+### Linux (production and on-prem)
+
+When running on **linux**:
+
+- **Production deployment** — Linux is the primary production deployment target for cloud and data-center environments (Kubernetes, Docker, bare metal). Container images and Helm charts target Linux.
+- **CPU** — Default path. All services run correctly on CPU-only Linux.
+- **CUDA** — When NVIDIA GPUs are available, support CUDA-backed inference and embeddings (e.g. via existing runtimes or connectors). Detection via env, capability probes, or config; no dependency on macOS-only APIs.
+- **Portability** — No use of Metal or other macOS-only APIs on Linux. **Both Linux and macOS are supported for production;** choose the platform that fits your environment (e.g. K8s on Linux, native or containerized on macOS).
+
+### Design principles
+
+1. **Single codebase** — One codebase for both platforms. Use abstraction (e.g. backend interface, build tags, or platform-specific implementations behind a common API) so that Go code chooses the right backend at runtime or build time.
+2. **Graceful fallback** — If Metal, ANE, or CUDA is unavailable or disabled, fall back to CPU. No hard requirement for specific hardware.
+3. **Explicit opt-in** — Hardware acceleration can be enabled/disabled via config or env (e.g. `ASTRA_USE_METAL=true`, `ASTRA_USE_CUDA=false`) so operators can tune for cost or compatibility.
+4. **Observability** — Log or expose metrics for which backend is active (e.g. `inference_backend=metal|cuda|cpu`) so behavior is debuggable in production and on Mac.
+
+### Scope
+
+- **In-scope:** Backend selection for inference and embedding pipelines used by Astra (including local model runtimes and connectors), optional Metal/ANE on macOS, CUDA on Linux, native darwin/linux binaries, and **production deployment on both macOS and Linux** (native or containerized per platform).
+- **Out-of-scope:** Implementing custom Metal or CUDA kernels inside Astra core; Astra integrates with existing runtimes and connectors that support these backends.
 
 ---
 
@@ -1464,6 +1567,10 @@ func (r *Router) Route(taskType string, priority int) ModelTier {
 - Alerts when thresholds exceeded
 - Dashboard: LLM cost per agent, per model, per day
 
+## Per-request usage and audit
+
+With every request that uses an LLM, the user sees **token/LLM usage** (model, tokens in/out, latency, cost) in the response. Usage is captured in the LLM router (or caller), returned in the response envelope, and persisted **asynchronously** via the `astra:usage` stream to the `llm_usage` table and to `events` (type `LLMUsage`) for audit and metrics. No synchronous DB write on the hot path. See **docs/phase-history-usage-audit-design.md** and §18 Audit & Compliance.
+
 ---
 
 # 23. Operational Playbooks
@@ -1539,6 +1646,7 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] Generate proto stubs (`buf generate`)
 - [ ] Set up CI pipeline (go vet, lint, test)
 - [ ] Configure `.cursor/` agents, rules, skills
+- [ ] Phase history, LLM usage, and audit: schema (migration 0009: `phase_runs`, `phase_summaries`, `llm_usage`, `events` index), design doc (`docs/phase-history-usage-audit-design.md`), and development-phase history in `docs/phase-history/` (e.g. phase-0.md)
 
 **Acceptance:** `docker compose up` starts all infra; `go build ./...` succeeds; migrations applied.
 

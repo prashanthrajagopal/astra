@@ -1,0 +1,11 @@
+# Minimal config; CI runs golangci-lint. Tune linters as needed.
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - gofmt
