@@ -125,10 +125,19 @@ Only **leadership agents** write memory:
 - Memory is a **hint**, not a source of truth. Verify against current codebase if critical.
 - If memory MCP is unavailable, proceed without it — never block on memory failure.
 
+## Deployment — DevOps only
+
+**Only the DevOps agent may run deployment scripts or deployment commands.** No other agent (Tech Lead, Go Engineer, Cursor Agent, etc.) may run `scripts/deploy.sh`, `docker compose` for Astra infra, or `helm install`/`helm upgrade` for Astra.
+
+- **Local deployment:** DevOps runs `scripts/deploy.sh` from repo root (native-first: uses existing Postgres/Redis/Memcached when available; Docker only for missing services).
+- **Cloud deployment:** DevOps runs Helm/K8s per the DevOps deployment skill (e.g. `helm upgrade --install` with `deployments/helm/astra`).
+- **All other agents:** If asked to "deploy" or "run the deploy script", delegate to **DevOps Engineer** (via Project Manager → Tech Lead → DevOps, or by invoking the `/deploy` command which routes to DevOps).
+
 ## Custom Commands
 
 | Command | Purpose |
 |---------|---------|
+| `/deploy` | Run deployment: route to **DevOps Engineer**. Local: run `scripts/deploy.sh`. Cloud: follow DevOps deployment skill. |
 | `/debug` | Root-cause investigation via SRE/debugger chain |
 | `/review-code` | Structured code review with severity grouping |
 | `/explain` | Explain a codebase area with file references and diagrams |

@@ -1,4 +1,4 @@
-CREATE TABLE artifacts (
+CREATE TABLE IF NOT EXISTS artifacts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   agent_id UUID,
   task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,

@@ -1,3 +1,4 @@
+# Go version: match go.mod when available (e.g. 1.25); use 1.22 for broad image availability
 FROM golang:1.22-alpine AS builder
 
 ARG SERVICE=api-gateway
