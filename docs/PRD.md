@@ -1643,44 +1643,48 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 # 25. Implementation Roadmap
 
-## Phase 0 — Prep (2 weeks)
+## Phase 0 — Prep (2 weeks) ✅ COMPLETE
 
 **Goal:** Repository scaffolding and infrastructure.
 
-- [ ] Initialize Go module (`go mod init astra`)
-- [ ] Create directory structure per Section 4
-- [ ] Set up Postgres, Redis, Memcached, MinIO (docker-compose)
-- [ ] Run all migrations (Section 11)
-- [ ] Generate proto stubs (`buf generate`)
-- [ ] Set up CI pipeline (go vet, lint, test)
-- [ ] Configure `.cursor/` agents, rules, skills
-- [ ] Phase history, LLM usage, and audit: schema (migration 0009: `phase_runs`, `phase_summaries`, `llm_usage`, `events` index), design doc (`docs/phase-history-usage-audit-design.md`), and development-phase history in `docs/phase-history/` (e.g. phase-0.md)
+- [x] Initialize Go module (`go mod init astra`)
+- [x] Create directory structure per Section 4
+- [x] Set up Postgres, Redis, Memcached, MinIO (docker-compose)
+- [x] Run all migrations (Section 11) — 10 migrations (0000–0009), all idempotent
+- [x] Generate proto stubs (`buf generate`) — buf.yaml, buf.gen.yaml, generated .pb.go in proto/kernel/, proto/tasks/
+- [x] Set up CI pipeline (go vet, lint, test) — .github/workflows/ci.yml, .golangci.yml
+- [x] Configure `.cursor/` agents (10), rules (9), skills (7), commands (6)
+- [x] Phase history, LLM usage, and audit: schema (migration 0009), design doc, development-phase history in `docs/phase-history/`
+- [x] Deploy script (scripts/deploy.sh) — native-first infra, idempotent migrations, builds and runs services
+- [x] Implementation plans for phases 1–6 (docs/implementation-plans/), delegation memo, PRD currency rule
 
-**Acceptance:** `docker compose up` starts all infra; `go build ./...` succeeds; migrations applied.
+**Acceptance:** `docker compose up` starts all infra; `go build ./...` succeeds; migrations applied. **MET.**
 
-## Phase 1 — Kernel MVP (8-10 weeks)
+## Phase 1 — Kernel MVP (8-10 weeks) ✅ COMPLETE
 
 **Goal:** Actor runtime, state manager, message bus, task graph, scheduling loop, api-gateway, agent-service.
 
-- [ ] `internal/actors` — BaseActor, mailbox, supervision tree
-- [ ] `internal/kernel` — Kernel manager (Spawn, Send)
-- [ ] `internal/events` — Event store (Postgres insert, replay)
-- [ ] `internal/messaging` — Redis Streams (publish, consume, ack)
-- [ ] `internal/tasks` — Task model, state machine, Graph, transitions
-- [ ] `internal/scheduler` — Ready-task detection, shard dispatch
-- [ ] `internal/agent` — AgentActor, agent lifecycle
-- [ ] `internal/planner` — Stub: hardcoded single-task DAG (replaced in Phase 4)
-- [ ] `pkg/db` — Connection pool, migration runner
-- [ ] `pkg/config` — Env/Vault config loader
-- [ ] `pkg/logger` — Structured logging
-- [ ] `pkg/grpc` — Server/client helpers, interceptors
-- [ ] `pkg/metrics` — Prometheus registration
-- [ ] `cmd/api-gateway` — REST health + gRPC proxy
-- [ ] `cmd/agent-service` — Agent CRUD via gRPC
-- [ ] `cmd/scheduler-service` — Scheduling loop
-- [ ] `cmd/task-service` — Task CRUD via gRPC
-- [ ] `cmd/execution-worker` — Stub: pass-through marks tasks complete (replaced in Phase 2)
-- [ ] Unit tests for all packages, integration tests with testcontainers
+- [x] `internal/actors` — BaseActor, mailbox, supervision tree, circuit breaker ✅
+- [x] `internal/kernel` — Kernel manager (Spawn, Send, Stop), metrics integration ✅
+- [x] `internal/events` — Event store (Postgres insert, replay) ✅
+- [x] `internal/messaging` — Redis Streams (publish, consume, ack, consumer groups) ✅
+- [x] `internal/tasks` — Task model, state machine, Graph, transitions, CreateGraph, GetTask, CompleteTask, FailTask ✅
+- [x] `internal/scheduler` — Ready-task detection, shard dispatch, 100ms tick loop ✅
+- [x] `internal/agent` — AgentActor with CreateGoal → Plan → CreateTasks flow ✅
+- [x] `internal/planner` — Stub: hardcoded two-task DAG (analyze + implement) ✅
+- [x] `internal/kernelserver` — KernelService gRPC server (SpawnActor, SendMessage, QueryState, PublishEvent) ✅
+- [x] `pkg/db` — Connection pool (pgx), migration runner ✅
+- [x] `pkg/config` — Env config loader, PostgresDSN builder, AgentGRPCPort ✅
+- [x] `pkg/logger` — Structured logging (slog JSON) ✅
+- [x] `pkg/grpc` — Server creation, reflection, logging interceptor, ListenAndServe ✅
+- [x] `pkg/metrics` — Prometheus registration (task latency, success, failure, actor count, queue depth) ✅
+- [x] `cmd/api-gateway` — REST endpoints: POST /agents, POST /agents/{id}/goals, GET /tasks/{id}, GET /graphs/{id}, POST /tasks/{id}/complete, GET /health; gRPC proxy to agent-service and task-service ✅
+- [x] `cmd/agent-service` — KernelService gRPC server on port 9091, agent factory, graceful shutdown ✅
+- [x] `cmd/scheduler-service` — Scheduling loop, Postgres + Redis, signal handling ✅
+- [x] `cmd/task-service` — TaskService gRPC server on port 9090, graceful shutdown ✅
+- [x] `cmd/execution-worker` — Consumes Redis stream, transitions queued→scheduled→running→completed ✅
+- [x] Unit tests: actors, kernel, tasks, planner, events, config, metrics ✅
+- [x] Integration test: E2E spawn → goal → plan → schedule → worker complete → events (tests/integration/) ✅
 
 **Stubs & Replacements:** Planner stub: hardcoded single-task DAG in `internal/planner`, replaced in Phase 4 with LLM-driven planning. Worker stub: simple pass-through in `cmd/execution-worker` that marks tasks complete, replaced in Phase 2 with real tool execution.
 
@@ -1688,72 +1692,72 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Spawn agent → create goal → planner stubs DAG → scheduler dispatches → worker stubs complete task → events in Postgres → query state returns correct data.
 
-## Phase 2 — Workers & Tool Runtime (6-8 weeks)
+## Phase 2 — Workers & Tool Runtime (6-8 weeks) ❌ NOT STARTED
 
 **Goal:** Execution workers, worker manager, tool sandboxes.
 
-- [ ] `internal/workers` — Worker registration, heartbeat, task claiming
-- [ ] `internal/tools` — Sandbox lifecycle (Docker first, WASM later)
-- [ ] `cmd/execution-worker` — General worker runtime
-- [ ] `cmd/worker-manager` — Worker health, scaling hints
-- [ ] `cmd/tool-runtime` — Tool sandbox controller
-- [ ] `cmd/browser-worker` — Headless browser worker (Playwright)
+- [ ] `internal/workers` — Worker struct and heartbeat exist (partial); needs task claiming and execution logic ❌
+- [ ] `internal/tools` — Sandbox lifecycle stub only (returns "not yet implemented") ❌
+- [ ] `cmd/execution-worker` — Consumes stream but does not run tasks (partial from Phase 1) ❌
+- [ ] `cmd/worker-manager` — Stub ❌
+- [ ] `cmd/tool-runtime` — Stub ❌
+- [ ] `cmd/browser-worker` — Stub ❌
 
 **Acceptance:** Worker registers, claims task from Redis stream, executes in Docker sandbox, returns artifact, result persisted.
 
-## Phase 3 — Memory & LLM Routing (6 weeks)
+## Phase 3 — Memory & LLM Routing (6 weeks) ❌ NOT STARTED
 
 **Goal:** Memory service with pgvector, LLM router, Memcached caching. Hot-path reads compliant with 10ms SLA.
 
-- [ ] `internal/memory` — Write, search (pgvector), embedding pipeline
-- [ ] `internal/llm` — Router logic, model selection, response caching
-- [ ] `cmd/memory-service` — Memory CRUD + search API
-- [ ] `cmd/llm-router` — Model routing service
-- [ ] `cmd/prompt-manager` — Prompt template management
-- [ ] Memcached integration for LLM/embedding/tool caches
-- [ ] Redis cache-aside for actor state (`actor:state:<id>`) and task lookups
-- [ ] Memcached for hot-path API reads (task status, agent state)
+- [ ] `internal/memory` — Write exists (Postgres); Search is ORDER BY created_at (no embeddings/pgvector search yet) 🔶
+- [ ] `internal/llm` — Router Route() by task type/priority exists (stub); no actual LLM calls ❌
+- [ ] `cmd/memory-service` — Stub ❌
+- [ ] `cmd/llm-router` — Stub ❌
+- [ ] `cmd/prompt-manager` — Stub ❌
+- [ ] Memcached integration for LLM/embedding/tool caches ❌
+- [ ] Redis cache-aside for actor state (`actor:state:<id>`) and task lookups ❌
+- [ ] Memcached for hot-path API reads (task status, agent state) ❌
 
 **Caching note:** Phases 1-2 may exceed 10ms on reads (acceptable for dev). Phase 3 brings hot-path reads into SLA compliance.
 
 **Acceptance:** Agent writes memory → search returns semantically relevant results. LLM router selects model based on task type. Repeated prompts served from cache. API reads serve from Redis/Memcached; p99 ≤ 10ms.
 
-## Phase 4 — Orchestration, Eval, Security (6-8 weeks)
+## Phase 4 — Orchestration, Eval, Security (6-8 weeks) ❌ NOT STARTED
 
 **Goal:** Planner service, goal service, evaluation service, OPA integration, approval gates.
 
-- [ ] `internal/planner` — Goal → DAG conversion using LLM
-- [ ] `internal/evaluation` — Result validators, auto-evaluators
-- [ ] `cmd/planner-service` — Planner API
-- [ ] `cmd/goal-service` — Goal ingestion, validation, routing to planner-service
-- [ ] `cmd/evaluation-service` — Evaluation API
-- [ ] `cmd/identity` — JWT token issuance
-- [ ] `cmd/access-control` — OPA policy enforcement
-- [ ] Tool execution approval gates
+- [ ] `internal/planner` — Goal → DAG conversion using LLM (currently stub with hardcoded DAG) ❌
+- [ ] `internal/evaluation` — Minimal pass/fail evaluator exists; needs real validators ❌
+- [ ] `cmd/planner-service` — Stub ❌
+- [ ] `cmd/goal-service` — Stub ❌
+- [ ] `cmd/evaluation-service` — Stub ❌
+- [ ] `cmd/identity` — Stub ❌
+- [ ] `cmd/access-control` — Stub ❌
+- [ ] Tool execution approval gates ❌
 
 **Acceptance:** Goal submitted via goal-service → planner generates real DAG → scheduler executes → evaluator validates → security policies enforced.
 
-## Phase 5 — Scale & Production Hardening (8 weeks)
+## Phase 5 — Scale & Production Hardening (8 weeks) ❌ NOT STARTED
 
 **Goal:** Load testing, observability dashboards, runbooks, cost tracking.
 
-- [ ] Load tests (target: 10k agents, 1M tasks)
-- [ ] Grafana dashboards (cluster overview, agent health, cost)
-- [ ] Alerting rules in Prometheus
-- [ ] Runbooks in `docs/runbooks/`
-- [ ] Cost tracking service
-- [ ] SLO enforcement (10ms reads, 50ms scheduling)
-- [ ] Helm chart hardening (HPA, PDB, resource limits)
+- [ ] Load tests (target: 10k agents, 1M tasks) ❌
+- [ ] Grafana dashboards (cluster overview, agent health, cost) ❌
+- [ ] Alerting rules in Prometheus ❌
+- [ ] Runbooks in `docs/runbooks/` ❌
+- [ ] Cost tracking service ❌
+- [ ] SLO enforcement (10ms reads, 50ms scheduling) ❌
+- [ ] Helm chart hardening (HPA, PDB, resource limits) ❌
 
 **Acceptance:** System handles target load within SLAs. Dashboards operational. Runbooks tested.
 
-## Phase 6 — SDK & Applications (4-6 weeks initial)
+## Phase 6 — SDK & Applications (4-6 weeks initial) ❌ NOT STARTED
 
 **Goal:** Public Astra SDK, minimum viable sample applications.
 
-- [ ] SDK package with AgentContext, MemoryClient, ToolClient
-- [ ] SimpleAgent example
-- [ ] SDK documentation and examples
+- [ ] SDK package with AgentContext, MemoryClient, ToolClient ❌
+- [ ] SimpleAgent example ❌
+- [ ] SDK documentation and examples ❌
 
 **Minimum scope (4-6 weeks):** AgentContext interface, MemoryClient interface, SimpleAgent example, SDK documentation. After initial SDK, ongoing work includes additional sample agents (autonomous developer, research), Python/TS bindings, community docs.
 

@@ -26,12 +26,17 @@ func New(addr string) *Bus {
 }
 
 func (b *Bus) Publish(ctx context.Context, stream string, fields map[string]interface{}) error {
+	_, err := b.PublishReturnID(ctx, stream, fields)
+	return err
+}
+
+func (b *Bus) PublishReturnID(ctx context.Context, stream string, fields map[string]interface{}) (string, error) {
 	return b.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: stream,
 		MaxLen: 1000000,
 		Approx: true,
 		Values: fields,
-	}).Err()
+	}).Result()
 }
 
 func (b *Bus) Consume(ctx context.Context, stream, group, consumer string, handler func(redis.XMessage) error) error {
