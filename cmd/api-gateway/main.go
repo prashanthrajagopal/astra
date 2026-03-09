@@ -3,14 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"astra/internal/dashboard"
 	"astra/pkg/config"
 	astraGrpc "astra/pkg/grpc"
 	"astra/pkg/httpx"
@@ -28,6 +31,14 @@ var (
 	agentClient kernel_pb.KernelServiceClient
 	taskClient  tasks_pb.TaskServiceClient
 )
+
+const (
+	headerContentType = "Content-Type"
+	contentTypeJSON   = "application/json"
+)
+
+//go:embed dashboard
+var dashboardFS embed.FS
 
 func main() {
 	cfg, err := config.Load()
@@ -64,9 +75,20 @@ func main() {
 		slog.Error("failed to initialize auth middleware client", "err", err)
 		os.Exit(1)
 	}
+	dashCollector, err := dashboard.NewCollector(cfg)
+	if err != nil {
+		slog.Error("failed to initialize dashboard collector", "err", err)
+		os.Exit(1)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
+	dashboardClient, err := httpx.NewClient(cfg, 500*time.Millisecond)
+	if err != nil {
+		slog.Error("failed to initialize dashboard action client", "err", err)
+		os.Exit(1)
+	}
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient)
 	mux.Handle("POST /agents", auth.protect(http.HandlerFunc(handleAgents)))
 	mux.Handle("POST /agents/{id}/goals", auth.protect(http.HandlerFunc(handleAgentGoals)))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
@@ -113,7 +135,7 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 		// Call identity /validate
 		valBody, _ := json.Marshal(map[string]string{"token": tok})
 		valReq, _ := http.NewRequestWithContext(ctx, "POST", a.identityAddr+"/validate", bytes.NewReader(valBody))
-		valReq.Header.Set("Content-Type", "application/json")
+		valReq.Header.Set(headerContentType, contentTypeJSON)
 		valResp, err := a.client.Do(valReq)
 		if err != nil {
 			slog.Warn("identity validate failed", "err", err)
@@ -147,7 +169,7 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			"tool_name": "",
 		})
 		checkReq, _ := http.NewRequestWithContext(ctx, "POST", a.accessControlAddr+"/check", bytes.NewReader(checkBody))
-		checkReq.Header.Set("Content-Type", "application/json")
+		checkReq.Header.Set(headerContentType, contentTypeJSON)
 		checkResp, err := a.client.Do(checkReq)
 		if err != nil {
 			slog.Warn("access-control check failed", "err", err)
@@ -186,6 +208,71 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client) {
+	sub, err := fs.Sub(dashboardFS, "dashboard")
+	if err != nil {
+		slog.Error("dashboard embed setup failed", "err", err)
+		return
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	mux.Handle("GET /dashboard/", http.StripPrefix("/dashboard/", fileServer))
+	mux.Handle("GET /dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
+	mux.HandleFunc("GET /api/dashboard/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 250*time.Millisecond)
+		defer cancel()
+		snap := collector.Collect(ctx)
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(snap)
+	})
+	mux.HandleFunc("POST /api/dashboard/approvals/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "approve")
+	})
+	mux.HandleFunc("POST /api/dashboard/approvals/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
+		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "deny")
+	})
+}
+
+func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *http.Client, accessControlAddr, action string) {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		http.Error(w, "approval id required", http.StatusBadRequest)
+		return
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		payload = map[string]any{"decided_by": "dashboard-ui"}
+	}
+	body, _ := json.Marshal(payload)
+	ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, accessControlAddr+"/approvals/"+id+"/"+action, bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "request build failed", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set(headerContentType, contentTypeJSON)
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "access-control unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if resp.StatusCode >= 300 {
+		w.WriteHeader(resp.StatusCode)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "error",
+			"code":   resp.StatusCode,
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":      "ok",
+		"approval_id": id,
+		"action":      action,
+	})
+}
+
 func handleAgents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ActorType string `json:"actor_type"`
@@ -207,7 +294,7 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spawn failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"actor_id": resp.ActorId})
 }
 
@@ -238,7 +325,7 @@ func handleAgentGoals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create goal failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
@@ -271,7 +358,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "complete failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		return
 	}
@@ -283,7 +370,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "get task failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":         resp.Id,
 			"graph_id":   resp.GraphId,
@@ -318,7 +405,7 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "get graph failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tasks":        resp.Tasks,
 		"dependencies": resp.Dependencies,

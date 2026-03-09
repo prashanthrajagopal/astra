@@ -33,6 +33,9 @@ type Config struct {
 	CostTrackerPort       int
 	IdentityAddr          string
 	AccessControlAddr     string
+	WorkerManagerAddr     string
+	CostTrackerAddr       string
+	LogsDir               string
 	JWTSecret             string
 	LogLevel              string
 	OTELEndpoint          string
@@ -84,6 +87,9 @@ func Load() (*Config, error) {
 		CostTrackerPort:       costTrackerPort,
 		IdentityAddr:          getEnv("IDENTITY_ADDR", "http://localhost:8085"),
 		AccessControlAddr:     getEnv("ACCESS_CONTROL_ADDR", "http://localhost:8086"),
+		WorkerManagerAddr:     getEnv("WORKER_MANAGER_ADDR", "http://localhost:8082"),
+		CostTrackerAddr:       getEnv("COST_TRACKER_ADDR", "http://localhost:8090"),
+		LogsDir:               getEnv("ASTRA_LOGS_DIR", "logs"),
 		JWTSecret:             getEnv("ASTRA_JWT_SECRET", "astra-dev-secret"),
 		LogLevel:              getEnv("LOG_LEVEL", "info"),
 		OTELEndpoint:          getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
@@ -165,6 +171,9 @@ func overlayFromVault(cfg *Config, values map[string]string) {
 	assignString("REDIS_ADDR", func(v string) { cfg.RedisAddr = v })
 	assignString("MEMCACHED_ADDR", func(v string) { cfg.MemcachedAddr = v })
 	assignString("ASTRA_JWT_SECRET", func(v string) { cfg.JWTSecret = v })
+	assignString("WORKER_MANAGER_ADDR", func(v string) { cfg.WorkerManagerAddr = v })
+	assignString("COST_TRACKER_ADDR", func(v string) { cfg.CostTrackerAddr = v })
+	assignString("ASTRA_LOGS_DIR", func(v string) { cfg.LogsDir = v })
 	assignBool("ASTRA_TLS_ENABLED", func(v bool) { cfg.TLSEnabled = v })
 	assignString("ASTRA_TLS_CERT_FILE", func(v string) { cfg.TLSCertFile = v })
 	assignString("ASTRA_TLS_KEY_FILE", func(v string) { cfg.TLSKeyFile = v })

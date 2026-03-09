@@ -384,17 +384,17 @@ assert_eq "docs/observability.md exists" "true" "$(test -f docs/observability.md
 echo ""
 echo "$(bold '═══ PHASE 6: SDK & Apps ═══')"
 assert_eq "pkg/sdk directory exists" "true" "$(test -d pkg/sdk && echo true || echo false)"
-assert_eq "sdk context interface exists" "true" "$(rg -n \"type AgentContext interface\" pkg/sdk/context.go >/dev/null && echo true || echo false)"
-assert_eq "memory client interface exists" "true" "$(rg -n \"type MemoryClient interface\" pkg/sdk/memory.go >/dev/null && echo true || echo false)"
-assert_eq "tool client interface exists" "true" "$(rg -n \"type ToolClient interface\" pkg/sdk/tool.go >/dev/null && echo true || echo false)"
+assert_eq "sdk context interface exists" "true" "$(grep -q 'type AgentContext interface' pkg/sdk/context.go 2>/dev/null && echo true || echo false)"
+assert_eq "memory client interface exists" "true" "$(grep -q 'type MemoryClient interface' pkg/sdk/memory.go 2>/dev/null && echo true || echo false)"
+assert_eq "tool client interface exists" "true" "$(grep -q 'type ToolClient interface' pkg/sdk/tool.go 2>/dev/null && echo true || echo false)"
 assert_eq "sdk README exists" "true" "$(test -f pkg/sdk/README.md && echo true || echo false)"
 assert_eq "simple-agent example exists" "true" "$(test -f examples/simple-agent/main.go && test -f examples/simple-agent/README.md && echo true || echo false)"
 assert_eq "echo-agent example exists" "true" "$(test -f examples/echo-agent/main.go && echo true || echo false)"
 assert_eq "examples README exists" "true" "$(test -f examples/README.md && echo true || echo false)"
-if GO_DETECTED; then
+if command -v go >/dev/null 2>&1; then
   SDK_BUILD_OK=$(go build ./pkg/sdk/... >/dev/null 2>&1 && echo ok || echo fail)
   assert_eq "sdk package builds" "ok" "$SDK_BUILD_OK"
-  SDK_INTERNAL_DEPS=$(go list -deps ./pkg/sdk/... 2>/dev/null | rg "^astra/internal/" || true)
+  SDK_INTERNAL_DEPS=$(go list -deps ./pkg/sdk/... 2>/dev/null | grep "^astra/internal/" || true)
   assert_eq "sdk has no internal deps" "" "$SDK_INTERNAL_DEPS"
 else
   skip_test "sdk build and dependency checks (go not installed)"
@@ -408,13 +408,42 @@ echo "$(bold '═══ PHASE 7: Security Compliance & Production Auth ═══
 assert_eq "pkg/grpc TLS helpers exist" "true" "$(test -f pkg/grpc/tls.go && echo true || echo false)"
 assert_eq "pkg/httpx TLS helpers exist" "true" "$(test -f pkg/httpx/httpx.go && echo true || echo false)"
 assert_eq "pkg/secrets vault loader exists" "true" "$(test -f pkg/secrets/vault.go && echo true || echo false)"
-assert_eq "config has TLS enable flag" "true" "$(rg -n 'TLSEnabled' pkg/config/config.go >/dev/null && echo true || echo false)"
-assert_eq "config has Vault address fields" "true" "$(rg -n 'VaultAddr|VaultToken|VaultPath' pkg/config/config.go >/dev/null && echo true || echo false)"
-assert_eq "grpc server uses config-aware constructor" "true" "$(rg -n 'NewServerFromConfig\\(' cmd/agent-service/main.go cmd/task-service/main.go cmd/memory-service/main.go cmd/llm-router/main.go >/dev/null && echo true || echo false)"
-assert_eq "http services use TLS-aware helper" "true" "$(rg -n 'httpx\\.ListenAndServe\\(' cmd >/dev/null && echo true || echo false)"
-assert_eq "helm values include tls and vault blocks" "true" "$(rg -n '^tls:|^vault:' deployments/helm/astra/values.yaml >/dev/null && echo true || echo false)"
+assert_eq "config has TLS enable flag" "true" "$(grep -q 'TLSEnabled' pkg/config/config.go 2>/dev/null && echo true || echo false)"
+assert_eq "config has Vault address fields" "true" "$(grep -E -q 'VaultAddr|VaultToken|VaultPath' pkg/config/config.go 2>/dev/null && echo true || echo false)"
+assert_eq "grpc server uses config-aware constructor" "true" "$(grep -q 'NewServerFromConfig(' cmd/agent-service/main.go cmd/task-service/main.go cmd/memory-service/main.go cmd/llm-router/main.go 2>/dev/null && echo true || echo false)"
+assert_eq "http services use TLS-aware helper" "true" "$(grep -R -q 'httpx.ListenAndServe(' cmd 2>/dev/null && echo true || echo false)"
+assert_eq "helm values include tls and vault blocks" "true" "$(grep -E -q '^tls:|^vault:' deployments/helm/astra/values.yaml 2>/dev/null && echo true || echo false)"
 assert_eq "vault runbook exists" "true" "$(test -f docs/runbooks/vault-setup.md && echo true || echo false)"
 assert_eq "tls rotation runbook exists" "true" "$(test -f docs/runbooks/tls-rotation.md && echo true || echo false)"
+
+# ═══════════════════════════════════════════════
+# DASHBOARD — Platform visibility
+# ═══════════════════════════════════════════════
+echo ""
+echo "$(bold '═══ DASHBOARD ═══')"
+
+SNAPSHOT=$(curl -sf "$API/api/dashboard/snapshot" 2>/dev/null || echo "{}")
+assert_not_empty "GET /api/dashboard/snapshot returns data" "$SNAPSHOT"
+SNAPSHOT_KEYS=$(echo "$SNAPSHOT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(sorted(d.keys())))" 2>/dev/null || echo "")
+assert_contains "snapshot has services key" "services" "$SNAPSHOT_KEYS"
+assert_contains "snapshot has workers key" "workers" "$SNAPSHOT_KEYS"
+assert_contains "snapshot has approvals key" "approvals" "$SNAPSHOT_KEYS"
+assert_contains "snapshot has cost key" "cost" "$SNAPSHOT_KEYS"
+assert_contains "snapshot has logs key" "logs" "$SNAPSHOT_KEYS"
+assert_contains "snapshot has pids key" "pids" "$SNAPSHOT_KEYS"
+
+DASH_HTML=$(curl -sf "$API/dashboard/" 2>/dev/null || curl -sf "$API/dashboard/index.html" 2>/dev/null || echo "")
+assert_contains "dashboard HTML served" "Astra Platform Dashboard" "$DASH_HTML"
+
+DASH_APPROVAL_SEED=$(curl -s -X POST "http://localhost:${TOOL_RUNTIME_PORT:-8083}/execute" -H "Content-Type: application/json" -d '{"name":"terraform apply","timeout_seconds":5}' 2>/dev/null || echo '{}')
+DASH_APPROVAL_ID=$(echo "$DASH_APPROVAL_SEED" | python3 -c "import sys,json; print(json.load(sys.stdin).get('approval_request_id',''))" 2>/dev/null || echo "")
+if [[ -n "$DASH_APPROVAL_ID" ]]; then
+  DASH_APPROVE=$(curl -sf -X POST "$API/api/dashboard/approvals/$DASH_APPROVAL_ID/approve" -H "Content-Type: application/json" -d '{"decided_by":"validate"}' 2>/dev/null || echo '{}')
+  DASH_APPROVE_STATUS=$(echo "$DASH_APPROVE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+  assert_eq "dashboard approval action endpoint works" "ok" "$DASH_APPROVE_STATUS"
+else
+  skip_test "dashboard approval action endpoint works (no approval id returned)"
+fi
 
 # ═══════════════════════════════════════════════
 # SUMMARY

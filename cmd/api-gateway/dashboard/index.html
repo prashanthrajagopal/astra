@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Astra Platform Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css" />
+</head>
+<body>
+  <header id="dashboard-header" class="dashboard-header">
+    <h1 id="dashboard-title">Astra Platform Dashboard</h1>
+    <div id="dashboard-meta" class="dashboard-meta">
+      <span id="last-updated" class="meta-item">Last updated: never</span>
+      <span id="refresh-status" class="meta-item">Idle</span>
+      <button id="btn-refresh" class="meta-item">Refresh now</button>
+    </div>
+  </header>
+
+  <section id="section-services" class="dashboard-card card-services">
+    <h2 class="section-title">Services</h2>
+    <table id="table-services" class="data-table">
+      <thead><tr><th>Name</th><th>Port</th><th>Type</th><th>Status</th><th>Latency (ms)</th></tr></thead>
+      <tbody id="tbody-services"></tbody>
+    </table>
+  </section>
+
+  <section id="section-workers" class="dashboard-card card-workers">
+    <h2 class="section-title">Workers</h2>
+    <table id="table-workers" class="data-table">
+      <thead><tr><th>ID</th><th>Hostname</th><th>Status</th><th>Capabilities</th><th>Last Heartbeat</th></tr></thead>
+      <tbody id="tbody-workers"></tbody>
+    </table>
+  </section>
+
+  <section id="section-approvals" class="dashboard-card card-approvals">
+    <h2 class="section-title">Pending Approvals</h2>
+    <table id="table-approvals" class="data-table">
+      <thead><tr><th>ID</th><th>Tool</th><th>Action Summary</th><th>Status</th><th>Requested At</th><th>Actions</th></tr></thead>
+      <tbody id="tbody-approvals"></tbody>
+    </table>
+  </section>
+
+  <section id="section-cost" class="dashboard-card card-cost">
+    <h2 class="section-title">Cost (7 days)</h2>
+    <table id="table-cost" class="data-table">
+      <thead><tr><th>Day</th><th>Agent ID</th><th>Model</th><th>Tokens In</th><th>Tokens Out</th><th>Cost ($)</th></tr></thead>
+      <tbody id="tbody-cost"></tbody>
+    </table>
+  </section>
+
+  <section id="section-logs" class="dashboard-card card-logs">
+    <h2 class="section-title">Log Tails</h2>
+    <div id="logs-container"></div>
+  </section>
+
+  <section id="section-pids" class="dashboard-card card-pids">
+    <h2 class="section-title">Process IDs</h2>
+    <table id="table-pids" class="data-table">
+      <thead><tr><th>Service</th><th>PID</th></tr></thead>
+      <tbody id="tbody-pids"></tbody>
+    </table>
+  </section>
+
+  <script src="/dashboard/static/app.js"></script>
+</body>
+</html>

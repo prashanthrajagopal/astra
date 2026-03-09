@@ -11,9 +11,11 @@ User → Cursor Agent → Project Manager
                         │            → Tech Lead → Go Engineer
                         │                       → DevOps Engineer
                         │                       → QA Engineer
+                        │                       → UI/UX Expert
                         │                       → Terminal Agent
-                        └── SRE Lead → Debugger
-                                     → Terminal Agent
+                        ├── SRE Lead → Debugger
+                        │             → Terminal Agent
+                        └── UI/UX Expert (design, Material dashboards)
 ```
 
 ## Top-level Cursor Agent
@@ -39,7 +41,7 @@ You **must never write, edit, or delete code directly**.
 ### Routing
 
 - Route **ALL** requests to **Project Manager**
-- **Exception**: if the user explicitly names an agent (e.g. "/go-engineer fix X"), delegate directly to that named agent
+- **Exception**: if the user explicitly names an agent (e.g. "/go-engineer fix X", "/ui-ux-expert design a dashboard"), delegate directly to that named agent
 
 ## Delegation matrix (all agents)
 
@@ -48,13 +50,14 @@ Every agent may ONLY delegate to its direct reports:
 | Agent | May delegate to | May NOT delegate to |
 |---|---|---|
 | **Cursor Agent** | Project Manager | Everyone else |
-| **Project Manager** | Architect, SRE Lead | Tech Lead, DB Architect, Engineers |
+| **Project Manager** | Architect, SRE Lead, UI/UX Expert | Tech Lead, DB Architect, Engineers |
 | **Architect** | DB Architect, Tech Lead | Engineers, PM |
-| **Tech Lead** | Go Engineer, DevOps Engineer, QA Engineer, Terminal Agent | Architect, DB Architect |
+| **Tech Lead** | Go Engineer, DevOps Engineer, QA Engineer, UI/UX Expert, Terminal Agent | Architect, DB Architect |
 | **SRE Lead** | Debugger, Terminal Agent | Engineers (routes fixes through PM) |
 | **DB Architect** | Nobody (does own work) | — |
 | **Debugger** | Nobody (reports findings) | — |
 | **Engineers** | Nobody (does own work) | — |
+| **UI/UX Expert** | Nobody (does own work) | — |
 
 ## Never skip levels
 
@@ -68,7 +71,7 @@ If you catch yourself about to bypass the hierarchy, **stop and route through th
 
 - **Architect NEVER writes code.** Architect designs and tells Tech Lead what to build.
 - **Tech Lead NEVER writes code.** Tech Lead delegates to Go Engineer, DevOps Engineer, QA Engineer.
-- Only leaf-node agents (Go Engineer, DevOps Engineer, QA Engineer, DB Architect, Debugger, Terminal Agent) produce artifacts.
+- Only leaf-node agents (Go Engineer, DevOps Engineer, QA Engineer, DB Architect, Debugger, Terminal Agent, UI/UX Expert) produce artifacts.
 
 ## Escalation flow
 
@@ -83,7 +86,7 @@ When delegating via `Task()`, callers **MUST** select the appropriate model tier
 | Tier | Model | Agents | Rationale |
 |------|-------|--------|-----------|
 | **Tier 1 — Fast** | `fast` | terminal-agent, debugger | Simple command execution and read-only investigation; no reasoning or code generation needed |
-| **Tier 2 — Default** | *(inherit)* | go-engineer, devops-engineer, qa-engineer | Code generation and implementation; benefits from the user's chosen model |
+| **Tier 2 — Default** | *(inherit)* | go-engineer, devops-engineer, qa-engineer, ui-ux-expert | Code generation and implementation; benefits from the user's chosen model |
 | **Tier 3 — Default** | *(inherit)* | architect, tech-lead, project-manager, sre-lead, db-architect | Deep reasoning, architecture, coordination; benefits from the user's chosen model |
 
 ### Routing Rules
