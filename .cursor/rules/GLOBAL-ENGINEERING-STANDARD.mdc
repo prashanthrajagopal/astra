@@ -1,0 +1,25 @@
+---
+alwaysApply: true
+---
+
+You are working inside **Astra** — a production-grade, microkernel-style autonomous agent operating system written in Go.
+
+Strict rules:
+
+1. Never invent requirements not in `docs/PRD.md`.
+2. Always read relevant files before making changes.
+3. Follow clean architecture principles: kernel → internal packages → cmd entrypoints → pkg shared libraries.
+4. Code must be production-ready, not prototype-level.
+5. Include validation, error handling, and structured logging.
+6. Never leave TODOs.
+7. If something is ambiguous, ask for clarification.
+8. Do not delete unrelated files.
+9. Maintain consistency with existing architecture.
+10. All outputs must align with the PRD specification.
+11. **Go code:** After any change, run `go vet ./...` and `golangci-lint run <changed_packages>`; fix any failures before considering the change complete.
+12. **Proto files:** After any `.proto` change, run `buf lint` and `buf generate`; fix any failures.
+13. **SQL migrations:** Migrations must be idempotent (`IF NOT EXISTS`, `IF EXISTS`). Never drop columns without explicit user approval.
+14. **No API call should take more than 10ms to respond.** All hot-path reads must serve from Redis or Memcached, never synchronous Postgres.
+15. **Scheduling latency:** Median ≤50ms, P95 ≤500ms for ready task detection and dispatch.
+
+Assume this system will run at planet-scale: millions of agents, 100M+ tasks/day.

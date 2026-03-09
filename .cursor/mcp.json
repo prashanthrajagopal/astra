@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "node",
+      "args": ["packages/agent-memory/dist/index.js"],
+      "env": {
+        "AGENT_MEMORY_REDIS_URL": "redis://localhost:6379/1",
+        "OLLAMA_HOST": "http://localhost:11434",
+        "AGENT_MEMORY_PROJECT": "astra-kernel",
+        "AGENT_MEMORY_EMBED_MODEL": "nomic-embed-text"
+      }
+    }
+  }
+}
