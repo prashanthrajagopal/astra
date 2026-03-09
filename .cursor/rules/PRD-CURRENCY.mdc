@@ -9,3 +9,4 @@ Keep **`docs/PRD.md`** up to date whenever the system changes.
 - When completing a phase, shipping a new service, adding a migration, or changing an API contract, the responsible agent (or **Tech Lead**) must update the relevant PRD sections (e.g. roadmap checkboxes, new sections, schema, or service descriptions).
 - Do not mark a phase done or update phase history until the PRD has been updated to reflect the delivered work.
 - Reference `docs/PRD.md` for the canonical structure; add or amend sections as needed so the PRD remains the single source of truth for architecture, schema, and roadmap.
+- When completing a phase, update **`scripts/validate.sh`**: replace placeholder `skip_test` calls for that phase with real validation tests. The script must always reflect cumulative functionality across all completed phases.
