@@ -160,13 +160,16 @@ go build -o bin/scheduler-service  ./cmd/scheduler-service
 go build -o bin/task-service       ./cmd/task-service
 go build -o bin/agent-service      ./cmd/agent-service
 go build -o bin/execution-worker   ./cmd/execution-worker
+go build -o bin/worker-manager     ./cmd/worker-manager
+go build -o bin/tool-runtime       ./cmd/tool-runtime
+go build -o bin/browser-worker     ./cmd/browser-worker
 echo "Build done."
 
 echo ""
 echo "Starting services..."
 set -a; source .env 2>/dev/null || true; set +a
 
-SERVICES="task-service agent-service scheduler-service execution-worker api-gateway"
+SERVICES="task-service agent-service scheduler-service execution-worker worker-manager tool-runtime browser-worker api-gateway"
 for svc in $SERVICES; do
   if [[ -f "logs/${svc}.pid" ]]; then
     kill "$(cat "logs/${svc}.pid")" 2>/dev/null || true
@@ -183,6 +186,12 @@ echo $! > logs/agent-service.pid
 echo $! > logs/scheduler-service.pid
 ./bin/execution-worker   > logs/execution-worker.log 2>&1 &
 echo $! > logs/execution-worker.pid
+./bin/worker-manager     > logs/worker-manager.log 2>&1 &
+echo $! > logs/worker-manager.pid
+./bin/tool-runtime       > logs/tool-runtime.log 2>&1 &
+echo $! > logs/tool-runtime.pid
+./bin/browser-worker     > logs/browser-worker.log 2>&1 &
+echo $! > logs/browser-worker.pid
 sleep 1
 ./bin/api-gateway        > logs/api-gateway.log 2>&1 &
 echo $! > logs/api-gateway.pid
@@ -190,7 +199,7 @@ echo $! > logs/api-gateway.pid
 echo ""
 echo "=== Deploy complete ==="
 echo "Infra: Postgres=$POSTGRES_SOURCE  Redis=$REDIS_SOURCE  Memcached=$MEMCACHED_SOURCE"
-echo "Services: task-service, agent-service, scheduler-service, execution-worker, api-gateway"
+echo "Services: task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, api-gateway"
 echo "Logs:  logs/*.log"
 echo "PIDs:  logs/*.pid"
 echo "Stop:  for f in logs/*.pid; do kill \$(cat \$f) 2>/dev/null; done"

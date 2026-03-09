@@ -312,6 +312,65 @@ func (s *Store) FailTask(ctx context.Context, taskID string, errMsg string) erro
 	return tx.Commit()
 }
 
+func (s *Store) SetWorkerID(ctx context.Context, taskID, workerID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET worker_id = $1::uuid WHERE id = $2::uuid`,
+		workerID, taskID)
+	if err != nil {
+		return fmt.Errorf("tasks.SetWorkerID: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) FindOrphanedRunningTasks(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id FROM tasks t
+		JOIN workers w ON w.id = t.worker_id
+		WHERE t.status = 'running' AND w.status = 'offline'`)
+	if err != nil {
+		return nil, fmt.Errorf("tasks.FindOrphanedRunning: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("tasks.FindOrphanedRunning: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Store) RequeueTask(ctx context.Context, taskID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("tasks.RequeueTask: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET status = 'queued', worker_id = NULL, updated_at = now() WHERE id = $1 AND status = 'running'`,
+		taskID)
+	if err != nil {
+		return fmt.Errorf("tasks.RequeueTask: update: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return nil
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ('TaskRequeued', $1, '{}', now())`,
+		taskID)
+	if err != nil {
+		return fmt.Errorf("tasks.RequeueTask: event: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id FROM tasks t
