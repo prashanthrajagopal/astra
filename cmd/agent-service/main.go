@@ -48,7 +48,11 @@ func main() {
 	}
 
 	kernelSrv := kernelserver.NewKernelGRPCServer(k, bus, database, agentFactory)
-	grpcSrv := grpc.NewServer()
+	grpcSrv, err := grpc.NewServerFromConfig(cfg)
+	if err != nil {
+		slog.Error("failed to initialize gRPC server", "err", err)
+		os.Exit(1)
+	}
 	kernel_pb.RegisterKernelServiceServer(grpcSrv, kernelSrv)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

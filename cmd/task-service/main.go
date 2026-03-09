@@ -14,8 +14,8 @@ import (
 	"astra/pkg/grpc"
 	"astra/pkg/logger"
 
-	"github.com/redis/go-redis/v9"
 	tasks_pb "astra/proto/tasks"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -50,7 +50,11 @@ func main() {
 	}
 
 	taskSrv := tasks.NewGRPCServer(taskStore)
-	srv := grpc.NewServer()
+	srv, err := grpc.NewServerFromConfig(cfg)
+	if err != nil {
+		slog.Error("failed to initialize gRPC server", "err", err)
+		os.Exit(1)
+	}
 	tasks_pb.RegisterTaskServiceServer(srv, taskSrv)
 
 	port := cfg.GRPCPort

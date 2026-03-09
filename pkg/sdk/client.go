@@ -2,7 +2,10 @@ package sdk
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 
 	kernelpb "astra/proto/kernel"
@@ -11,17 +14,24 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
-	AgentID             string
-	KernelGRPCAddr      string
-	TaskGRPCAddr        string
-	MemoryGRPCAddr      string
-	ToolRuntimeHTTPAddr string
-	RequestTimeout      time.Duration
-	ActorType           string
+	AgentID               string
+	KernelGRPCAddr        string
+	TaskGRPCAddr          string
+	MemoryGRPCAddr        string
+	ToolRuntimeHTTPAddr   string
+	RequestTimeout        time.Duration
+	ActorType             string
+	TLSEnabled            bool
+	TLSCertFile           string
+	TLSKeyFile            string
+	TLSCAFile             string
+	TLSServerName         string
+	TLSInsecureSkipVerify bool
 }
 
 type DefaultAgentContext struct {
@@ -67,16 +77,16 @@ func NewAgentContext(cfg Config) (*DefaultAgentContext, error) {
 		cfg.ActorType = DefaultConfig().ActorType
 	}
 
-	kernelConn, err := grpc.NewClient(cfg.KernelGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	kernelConn, err := dialGRPC(cfg.KernelGRPCAddr, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("sdk.NewAgentContext kernel dial: %w", err)
 	}
-	taskConn, err := grpc.NewClient(cfg.TaskGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	taskConn, err := dialGRPC(cfg.TaskGRPCAddr, cfg)
 	if err != nil {
 		kernelConn.Close()
 		return nil, fmt.Errorf("sdk.NewAgentContext task dial: %w", err)
 	}
-	memoryConn, err := grpc.NewClient(cfg.MemoryGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	memoryConn, err := dialGRPC(cfg.MemoryGRPCAddr, cfg)
 	if err != nil {
 		kernelConn.Close()
 		taskConn.Close()
@@ -182,4 +192,34 @@ func (c *DefaultAgentContext) PublishEvent(ctx context.Context, event Event) (st
 
 func (c *DefaultAgentContext) CallTool(ctx context.Context, name string, input []byte) (ToolExecutionResult, error) {
 	return c.toolClient.Execute(ctx, name, input)
+}
+
+func dialGRPC(target string, cfg Config) (*grpc.ClientConn, error) {
+	if !cfg.TLSEnabled {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	tlsCfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: cfg.TLSInsecureSkipVerify,
+		ServerName:         cfg.TLSServerName,
+	}
+	if cfg.TLSCAFile != "" {
+		pem, err := os.ReadFile(cfg.TLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("sdk tls read ca: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("sdk tls append ca cert failed")
+		}
+		tlsCfg.RootCAs = pool
+	}
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("sdk tls load cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	return grpc.NewClient(target, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 }

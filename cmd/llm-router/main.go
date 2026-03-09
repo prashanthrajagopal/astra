@@ -229,7 +229,11 @@ func main() {
 	mc := memcache.New(cfg.MemcachedAddr)
 	router := llm.NewRouterWithCache(&llm.StubBackend{}, mc, cacheTTL)
 	srv := &llmRouterServer{router: router, bus: bus}
-	grpcSrv := grpc.NewServer()
+	grpcSrv, err := grpc.NewServerFromConfig(cfg)
+	if err != nil {
+		slog.Error("failed to initialize gRPC server", "err", err)
+		os.Exit(1)
+	}
 	llmpb.RegisterLLMRouterServer(grpcSrv, srv)
 
 	port := cfg.LLMGRPCPort
