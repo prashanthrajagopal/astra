@@ -1,0 +1,124 @@
+---
+description: Enforces the agent hierarchy. Top-level agent delegates to Project Manager only. Each agent delegates only to its direct reports. No level-skipping.
+alwaysApply: true
+---
+
+# Agent Hierarchy
+
+```
+User → Cursor Agent → Project Manager
+                        ├── Architect → DB Architect
+                        │            → Tech Lead → Go Engineer
+                        │                       → DevOps Engineer
+                        │                       → QA Engineer
+                        │                       → Terminal Agent
+                        └── SRE Lead → Debugger
+                                     → Terminal Agent
+```
+
+## Top-level Cursor Agent
+
+You **must never write, edit, or delete code directly**.
+
+### You CAN
+
+- Read files for context before delegating
+- Run read-only shell commands (git status, git log, ls, go vet output)
+- Create or update Cursor rules (`.cursor/rules/*.mdc`) and agent definitions (`.cursor/agents/*.md`) when the user asks
+- Create or update skills (`.cursor/skills/`) when the user asks
+- Summarize subagent results to the user
+- Ask clarifying questions
+
+### You MUST NOT
+
+- Write, edit, or delete source code files (`.go`, `.proto`, `.sql`, `.yaml`, `.yml`, `.json`, `.toml`, `.mod`, `.sum`, `.sh`, `.dockerfile`, etc.)
+- Run code-modifying shell commands
+- Create new source files
+- Make database migrations
+
+### Routing
+
+- Route **ALL** requests to **Project Manager**
+- **Exception**: if the user explicitly names an agent (e.g. "/go-engineer fix X"), delegate directly to that named agent
+
+## Delegation matrix (all agents)
+
+Every agent may ONLY delegate to its direct reports:
+
+| Agent | May delegate to | May NOT delegate to |
+|---|---|---|
+| **Cursor Agent** | Project Manager | Everyone else |
+| **Project Manager** | Architect, SRE Lead | Tech Lead, DB Architect, Engineers |
+| **Architect** | DB Architect, Tech Lead | Engineers, PM |
+| **Tech Lead** | Go Engineer, DevOps Engineer, QA Engineer, Terminal Agent | Architect, DB Architect |
+| **SRE Lead** | Debugger, Terminal Agent | Engineers (routes fixes through PM) |
+| **DB Architect** | Nobody (does own work) | — |
+| **Debugger** | Nobody (reports findings) | — |
+| **Engineers** | Nobody (does own work) | — |
+
+## Never skip levels
+
+- Project Manager cannot talk to Engineers
+- Architect cannot talk to Engineers (goes through Tech Lead)
+- SRE Lead cannot assign fixes to Engineers (routes through PM → Architect → Tech Lead)
+
+If you catch yourself about to bypass the hierarchy, **stop and route through the correct chain**.
+
+## Model Routing — Cost-Optimised Delegation
+
+When delegating via `Task()`, callers **MUST** select the appropriate model tier to balance cost and capability. Pass `model="fast"` for Tier 1 agents; omit `model` (inherit parent) for Tier 2 and Tier 3.
+
+| Tier | Model | Agents | Rationale |
+|------|-------|--------|-----------|
+| **Tier 1 — Fast** | `fast` | terminal-agent, debugger | Simple command execution and read-only investigation; no reasoning or code generation needed |
+| **Tier 2 — Default** | *(inherit)* | go-engineer, devops-engineer, qa-engineer | Code generation and implementation; benefits from the user's chosen model |
+| **Tier 3 — Default** | *(inherit)* | architect, tech-lead, project-manager, sre-lead, db-architect | Deep reasoning, architecture, coordination; benefits from the user's chosen model |
+
+### Routing Rules
+
+1. **Always pass `model="fast"`** when calling `terminal-agent` or `debugger`.
+2. **Use `model="fast"` for `explore` subagents** when performing quick file/code searches.
+3. **Omit `model`** (inherit) for all implementation and leadership agents.
+4. **When a leadership agent delegates further**, it follows the same tier rules.
+5. **Never override to a more expensive model** than the user's configured default.
+
+### Fallback — Rate Limits and Model Unavailability
+
+1. **Tier 2/3 agents**: Fall back to `model="fast"`. Warn the user.
+2. **Tier 1 agents**: Already on `fast`; no further fallback. Report limitation and pause.
+3. **Never silently downgrade.** Always tell the user when a fallback is in effect.
+
+## Agent Memory (MCP)
+
+An MCP server (`agent-memory`) provides semantic memory via Redis vector search. **Prerequisites:** Redis on localhost:6379/1, Ollama with `nomic-embed-text`.
+
+### Who Reads
+
+**All agents** should call `query_memory` at the start of a task when the work may overlap with prior tasks.
+
+### Who Writes
+
+Only **leadership agents** write memory:
+
+| Agent | When | Memory Type |
+|-------|------|-------------|
+| **tech-lead** | After validating engineer output | `work_summary` |
+| **sre-lead** | After closing investigation | `investigation`, `error_fix` |
+| **architect** | After design decision | `decision`, `pattern` |
+
+### Rules
+
+- Call `query_memory` before reading files for context — a memory hit saves tokens.
+- Call `store_memory` with a concise 1-2 sentence summary. Do not store raw conversation.
+- Memory is a **hint**, not a source of truth. Verify against current codebase if critical.
+- If memory MCP is unavailable, proceed without it — never block on memory failure.
+
+## Custom Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/debug` | Root-cause investigation via SRE/debugger chain |
+| `/review-code` | Structured code review with severity grouping |
+| `/explain` | Explain a codebase area with file references and diagrams |
+| `/performance-check` | Audit for 10ms API / 50ms scheduling latency compliance |
+| `/security-audit` | Security review per Astra security policy |

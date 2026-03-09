@@ -1,0 +1,10 @@
+---
+alwaysApply: true
+---
+
+Before implementing any feature:
+1. Cross-reference `docs/PRD.md` (the Astra PRD).
+2. Confirm the feature, service, API, or schema exists in the PRD.
+3. If missing, stop and ask.
+4. Do not proceed with assumptions.
+5. The PRD defines 16 canonical services, the kernel API, task lifecycle, actor framework, database schema, Redis stream schemas, and deployment architecture — all implementations must trace to these specifications.
