@@ -1,0 +1,26 @@
+
+syntax="proto3";
+package astra.kernel;
+
+service KernelService{
+rpc SpawnActor(SpawnActorRequest) returns (SpawnActorResponse);
+rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+}
+
+message SpawnActorRequest{
+string actor_type=1;
+}
+
+message SpawnActorResponse{
+string actor_id=1;
+}
+
+message SendMessageRequest{
+string target=1;
+string type=2;
+bytes payload=3;
+}
+
+message SendMessageResponse{
+bool accepted=1;
+}
