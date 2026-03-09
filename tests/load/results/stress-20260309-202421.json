@@ -1,0 +1,129 @@
+{
+  "timestamp": "2026-03-09T20:24:21.544582Z",
+  "machine": {
+    "platform": "darwin",
+    "cpu_count": 12
+  },
+  "config": {
+    "base_url": "http://localhost:8080",
+    "identity_url": "http://localhost:8085",
+    "worker_manager_url": "http://localhost:8082",
+    "access_url": "http://localhost:8086",
+    "agents": 200,
+    "goals": 120,
+    "workers": 0,
+    "concurrency": 40,
+    "monitor_seconds": 20,
+    "monitor_interval": 5,
+    "skip_worker_fanout": false
+  },
+  "agent_run": {
+    "kind": "create_agents",
+    "total": 200,
+    "ok": 200,
+    "fail": 0,
+    "elapsed_s": 0.065,
+    "rps": 3056.19,
+    "latency_ms": {
+      "p50": 7.61,
+      "p95": 34.62,
+      "p99": 45.42,
+      "mean": 11.09
+    }
+  },
+  "goal_run": {
+    "kind": "submit_goals",
+    "total": 120,
+    "ok": 120,
+    "fail": 0,
+    "elapsed_s": 0.034,
+    "rps": 3522.94,
+    "latency_ms": {
+      "p50": 4.51,
+      "p95": 8.6,
+      "p99": 10.05,
+      "mean": 4.89
+    }
+  },
+  "monitor": {
+    "samples": 4,
+    "max_workers_observed": 2,
+    "final_workers_observed": 2,
+    "max_load1": 6.17,
+    "min_free_mem_mb": 7791.9
+  },
+  "monitor_samples": [
+    {
+      "ts": "2026-03-09T20:24:00.473899Z",
+      "workers": 2,
+      "pending_approvals": 0,
+      "api_health_status": 200,
+      "api_health_latency_ms": 0.83,
+      "api_health_error": null,
+      "loadavg": [
+        5.81,
+        3.49,
+        3.78
+      ],
+      "mem": {
+        "free_mb": 7972.6,
+        "wired_mb": 3627.0
+      }
+    },
+    {
+      "ts": "2026-03-09T20:24:05.493036Z",
+      "workers": 2,
+      "pending_approvals": 0,
+      "api_health_status": 200,
+      "api_health_latency_ms": 1.36,
+      "api_health_error": null,
+      "loadavg": [
+        5.74,
+        3.51,
+        3.79
+      ],
+      "mem": {
+        "free_mb": 7791.9,
+        "wired_mb": 3874.8
+      }
+    },
+    {
+      "ts": "2026-03-09T20:24:10.521436Z",
+      "workers": 2,
+      "pending_approvals": 0,
+      "api_health_status": 200,
+      "api_health_latency_ms": 0.66,
+      "api_health_error": null,
+      "loadavg": [
+        5.92,
+        3.59,
+        3.81
+      ],
+      "mem": {
+        "free_mb": 7835.6,
+        "wired_mb": 3907.5
+      }
+    },
+    {
+      "ts": "2026-03-09T20:24:15.532879Z",
+      "workers": 2,
+      "pending_approvals": 0,
+      "api_health_status": 200,
+      "api_health_latency_ms": 0.55,
+      "api_health_error": null,
+      "loadavg": [
+        6.17,
+        3.68,
+        3.84
+      ],
+      "mem": {
+        "free_mb": 7878.0,
+        "wired_mb": 3872.8
+      }
+    }
+  ],
+  "notes": [
+    "Workers observed includes default workers plus stress workers if launched.",
+    "Capacity estimate should be based on success rate + p95 latency + system saturation."
+  ]
+}

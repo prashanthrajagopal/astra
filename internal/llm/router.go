@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -23,9 +24,9 @@ const (
 
 // Resolved model names for cache keys and usage (constants; config can override later).
 const (
-	ModelLocal   = "ollama/llama"
-	ModelPremium = "openai/gpt-4"
-	ModelCode    = "openai/gpt-4-code"
+	ModelLocal   = "ollama/llama3:8b"
+	ModelPremium = "openai/gpt-4o-mini"
+	ModelCode    = "openai/gpt-4.1-mini"
 )
 
 // Usage holds token and cost metadata for a completion.
@@ -151,7 +152,18 @@ func resolveModel(modelHint string) string {
 		return ModelPremium
 	case "code":
 		return ModelCode
+	case "openai":
+		return ModelPremium
+	case "claude", "anthropic":
+		return "anthropic/claude-3-5-sonnet-latest"
+	case "gemini", "google":
+		return "gemini/gemini-1.5-pro"
+	case "ollama":
+		return ModelLocal
 	default:
+		if strings.Contains(modelHint, "/") {
+			return modelHint
+		}
 		return modelHint
 	}
 }

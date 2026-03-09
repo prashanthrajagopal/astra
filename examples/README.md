@@ -2,6 +2,7 @@
 
 - `examples/simple-agent` — plan/execute/reflect flow
 - `examples/echo-agent` — minimal tool call with SDK
+- `examples/long-running-agent` — multi-stage PRD execution loop with goal polling, memory journaling, and approvals
 
 Run examples after deploying Astra services:
 
@@ -9,4 +10,5 @@ Run examples after deploying Astra services:
 ./scripts/deploy.sh
 go run ./examples/simple-agent
 go run ./examples/echo-agent
+go run ./examples/long-running-agent
 ```

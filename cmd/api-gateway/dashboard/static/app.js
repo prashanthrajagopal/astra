@@ -16,6 +16,13 @@ function emptyRow(cols, text) {
   return tr;
 }
 
+function pick(obj, keys, fallback = '') {
+  for (const k of keys) {
+    if (obj && obj[k] !== undefined && obj[k] !== null) return obj[k];
+  }
+  return fallback;
+}
+
 function renderServices(services) {
   const tbody = document.getElementById('tbody-services');
   tbody.innerHTML = '';
@@ -37,9 +44,14 @@ function renderWorkers(workers) {
   workers.forEach((w) => {
     const tr = document.createElement('tr');
     tr.className = 'tr-worker';
-    const status = (w.status || '').toString().toLowerCase();
+    const id = pick(w, ['id', 'ID']);
+    const hostname = pick(w, ['hostname', 'Hostname']);
+    const statusText = pick(w, ['status', 'Status']);
+    const capabilities = pick(w, ['capabilities', 'Capabilities'], []);
+    const lastHeartbeat = pick(w, ['last_heartbeat', 'LastHeartbeat', 'lastHeartbeat']);
+    const status = statusText.toString().toLowerCase();
     const cls = status === 'active' ? 'status-active' : (status ? 'status-inactive' : 'status-stale');
-    tr.innerHTML = `<td>${w.id || ''}</td><td>${w.hostname || ''}</td><td class="td-status ${cls}">${w.status || ''}</td><td>${Array.isArray(w.capabilities) ? w.capabilities.join(',') : ''}</td><td>${w.last_heartbeat || ''}</td>`;
+    tr.innerHTML = `<td>${id}</td><td>${hostname}</td><td class="td-status ${cls}">${statusText}</td><td>${Array.isArray(capabilities) ? capabilities.join(',') : ''}</td><td>${lastHeartbeat}</td>`;
     tbody.appendChild(tr);
   });
 }

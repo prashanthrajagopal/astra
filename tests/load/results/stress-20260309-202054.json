@@ -1,0 +1,367 @@
+{
+  "timestamp": "2026-03-09T20:20:54.083533Z",
+  "machine": {
+    "platform": "darwin",
+    "cpu_count": 12
+  },
+  "config": {
+    "base_url": "http://localhost:8080",
+    "identity_url": "http://localhost:8085",
+    "worker_manager_url": "http://localhost:8082",
+    "access_url": "http://localhost:8086",
+    "agents": 2500,
+    "goals": 1500,
+    "workers": 300,
+    "concurrency": 100,
+    "monitor_seconds": 90,
+    "monitor_interval": 5,
+    "skip_worker_fanout": false
+  },
+  "agent_run": {
+    "kind": "create_agents",
+    "total": 2500,
+    "ok": 2500,
+    "fail": 0,
+    "elapsed_s": 0.642,
+    "rps": 3894.46,
+    "latency_ms": {
+      "p50": 3.65,
+      "p95": 27.64,
+      "p99": 39.24,
+      "mean": 9.21
+    }
+  },
+  "goal_run": {
+    "kind": "submit_goals",
+    "total": 1500,
+    "ok": 1500,
+    "fail": 0,
+    "elapsed_s": 0.43,
+    "rps": 3486.37,
+    "latency_ms": {
+      "p50": 23.85,
+      "p95": 47.76,
+      "p99": 59.78,
+      "mean": 24.59
+    }
+  },
+  "monitor": {
+    "samples": 18,
+    "max_workers_observed": 81,
+    "final_workers_observed": 81,
+    "max_load1": 2.19,
+    "min_free_mem_mb": 8292.8
+  },
+  "monitor_samples": [
+    {
+      "ts": "2026-03-09T20:19:22.793934Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.67,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.73,
+        2.45,
+        3.73
+      ],
+      "mem": {
+        "free_mb": 8292.8,
+        "wired_mb": 4070.4
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:27.810619Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.76,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.75,
+        2.45,
+        3.72
+      ],
+      "mem": {
+        "free_mb": 8306.2,
+        "wired_mb": 3953.9
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:32.820388Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.95,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.77,
+        2.44,
+        3.71
+      ],
+      "mem": {
+        "free_mb": 8453.3,
+        "wired_mb": 3922.4
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:37.839858Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.62,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.95,
+        2.46,
+        3.71
+      ],
+      "mem": {
+        "free_mb": 8417.1,
+        "wired_mb": 3846.4
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:42.852362Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.93,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.87,
+        2.44,
+        3.7
+      ],
+      "mem": {
+        "free_mb": 8477.6,
+        "wired_mb": 3808.6
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:47.863018Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.84,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.12,
+        2.48,
+        3.71
+      ],
+      "mem": {
+        "free_mb": 8465.6,
+        "wired_mb": 3795.9
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:52.877844Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.85,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.11,
+        2.47,
+        3.7
+      ],
+      "mem": {
+        "free_mb": 8509.1,
+        "wired_mb": 3788.2
+      }
+    },
+    {
+      "ts": "2026-03-09T20:19:57.890177Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.77,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.19,
+        2.48,
+        3.69
+      ],
+      "mem": {
+        "free_mb": 8475.6,
+        "wired_mb": 3792.7
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:02.902228Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.82,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.17,
+        2.47,
+        3.68
+      ],
+      "mem": {
+        "free_mb": 8540.7,
+        "wired_mb": 3759.2
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:07.914626Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.89,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.08,
+        2.45,
+        3.67
+      ],
+      "mem": {
+        "free_mb": 8496.1,
+        "wired_mb": 3785.8
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:12.932198Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 1.07,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.15,
+        2.46,
+        3.66
+      ],
+      "mem": {
+        "free_mb": 8553.5,
+        "wired_mb": 3771.8
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:17.950231Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 1.01,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.06,
+        2.43,
+        3.65
+      ],
+      "mem": {
+        "free_mb": 8522.6,
+        "wired_mb": 3759.6
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:22.965067Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 1.11,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.89,
+        2.39,
+        3.62
+      ],
+      "mem": {
+        "free_mb": 8437.6,
+        "wired_mb": 3908.3
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:27.983637Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.86,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        1.98,
+        2.4,
+        3.62
+      ],
+      "mem": {
+        "free_mb": 8502.4,
+        "wired_mb": 3765.5
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:32.997577Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 1.14,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.06,
+        2.41,
+        3.62
+      ],
+      "mem": {
+        "free_mb": 8554.7,
+        "wired_mb": 3773.0
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:38.012713Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.82,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.14,
+        2.42,
+        3.61
+      ],
+      "mem": {
+        "free_mb": 8519.7,
+        "wired_mb": 3759.8
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:43.024476Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.88,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.05,
+        2.4,
+        3.6
+      ],
+      "mem": {
+        "free_mb": 8553.5,
+        "wired_mb": 3743.8
+      }
+    },
+    {
+      "ts": "2026-03-09T20:20:48.039345Z",
+      "workers": 81,
+      "pending_approvals": -1,
+      "api_health_status": 0,
+      "api_health_latency_ms": 0.83,
+      "api_health_error": "Expecting value: line 1 column 1 (char 0)",
+      "loadavg": [
+        2.04,
+        2.39,
+        3.59
+      ],
+      "mem": {
+        "free_mb": 8539.8,
+        "wired_mb": 3744.6
+      }
+    }
+  ],
+  "notes": [
+    "Workers observed includes default workers plus stress workers if launched.",
+    "Capacity estimate should be based on success rate + p95 latency + system saturation."
+  ]
+}

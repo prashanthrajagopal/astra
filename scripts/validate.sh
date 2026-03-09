@@ -390,6 +390,7 @@ assert_eq "tool client interface exists" "true" "$(grep -q 'type ToolClient inte
 assert_eq "sdk README exists" "true" "$(test -f pkg/sdk/README.md && echo true || echo false)"
 assert_eq "simple-agent example exists" "true" "$(test -f examples/simple-agent/main.go && test -f examples/simple-agent/README.md && echo true || echo false)"
 assert_eq "echo-agent example exists" "true" "$(test -f examples/echo-agent/main.go && echo true || echo false)"
+assert_eq "long-running-agent example exists" "true" "$(test -f examples/long-running-agent/main.go && test -f examples/long-running-agent/README.md && echo true || echo false)"
 assert_eq "examples README exists" "true" "$(test -f examples/README.md && echo true || echo false)"
 if command -v go >/dev/null 2>&1; then
   SDK_BUILD_OK=$(go build ./pkg/sdk/... >/dev/null 2>&1 && echo ok || echo fail)
