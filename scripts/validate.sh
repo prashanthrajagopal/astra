@@ -383,8 +383,22 @@ assert_eq "docs/observability.md exists" "true" "$(test -f docs/observability.md
 # ═══════════════════════════════════════════════
 echo ""
 echo "$(bold '═══ PHASE 6: SDK & Apps ═══')"
-skip_test "AgentContext SDK"
-skip_test "SimpleAgent example runs"
+assert_eq "pkg/sdk directory exists" "true" "$(test -d pkg/sdk && echo true || echo false)"
+assert_eq "sdk context interface exists" "true" "$(rg -n \"type AgentContext interface\" pkg/sdk/context.go >/dev/null && echo true || echo false)"
+assert_eq "memory client interface exists" "true" "$(rg -n \"type MemoryClient interface\" pkg/sdk/memory.go >/dev/null && echo true || echo false)"
+assert_eq "tool client interface exists" "true" "$(rg -n \"type ToolClient interface\" pkg/sdk/tool.go >/dev/null && echo true || echo false)"
+assert_eq "sdk README exists" "true" "$(test -f pkg/sdk/README.md && echo true || echo false)"
+assert_eq "simple-agent example exists" "true" "$(test -f examples/simple-agent/main.go && test -f examples/simple-agent/README.md && echo true || echo false)"
+assert_eq "echo-agent example exists" "true" "$(test -f examples/echo-agent/main.go && echo true || echo false)"
+assert_eq "examples README exists" "true" "$(test -f examples/README.md && echo true || echo false)"
+if GO_DETECTED; then
+  SDK_BUILD_OK=$(go build ./pkg/sdk/... >/dev/null 2>&1 && echo ok || echo fail)
+  assert_eq "sdk package builds" "ok" "$SDK_BUILD_OK"
+  SDK_INTERNAL_DEPS=$(go list -deps ./pkg/sdk/... 2>/dev/null | rg "^astra/internal/" || true)
+  assert_eq "sdk has no internal deps" "" "$SDK_INTERNAL_DEPS"
+else
+  skip_test "sdk build and dependency checks (go not installed)"
+fi
 
 # ═══════════════════════════════════════════════
 # SUMMARY
