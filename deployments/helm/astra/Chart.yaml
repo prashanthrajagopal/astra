@@ -1,0 +1,6 @@
+apiVersion: v2
+name: astra
+description: Helm chart for Astra Autonomous Agent OS
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

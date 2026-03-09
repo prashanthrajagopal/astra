@@ -1,0 +1,11 @@
+CREATE INDEX idx_goals_agent ON goals(agent_id);
+CREATE INDEX idx_tasks_agent ON tasks(agent_id);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_graph ON tasks(graph_id);
+CREATE INDEX idx_task_dep_task ON task_dependencies(task_id);
+CREATE INDEX idx_task_dep_dependson ON task_dependencies(depends_on);
+CREATE INDEX idx_memories_agent ON memories(agent_id);
+CREATE INDEX idx_memory_embedding ON memories USING ivfflat (embedding vector_cosine_ops);
+CREATE INDEX idx_events_actor ON events(actor_id);
+CREATE INDEX idx_events_type ON events(event_type);
+CREATE INDEX idx_workers_status ON workers(status);

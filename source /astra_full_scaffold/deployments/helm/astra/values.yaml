@@ -1,5 +1,0 @@
-
-replicaCount: 1
-image:
- repository: astra/api
- tag: latest

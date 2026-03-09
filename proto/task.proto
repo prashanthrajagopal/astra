@@ -1,0 +1,70 @@
+syntax = "proto3";
+package astra.tasks;
+option go_package = "astra/proto/tasks";
+
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc ScheduleTask(ScheduleTaskRequest) returns (ScheduleTaskResponse);
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+  rpc FailTask(FailTaskRequest) returns (FailTaskResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc GetGraph(GetGraphRequest) returns (GetGraphResponse);
+}
+
+message CreateTaskRequest {
+  string graph_id = 1;
+  string agent_id = 2;
+  string type = 3;
+  bytes payload = 4;
+  int32 priority = 5;
+  repeated string depends_on = 6;
+}
+message CreateTaskResponse {
+  string task_id = 1;
+}
+
+message ScheduleTaskRequest {
+  string task_id = 1;
+}
+message ScheduleTaskResponse {}
+
+message CompleteTaskRequest {
+  string task_id = 1;
+  bytes result = 2;
+}
+message CompleteTaskResponse {}
+
+message FailTaskRequest {
+  string task_id = 1;
+  string error = 2;
+}
+message FailTaskResponse {}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+message GetTaskResponse {
+  string id = 1;
+  string graph_id = 2;
+  string agent_id = 3;
+  string type = 4;
+  string status = 5;
+  bytes payload = 6;
+  bytes result = 7;
+  int32 priority = 8;
+  int32 retries = 9;
+  int64 created_at = 10;
+  int64 updated_at = 11;
+}
+
+message GetGraphRequest {
+  string graph_id = 1;
+}
+message GetGraphResponse {
+  repeated GetTaskResponse tasks = 1;
+  repeated TaskDependency dependencies = 2;
+}
+message TaskDependency {
+  string task_id = 1;
+  string depends_on = 2;
+}
