@@ -1,0 +1,58 @@
+syntax = "proto3";
+package astra.kernel;
+option go_package = "astra/proto/kernel";
+
+service KernelService {
+  rpc SpawnActor(SpawnActorRequest) returns (SpawnActorResponse);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
+  rpc SubscribeStream(SubscribeStreamRequest) returns (stream Event);
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+}
+
+message SpawnActorRequest {
+  string actor_type = 1;
+  bytes config = 2;
+}
+message SpawnActorResponse {
+  string actor_id = 1;
+}
+
+message SendMessageRequest {
+  string target_actor_id = 1;
+  string message_type = 2;
+  string source = 3;
+  bytes payload = 4;
+}
+message SendMessageResponse {}
+
+message QueryStateRequest {
+  string entity_type = 1;
+  map<string, string> filters = 2;
+}
+message QueryStateResponse {
+  repeated bytes results = 1;
+}
+
+message SubscribeStreamRequest {
+  string stream_name = 1;
+  string consumer_group = 2;
+  string consumer_id = 3;
+}
+message Event {
+  string id = 1;
+  string type = 2;
+  string actor_id = 3;
+  bytes payload = 4;
+  int64 timestamp = 5;
+}
+
+message PublishEventRequest {
+  string stream_name = 1;
+  string event_type = 2;
+  string actor_id = 3;
+  bytes payload = 4;
+}
+message PublishEventResponse {
+  string event_id = 1;
+}
