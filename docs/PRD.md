@@ -1756,15 +1756,16 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Phase 5 repository deliverables are implemented and validated in `scripts/validate.sh`. Full-scale load execution remains an environment runbook activity using `tests/load/` assets.
 
-## Phase 6 — SDK & Applications (4-6 weeks initial) ❌ NOT STARTED
+## Phase 6 — SDK & Applications (4-6 weeks initial) ✅ COMPLETE
 
 **Goal:** Public Astra SDK, minimum viable sample applications.
 
-- [ ] SDK package with AgentContext, MemoryClient, ToolClient ❌
-- [ ] SimpleAgent example ❌
-- [ ] SDK documentation and examples ❌
+- [x] SDK package with AgentContext, MemoryClient, ToolClient under `pkg/sdk` ✅
+- [x] SimpleAgent example under `examples/simple-agent` ✅
+- [x] SDK documentation and examples (`pkg/sdk/README.md`, `examples/`) ✅
+- [x] Additional example app `examples/echo-agent` ✅
 
-**Minimum scope (4-6 weeks):** AgentContext interface, MemoryClient interface, SimpleAgent example, SDK documentation. After initial SDK, ongoing work includes additional sample agents (autonomous developer, research), Python/TS bindings, community docs.
+**Minimum scope (4-6 weeks):** AgentContext interface, MemoryClient interface, SimpleAgent example, SDK documentation are implemented. Ongoing post-MVP SDK roadmap still includes richer sample agents (autonomous developer, research), Python/TS bindings, and community docs.
 
 ---
 
