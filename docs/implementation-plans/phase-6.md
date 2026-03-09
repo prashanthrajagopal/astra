@@ -16,7 +16,14 @@ Deliver a public Astra SDK (Go) with AgentContext, MemoryClient, ToolClient, and
 
 - **Phase 4 minimum:** goal-service, planner, task-service, memory-service, llm-router available via gRPC or REST.
 - **Phase 5** recommended: stable APIs and production hardening.
-- **Repo:** New package for SDK (e.g. `pkg/sdk` or `sdk/go/`) that applications import.
+- **Repo:** New package for SDK (e.g. `pkg/sdk` or `sdk/go/`) that applications import. **Constraint:** SDK must live under `pkg/sdk` and must NOT import `internal/*`.
+
+---
+
+## 2b. Phase 6 minimum scope and optional work
+
+- **Minimum (Phase 6 complete):** WP6.1–WP6.4: AgentContext, MemoryClient/ToolClient, SimpleAgent, SDK docs and two examples. SDK under `pkg/sdk`; no `internal` imports.
+- **Optional:** WP6.5 (goal helpers: CreateGoal, WaitForCompletion). Not required for Phase 6 sign-off.
 
 ---
 

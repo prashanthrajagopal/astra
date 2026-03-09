@@ -1,0 +1,22 @@
+syntax = "proto3";
+package astra.llm;
+option go_package = "astra/proto/llm";
+
+service LLMRouter {
+  rpc Complete(CompletionRequest) returns (CompletionResponse);
+}
+
+message CompletionRequest {
+  string model_hint = 1;
+  string prompt = 2;
+  int32 max_tokens = 3; // optional
+}
+
+message CompletionResponse {
+  string content = 1;
+  int32 tokens_in = 2;
+  int32 tokens_out = 3;
+  string model = 4;
+  int64 latency_ms = 5;
+  double cost_dollars = 6; // optional
+}

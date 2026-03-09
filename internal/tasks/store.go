@@ -12,6 +12,22 @@ import (
 
 var ErrInvalidTransition = fmt.Errorf("invalid task state transition")
 
+// TaskStore is the interface used by the gRPC server. Implemented by Store and CachedStore.
+type TaskStore interface {
+	GetTask(ctx context.Context, taskID string) (*Task, error)
+	GetGraph(ctx context.Context, graphID string) (*Graph, []Dependency, error)
+	CreateTask(ctx context.Context, t *Task) error
+	AddDependencies(ctx context.Context, taskID string, dependsOn []string) error
+	CreateGraph(ctx context.Context, graph *Graph) error
+	Transition(ctx context.Context, taskID string, from, to Status, eventPayload json.RawMessage) error
+	CompleteTask(ctx context.Context, taskID string, result []byte) error
+	FailTask(ctx context.Context, taskID string, errMsg string) error
+	FindReadyTasks(ctx context.Context, limit int) ([]string, error)
+	SetWorkerID(ctx context.Context, taskID, workerID string) error
+	FindOrphanedRunningTasks(ctx context.Context) ([]string, error)
+	RequeueTask(ctx context.Context, taskID string) error
+}
+
 type Store struct {
 	db *sql.DB
 }
