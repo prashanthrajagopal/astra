@@ -95,7 +95,7 @@ assert_eq ".golangci.yml exists" "true" "$(test -f .golangci.yml && echo true ||
 
 echo "Migrations:"
 MIGRATION_COUNT=$(ls migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
-assert_eq "10 migration files" "10" "$MIGRATION_COUNT"
+assert_eq "at least 10 migration files" "true" "$([ "$MIGRATION_COUNT" -ge 10 ] && echo true || echo false)"
 
 echo "Unit tests (short mode):"
 TEST_OUTPUT=$(go test ./... -count=1 -short 2>&1)
@@ -198,13 +198,48 @@ else
 fi
 
 # ═══════════════════════════════════════════════
-# PHASE 2 — Workers & Tools (placeholder)
+# PHASE 2 — Workers & Tool Runtime
 # ═══════════════════════════════════════════════
 echo ""
 echo "$(bold '═══ PHASE 2: Workers & Tools ═══')"
-skip_test "worker registration + heartbeat"
-skip_test "tool sandbox execution"
-skip_test "browser worker"
+
+echo "Migration:"
+assert_eq "0010 migration exists" "true" "$(test -f migrations/0010_worker_task_tracking.sql && echo true || echo false)"
+MIGRATION_COUNT=$(ls migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "11 migration files total" "11" "$MIGRATION_COUNT"
+
+echo "Service health:"
+WORKER_MGR_HEALTH=$(curl -sf "http://localhost:${WORKER_MANAGER_PORT:-8082}/health" 2>/dev/null || echo "FAIL")
+assert_eq "worker-manager /health" "ok" "$WORKER_MGR_HEALTH"
+
+TOOL_RT_HEALTH=$(curl -sf "http://localhost:${TOOL_RUNTIME_PORT:-8083}/health" 2>/dev/null || echo "FAIL")
+assert_eq "tool-runtime /health" "ok" "$TOOL_RT_HEALTH"
+
+echo "Worker registration:"
+WORKERS_RESP=$(curl -sf "http://localhost:${WORKER_MANAGER_PORT:-8082}/workers" 2>/dev/null || echo "[]")
+WORKER_COUNT=$(echo "$WORKERS_RESP" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+assert_eq "at least 2 workers registered" "true" "$([ "$WORKER_COUNT" -ge 2 ] && echo true || echo false)"
+
+echo "Execution worker (noop runtime):"
+EXEC_LOG=$(cat logs/execution-worker.log 2>/dev/null || echo "")
+assert_contains "execution-worker registered" "worker registered" "$EXEC_LOG"
+
+echo "Browser worker:"
+BROWSER_LOG=$(cat logs/browser-worker.log 2>/dev/null || echo "")
+assert_contains "browser-worker registered" "browser worker registered" "$BROWSER_LOG"
+
+echo "Tool runtime (noop execute):"
+EXEC_RESP=$(curl -sf -X POST "http://localhost:${TOOL_RUNTIME_PORT:-8083}/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"echo test","timeout_seconds":5}' 2>/dev/null || echo '{"error":"failed"}')
+EXEC_CODE=$(echo "$EXEC_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('exit_code',-1))" 2>/dev/null || echo "-1")
+assert_eq "tool-runtime execute returns exit_code 0" "0" "$EXEC_CODE"
+
+echo "Re-queue (structural):"
+REQUEUE_WM=$(grep -c 'FindOrphanedRunningTasks' cmd/worker-manager/main.go 2>/dev/null || echo "0")
+assert_eq "worker-manager has requeue logic" "true" "$([ "$REQUEUE_WM" -ge 1 ] && echo true || echo false)"
+REQUEUE_TS=$(grep -c 'RequeueTask' internal/tasks/store.go 2>/dev/null || echo "0")
+assert_eq "tasks store has RequeueTask" "true" "$([ "$REQUEUE_TS" -ge 1 ] && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
 # PHASE 3 — Memory & LLM (placeholder)

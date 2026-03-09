@@ -5,11 +5,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"astra/internal/messaging"
 	"astra/internal/tasks"
+	"astra/internal/tools"
 	"astra/internal/workers"
 	"astra/pkg/config"
 	"astra/pkg/db"
@@ -37,14 +39,23 @@ func main() {
 	defer bus.Close()
 
 	taskStore := tasks.NewStore(database)
+	registry := workers.NewRegistry(database)
 
+	runtime := newToolRuntime()
 	hostname, _ := os.Hostname()
 	w := workers.New(hostname, bus)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	if err := registry.Register(ctx, w.ID.String(), hostname, []string{"general"}); err != nil {
+		slog.Error("failed to register worker", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("worker registered", "worker_id", w.ID, "hostname", hostname)
+
 	go w.StartHeartbeat(ctx)
+	go runRegistryHeartbeat(ctx, registry, w.ID.String())
 
 	slog.Info("execution worker started", "worker_id", w.ID, "hostname", hostname)
 
@@ -64,27 +75,105 @@ func main() {
 			return nil
 		}
 
-		ctx := context.Background()
+		runCtx := context.Background()
 
-		if err := taskStore.Transition(ctx, taskID, tasks.StatusQueued, tasks.StatusScheduled, nil); err != nil {
+		if err := taskStore.Transition(runCtx, taskID, tasks.StatusQueued, tasks.StatusScheduled, nil); err != nil {
 			slog.Error("transition queued->scheduled failed", "task_id", taskID, "err", err)
 			return nil
 		}
+		if err := taskStore.SetWorkerID(runCtx, taskID, w.ID.String()); err != nil {
+			slog.Error("set worker_id failed", "task_id", taskID, "err", err)
+		}
 		slog.Info("task scheduled", "task_id", taskID)
 
-		if err := taskStore.Transition(ctx, taskID, tasks.StatusScheduled, tasks.StatusRunning, nil); err != nil {
+		if err := taskStore.Transition(runCtx, taskID, tasks.StatusScheduled, tasks.StatusRunning, nil); err != nil {
 			slog.Error("transition scheduled->running failed", "task_id", taskID, "err", err)
 			return nil
 		}
 		slog.Info("task running", "task_id", taskID)
 
-		time.Sleep(10 * time.Millisecond)
-
-		if err := taskStore.CompleteTask(ctx, taskID, []byte("{}")); err != nil {
-			slog.Error("complete task failed", "task_id", taskID, "err", err)
+		task, err := taskStore.GetTask(runCtx, taskID)
+		if err != nil {
+			slog.Error("get task failed", "task_id", taskID, "err", err)
+			_ = taskStore.FailTask(runCtx, taskID, err.Error())
 			return nil
 		}
-		slog.Info("task completed", "task_id", taskID)
+		if task == nil {
+			slog.Warn("task not found", "task_id", taskID)
+			_ = taskStore.FailTask(runCtx, taskID, "task not found")
+			return nil
+		}
+
+		payload := task.Payload
+		if payload == nil {
+			payload = []byte("{}")
+		}
+
+		toolReq := tools.ToolRequest{
+			Name:        task.Type,
+			Input:       payload,
+			Timeout:     30 * time.Second,
+			MemoryLimit: 256 * 1024 * 1024,
+			CPULimit:    1.0,
+		}
+
+		toolResult, err := runtime.Execute(runCtx, toolReq)
+		if err != nil {
+			slog.Error("tool execution failed", "task_id", taskID, "err", err)
+			_ = taskStore.FailTask(runCtx, taskID, err.Error())
+			return nil
+		}
+
+		if toolResult.ExitCode == 0 {
+			result := toolResult.Output
+			if result == nil {
+				result = []byte("{}")
+			}
+			if err := taskStore.CompleteTask(runCtx, taskID, result); err != nil {
+				slog.Error("complete task failed", "task_id", taskID, "err", err)
+				return nil
+			}
+			slog.Info("task completed", "task_id", taskID)
+		} else {
+			errMsg := string(toolResult.Output)
+			if errMsg == "" {
+				errMsg = "tool exited with non-zero code"
+			}
+			if err := taskStore.FailTask(runCtx, taskID, errMsg); err != nil {
+				slog.Error("fail task failed", "task_id", taskID, "err", err)
+				return nil
+			}
+			slog.Info("task failed", "task_id", taskID, "error", errMsg)
+		}
 		return nil
 	})
+
+	_ = registry.MarkOffline(context.Background(), w.ID.String())
+	slog.Info("execution worker stopped", "worker_id", w.ID)
+}
+
+func newToolRuntime() tools.Runtime {
+	rt := strings.ToLower(strings.TrimSpace(os.Getenv("TOOL_RUNTIME")))
+	if rt == "" || rt == "noop" {
+		return tools.NewNoopRuntime()
+	}
+	if rt == "docker" {
+		return tools.NewDockerRuntime()
+	}
+	return tools.NewNoopRuntime()
+}
+
+func runRegistryHeartbeat(ctx context.Context, registry *workers.Registry, workerID string) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := registry.UpdateHeartbeat(ctx, workerID); err != nil {
+				slog.Error("registry heartbeat failed", "worker_id", workerID, "err", err)
+			}
+		}
+	}
 }

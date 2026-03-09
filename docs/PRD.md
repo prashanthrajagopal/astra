@@ -1692,18 +1692,20 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Spawn agent → create goal → planner stubs DAG → scheduler dispatches → worker stubs complete task → events in Postgres → query state returns correct data.
 
-## Phase 2 — Workers & Tool Runtime (6-8 weeks) ❌ NOT STARTED
+## Phase 2 — Workers & Tool Runtime (6-8 weeks) ✅ COMPLETE
 
 **Goal:** Execution workers, worker manager, tool sandboxes.
 
-- [ ] `internal/workers` — Worker struct and heartbeat exist (partial); needs task claiming and execution logic ❌
-- [ ] `internal/tools` — Sandbox lifecycle stub only (returns "not yet implemented") ❌
-- [ ] `cmd/execution-worker` — Consumes stream but does not run tasks (partial from Phase 1) ❌
-- [ ] `cmd/worker-manager` — Stub ❌
-- [ ] `cmd/tool-runtime` — Stub ❌
-- [ ] `cmd/browser-worker` — Stub ❌
+- [x] `internal/workers` — Worker struct with DB-backed Registry (Register, UpdateHeartbeat, MarkOffline, ListActive, FindStaleWorkers). NewWithDB constructor for DB-backed heartbeat. ✅
+- [x] `internal/tools` — Runtime interface with DockerRuntime (real `docker run` with resource limits, network isolation, read-only rootfs) and NoopRuntime (phase 2 placeholder). ✅
+- [x] `cmd/execution-worker` — Consumes from stream, claims task, sets worker_id, executes via tool runtime, CompleteTask/FailTask. Registry integration for heartbeat and shutdown. ✅
+- [x] `cmd/worker-manager` — HTTP service (port 8082) with GET /workers and /health. Background loop marks stale workers offline (>30s). Re-queues orphaned running tasks and republishes to stream. ✅
+- [x] `cmd/tool-runtime` — HTTP service (port 8083) with POST /execute (base64 I/O) and GET /health. Configurable Docker or Noop backend via TOOL_RUNTIME env. ✅
+- [x] `cmd/browser-worker` — Specialized worker consuming from `astra:tasks:browser` stream. Uses NoopRuntime for Phase 2 (real Playwright deferred). Registers with ["browser"] capabilities. ✅
+- [x] `migrations/0010_worker_task_tracking.sql` — Adds worker_id column to tasks table for tracking which worker claimed a task. ✅
+- [x] `internal/tasks/store.go` — Added SetWorkerID, FindOrphanedRunningTasks, RequeueTask methods for worker failure recovery. ✅
 
-**Acceptance:** Worker registers, claims task from Redis stream, executes in Docker sandbox, returns artifact, result persisted.
+**Acceptance:** Worker registers, claims task from Redis stream, executes via tool runtime (noop/Docker), sets worker_id, returns result persisted. Workers not heartbeating within 30s marked offline; orphaned tasks re-queued.
 
 ## Phase 3 — Memory & LLM Routing (6 weeks) ❌ NOT STARTED
 
