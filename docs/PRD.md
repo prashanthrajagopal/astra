@@ -1781,6 +1781,17 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Security transport and secret-loading foundations are implemented in code paths used by services, with local-dev fallback still supported when TLS/Vault are disabled.
 
+## Phase 8 — Platform Visibility Dashboard (2-3 weeks) ✅ COMPLETE
+
+**Goal:** Provide a utilitarian operations dashboard with complete live visibility into platform runtime state.
+
+- [x] Embedded dashboard UI served by api-gateway at `/dashboard/` ✅
+- [x] Snapshot API at `/api/dashboard/snapshot` with services/workers/approvals/cost/logs/pids ✅
+- [x] Auto-refreshing frontend with status and latency indicators ✅
+- [x] Dashboard validation coverage in `scripts/validate.sh` ✅
+
+**Acceptance:** Operators can open one dashboard and inspect service health, workers, pending approvals, cost trends, process state, and recent logs without shell access.
+
 ---
 
 # 26. Build Order & Dependency Graph

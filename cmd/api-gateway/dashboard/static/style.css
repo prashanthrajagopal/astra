@@ -1,0 +1,66 @@
+:root {
+  --color-healthy: #22c55e;
+  --color-unhealthy: #ef4444;
+  --color-warning: #f59e0b;
+  --color-text: #e5e7eb;
+  --color-bg: #111827;
+  --color-surface: #1f2937;
+  --color-border: #374151;
+}
+body {
+  margin: 0;
+  padding: 16px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-family: Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+.dashboard-header { margin-bottom: 12px; }
+#dashboard-title { margin: 0 0 8px; font-size: 20px; }
+.dashboard-meta { display: flex; gap: 12px; align-items: center; }
+.dashboard-meta.has-error #refresh-status { color: var(--color-unhealthy); }
+button#btn-refresh {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.action-btn {
+  border: 1px solid var(--color-border);
+  background: #0f172a;
+  color: var(--color-text);
+  padding: 2px 6px;
+  margin-right: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.action-btn.approve { border-color: var(--color-healthy); color: var(--color-healthy); }
+.action-btn.reject { border-color: var(--color-unhealthy); color: var(--color-unhealthy); }
+.dashboard-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  margin-bottom: 12px;
+  padding: 10px;
+}
+.section-title { margin: 0 0 8px; font-size: 14px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th, .data-table td {
+  border: 1px solid var(--color-border);
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.td-status.status-healthy, .td-status.status-active, .td-status.status-approved { color: var(--color-healthy); }
+.td-status.status-unhealthy, .td-status.status-inactive, .td-status.status-denied { color: var(--color-unhealthy); }
+.td-status.status-pending, .td-status.status-stale, .latency-warning { color: var(--color-warning); }
+.empty-message { color: #9ca3af; }
+.log-block { border: 1px solid var(--color-border); margin-bottom: 8px; }
+.log-block-title { margin: 0; padding: 6px; font-size: 12px; border-bottom: 1px solid var(--color-border); }
+.log-block-content {
+  margin: 0;
+  padding: 6px;
+  font-size: 11px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
