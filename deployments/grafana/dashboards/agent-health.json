@@ -1,0 +1,21 @@
+{
+  "title": "Astra Agent Health",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "title": "Actor Count",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "astra_actor_count" }
+      ]
+    },
+    {
+      "title": "Task Latency (p95)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(astra_task_latency_seconds_bucket[5m])) by (le))" }
+      ]
+    }
+  ]
+}

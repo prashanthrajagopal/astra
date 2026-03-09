@@ -40,6 +40,21 @@ var (
 		Name: "astra_llm_cost_dollars",
 		Help: "Total LLM cost in dollars by model",
 	}, []string{"model"})
+
+	LLMCostByAgentModel = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "astra_llm_cost_dollars_total",
+		Help: "Total LLM cost in dollars by agent and model",
+	}, []string{"agent_id", "model"})
+
+	WorkerHeartbeatTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "astra_worker_heartbeat_total",
+		Help: "Total worker heartbeats published",
+	})
+
+	EventsProcessedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "astra_events_processed_total",
+		Help: "Total events written to the events store",
+	})
 )
 
 func Register() {
@@ -51,5 +66,8 @@ func Register() {
 		SchedulerReadyQueueDepth,
 		LLMTokenUsageTotal,
 		LLMCostDollars,
+		LLMCostByAgentModel,
+		WorkerHeartbeatTotal,
+		EventsProcessedTotal,
 	)
 }

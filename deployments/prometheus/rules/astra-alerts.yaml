@@ -1,0 +1,62 @@
+groups:
+  - name: astra.alerts
+    rules:
+      - alert: AstraHighTaskFailureRate
+        expr: sum(rate(astra_task_failure_total[5m])) / clamp_min(sum(rate(astra_task_success_total[5m])) + sum(rate(astra_task_failure_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Astra task failure rate is high"
+          description: "Task failure rate > 5% over 5m"
+          runbook_url: "docs/runbooks/high-error-rate.md"
+
+      - alert: AstraHighQueueDepth
+        expr: astra_scheduler_ready_queue_depth > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Astra scheduler queue depth is high"
+          description: "Queue depth exceeded 10k pending tasks"
+          runbook_url: "docs/runbooks/worker-lost.md"
+
+      - alert: AstraWorkerAvailabilityLow
+        expr: sum(rate(astra_worker_heartbeat_total[5m])) < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Astra worker availability appears low"
+          description: "Heartbeat activity is below expected threshold"
+          runbook_url: "docs/runbooks/worker-lost.md"
+
+      - alert: AstraLLMCostSpike
+        expr: sum(increase(astra_llm_cost_dollars[1d])) > (2 * sum(increase(astra_llm_cost_dollars[1d] offset 1d)))
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Astra LLM cost spike detected"
+          description: "Daily LLM cost exceeded 2x previous day"
+          runbook_url: "docs/runbooks/llm-cost-spike.md"
+
+      - alert: AstraReadLatencySLOBreach
+        expr: histogram_quantile(0.99, sum(rate(astra_task_latency_seconds_bucket[5m])) by (le)) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Astra read latency SLO breach"
+          description: "p99 read latency above 10ms"
+          runbook_url: "docs/runbooks/high-error-rate.md"
+
+      - alert: AstraSchedulingLatencySLOBreach
+        expr: histogram_quantile(0.50, sum(rate(astra_task_latency_seconds_bucket[5m])) by (le)) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Astra scheduling latency SLO breach"
+          description: "Median scheduling latency above 50ms"
+          runbook_url: "docs/runbooks/high-error-rate.md"

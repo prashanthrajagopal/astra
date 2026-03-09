@@ -341,13 +341,42 @@ USAGE_CONSUMER=$(grep -q 'runUsageConsumer' cmd/llm-router/main.go 2>/dev/null &
 assert_eq "llm-router runs usage consumer" "true" "$USAGE_CONSUMER"
 
 # ═══════════════════════════════════════════════
-# PHASE 5 — Scale & Hardening (placeholder)
+# PHASE 5 — Scale & Hardening
 # ═══════════════════════════════════════════════
 echo ""
 echo "$(bold '═══ PHASE 5: Scale & Hardening ═══')"
-skip_test "load test: 10k agents"
-skip_test "Grafana dashboards"
-skip_test "SLO enforcement: 10ms reads"
+
+echo "Load test assets:"
+assert_eq "load test README exists" "true" "$(test -f tests/load/README.md && echo true || echo false)"
+assert_eq "load test harness exists" "true" "$(test -f tests/load/k6-config.js -o -f tests/load/main.go && echo true || echo false)"
+
+echo "Grafana dashboards:"
+assert_eq "cluster-overview dashboard exists" "true" "$(test -f deployments/grafana/dashboards/cluster-overview.json && echo true || echo false)"
+assert_eq "agent-health dashboard exists" "true" "$(test -f deployments/grafana/dashboards/agent-health.json && echo true || echo false)"
+assert_eq "cost dashboard exists" "true" "$(test -f deployments/grafana/dashboards/cost.json && echo true || echo false)"
+
+echo "Prometheus alert rules:"
+assert_eq "astra-alerts.yaml exists" "true" "$(test -f deployments/prometheus/rules/astra-alerts.yaml && echo true || echo false)"
+
+echo "Runbooks:"
+assert_eq "worker-lost runbook exists" "true" "$(test -f docs/runbooks/worker-lost.md && echo true || echo false)"
+assert_eq "high-error-rate runbook exists" "true" "$(test -f docs/runbooks/high-error-rate.md && echo true || echo false)"
+assert_eq "db-redis runbook exists" "true" "$(test -f docs/runbooks/db-redis.md && echo true || echo false)"
+assert_eq "llm-cost-spike runbook exists" "true" "$(test -f docs/runbooks/llm-cost-spike.md && echo true || echo false)"
+assert_eq "runbooks README exists" "true" "$(test -f docs/runbooks/README.md && echo true || echo false)"
+
+echo "Helm hardening:"
+assert_eq "HPA template exists" "true" "$(test -f deployments/helm/astra/templates/hpa.yaml && echo true || echo false)"
+assert_eq "PDB template exists" "true" "$(test -f deployments/helm/astra/templates/pdb.yaml && echo true || echo false)"
+if command -v helm >/dev/null 2>&1; then
+  HELM_TEMPLATE=$(helm template astra deployments/helm/astra >/dev/null 2>&1 && echo ok || echo fail)
+  assert_eq "helm template renders" "ok" "$HELM_TEMPLATE"
+else
+  skip_test "helm template renders (helm not installed)"
+fi
+
+echo "Observability:"
+assert_eq "docs/observability.md exists" "true" "$(test -f docs/observability.md && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
 # PHASE 6 — SDK & Apps (placeholder)

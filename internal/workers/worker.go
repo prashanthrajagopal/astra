@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"astra/internal/messaging"
+	"astra/pkg/metrics"
 
 	"github.com/google/uuid"
 )
@@ -75,5 +76,7 @@ func (w *Worker) doHeartbeat(ctx context.Context, firstTick *bool) {
 		"timestamp":  time.Now().Format(time.RFC3339),
 	}); err != nil {
 		slog.Error("heartbeat publish failed", "worker_id", w.ID, "err", err)
+	} else {
+		metrics.WorkerHeartbeatTotal.Inc()
 	}
 }

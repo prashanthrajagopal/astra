@@ -1,0 +1,21 @@
+{
+  "title": "Astra LLM Cost",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "title": "LLM Token Usage",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (model, direction) (rate(astra_llm_token_usage_total[5m]))" }
+      ]
+    },
+    {
+      "title": "LLM Cost Dollars",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (model) (rate(astra_llm_cost_dollars[5m]))" }
+      ]
+    }
+  ]
+}

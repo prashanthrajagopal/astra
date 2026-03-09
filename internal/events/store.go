@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"astra/pkg/metrics"
 )
 
 type Store struct {
@@ -23,6 +25,7 @@ func (s *Store) Append(ctx context.Context, eventType string, actorID string, pa
 	if err != nil {
 		return 0, fmt.Errorf("events.Append: %w", err)
 	}
+	metrics.EventsProcessedTotal.Inc()
 	return id, nil
 }
 

@@ -1,0 +1,28 @@
+{
+  "title": "Astra Cluster Overview",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "title": "Task Success Rate",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(rate(astra_task_success_total[5m]))" }
+      ]
+    },
+    {
+      "title": "Task Failure Rate",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(rate(astra_task_failure_total[5m]))" }
+      ]
+    },
+    {
+      "title": "Ready Queue Depth",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "astra_scheduler_ready_queue_depth" }
+      ]
+    }
+  ]
+}
