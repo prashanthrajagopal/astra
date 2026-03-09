@@ -47,6 +47,14 @@
 
 **Hard performance constraint:** No API call may take more than 10ms to respond. All hot-path reads serve from cache (Redis/Memcached), never synchronous Postgres.
 
+### Document maintenance (PRD currency)
+
+The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture, schema, roadmap, and canonical services. It must be kept current:
+
+- When features, schema, APIs, or implementation phases change, the PRD is updated **in the same work** (same PR or same phase completion). Do not ship changes that alter architecture, APIs, or schema without updating the corresponding PRD sections.
+- **Tech Lead** is responsible for ensuring PRD updates when a phase is completed or when architectural/schema decisions are made during implementation.
+- **Architect** reviews and approves material PRD changes (new sections, contract changes, or structural edits).
+
 ---
 
 # 2. Core Capabilities & Non-Goals
