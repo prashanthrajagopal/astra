@@ -64,7 +64,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	}
 
 	if workers, err := c.fetchArray(ctx, strings.TrimSuffix(c.cfg.WorkerManagerAddr, "/")+"/workers"); err == nil {
-		snap.Workers = workers
+		snap.Workers = normalizeWorkers(workers)
 	} else {
 		snap.Errors["workers"] = err.Error()
 	}
@@ -176,28 +176,35 @@ func probeServices(ctx context.Context) []ServiceStatus {
 			name     string
 			port     int
 			typeName string
-		}) { defer wg.Done(); status := ServiceStatus{Name: d.name, Port: d.port, Type: d.typeName}; start := time.Now(); if d.typeName == "http" {
-			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", d.port), nil)
-			client := &http.Client{Timeout: 100 * time.Millisecond}
-			resp, err := client.Do(req)
-			if err == nil {
-				resp.Body.Close()
-				status.Healthy = resp.StatusCode < 300
-				if !status.Healthy {
-					status.Error = fmt.Sprintf("status %d", resp.StatusCode)
+		}) {
+			defer wg.Done()
+			status := ServiceStatus{Name: d.name, Port: d.port, Type: d.typeName}
+			start := time.Now()
+			if d.typeName == "http" {
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", d.port), nil)
+				client := &http.Client{Timeout: 100 * time.Millisecond}
+				resp, err := client.Do(req)
+				if err == nil {
+					resp.Body.Close()
+					status.Healthy = resp.StatusCode < 300
+					if !status.Healthy {
+						status.Error = fmt.Sprintf("status %d", resp.StatusCode)
+					}
+				} else {
+					status.Error = err.Error()
 				}
 			} else {
-				status.Error = err.Error()
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", d.port), 100*time.Millisecond)
+				if err == nil {
+					status.Healthy = true
+					conn.Close()
+				} else {
+					status.Error = err.Error()
+				}
 			}
-		} else {
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", d.port), 100*time.Millisecond)
-			if err == nil {
-				status.Healthy = true
-				conn.Close()
-			} else {
-				status.Error = err.Error()
-			}
-		}; status.LatencyMs = time.Since(start).Milliseconds(); out[i] = status }(i, d)
+			status.LatencyMs = time.Since(start).Milliseconds()
+			out[i] = status
+		}(i, d)
 	}
 	wg.Wait()
 	return out
@@ -231,4 +238,27 @@ func serviceNames() []string {
 		"llm-router", "prompt-manager", "identity", "access-control",
 		"planner-service", "goal-service", "evaluation-service", "cost-tracker", "api-gateway",
 	}
+}
+
+func normalizeWorkers(in []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(in))
+	for _, w := range in {
+		out = append(out, map[string]any{
+			"id":             firstAny(w, "id", "ID"),
+			"hostname":       firstAny(w, "hostname", "Hostname"),
+			"status":         firstAny(w, "status", "Status"),
+			"capabilities":   firstAny(w, "capabilities", "Capabilities"),
+			"last_heartbeat": firstAny(w, "last_heartbeat", "LastHeartbeat", "lastHeartbeat"),
+		})
+	}
+	return out
+}
+
+func firstAny(m map[string]any, keys ...string) any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			return v
+		}
+	}
+	return nil
 }

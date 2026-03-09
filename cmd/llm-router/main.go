@@ -227,7 +227,7 @@ func main() {
 	eventStore := events.NewStore(database)
 
 	mc := memcache.New(cfg.MemcachedAddr)
-	router := llm.NewRouterWithCache(&llm.StubBackend{}, mc, cacheTTL)
+	router := llm.NewRouterWithCache(llm.NewEndpointBackendFromEnv(), mc, cacheTTL)
 	srv := &llmRouterServer{router: router, bus: bus}
 	grpcSrv, err := grpc.NewServerFromConfig(cfg)
 	if err != nil {

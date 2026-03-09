@@ -29,6 +29,23 @@ How to run Astra locally. **Only the DevOps agent** runs the deploy script; ever
 
 For the Cursor agent-memory MCP: Redis with vector support (Redis Stack), Ollama with `nomic-embed-text`. See `.cursor/mcp.json` and `packages/agent-memory`. Bootstrap with `node dist/bootstrap.js` in `packages/agent-memory`.
 
+## LLM endpoint configuration
+
+`cmd/llm-router` now uses real provider endpoints with fallback order:
+
+1. Use requested provider model (`openai/*`, `anthropic/*`, `gemini/*`, or `ollama/*`) when corresponding credentials are available.
+2. If provider credentials are missing or request fails, fallback to local Ollama model.
+3. Default fallback model: `llama3:8b`.
+
+Set in `.env`:
+
+- `OLLAMA_HOST` (default `http://localhost:11434`)
+- `OLLAMA_MODEL` (default `llama3:8b`)
+- Optional cloud keys:
+  - `OPENAI_API_KEY`
+  - `ANTHROPIC_API_KEY`
+  - `GEMINI_API_KEY`
+
 ## Mac Mini and native hardware
 
 For Mac Mini with Metal/ANE: use the same `scripts/deploy.sh`. Run Ollama natively on the host for Metal-accelerated embeddings/inference. See [Mac Mini deployment](mac-mini-deployment.md) for details.
