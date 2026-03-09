@@ -1,0 +1,5 @@
+{
+  "smoke": {"vus": 5, "duration": "30s"},
+  "sustained": {"vus": 50, "duration": "5m"},
+  "burst": {"vus": 200, "duration": "60s"}
+}

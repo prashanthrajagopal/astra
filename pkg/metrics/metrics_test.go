@@ -21,4 +21,7 @@ func TestRegister(t *testing.T) {
 	_ = prometheus.Unregister(SchedulerReadyQueueDepth)
 	_ = prometheus.Unregister(LLMTokenUsageTotal)
 	_ = prometheus.Unregister(LLMCostDollars)
+	_ = prometheus.Unregister(LLMCostByAgentModel)
+	_ = prometheus.Unregister(WorkerHeartbeatTotal)
+	_ = prometheus.Unregister(EventsProcessedTotal)
 }

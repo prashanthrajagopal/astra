@@ -25,6 +25,7 @@ type Config struct {
 	PlannerPort       int
 	GoalServicePort   int
 	EvaluationPort    int
+	CostTrackerPort   int
 	IdentityAddr      string
 	AccessControlAddr string
 	JWTSecret         string
@@ -45,6 +46,7 @@ func Load() (*Config, error) {
 	plannerPort, _ := strconv.Atoi(getEnv("PLANNER_PORT", "8087"))
 	goalServicePort, _ := strconv.Atoi(getEnv("GOAL_SERVICE_PORT", "8088"))
 	evaluationPort, _ := strconv.Atoi(getEnv("EVALUATION_PORT", "8089"))
+	costTrackerPort, _ := strconv.Atoi(getEnv("COST_TRACKER_PORT", "8090"))
 
 	return &Config{
 		PostgresHost:      getEnv("POSTGRES_HOST", "localhost"),
@@ -65,6 +67,7 @@ func Load() (*Config, error) {
 		PlannerPort:       plannerPort,
 		GoalServicePort:   goalServicePort,
 		EvaluationPort:    evaluationPort,
+		CostTrackerPort:   costTrackerPort,
 		IdentityAddr:      getEnv("IDENTITY_ADDR", "http://localhost:8085"),
 		AccessControlAddr: getEnv("ACCESS_CONTROL_ADDR", "http://localhost:8086"),
 		JWTSecret:         getEnv("ASTRA_JWT_SECRET", "astra-dev-secret"),

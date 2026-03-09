@@ -171,13 +171,14 @@ go build -o bin/access-control     ./cmd/access-control
 go build -o bin/planner-service    ./cmd/planner-service
 go build -o bin/goal-service       ./cmd/goal-service
 go build -o bin/evaluation-service ./cmd/evaluation-service
+go build -o bin/cost-tracker       ./cmd/cost-tracker
 echo "Build done."
 
 echo ""
 echo "Starting services..."
 set -a; source .env 2>/dev/null || true; set +a
 
-SERVICES="task-service agent-service scheduler-service execution-worker worker-manager tool-runtime browser-worker memory-service llm-router prompt-manager identity access-control planner-service goal-service evaluation-service api-gateway"
+SERVICES="task-service agent-service scheduler-service execution-worker worker-manager tool-runtime browser-worker memory-service llm-router prompt-manager identity access-control planner-service goal-service evaluation-service cost-tracker api-gateway"
 for svc in $SERVICES; do
   if [[ -f "logs/${svc}.pid" ]]; then
     kill "$(cat "logs/${svc}.pid")" 2>/dev/null || true
@@ -216,6 +217,8 @@ echo $! > logs/planner-service.pid
 echo $! > logs/goal-service.pid
 ./bin/evaluation-service > logs/evaluation-service.log 2>&1 &
 echo $! > logs/evaluation-service.pid
+./bin/cost-tracker       > logs/cost-tracker.log 2>&1 &
+echo $! > logs/cost-tracker.pid
 sleep 1
 ./bin/api-gateway        > logs/api-gateway.log 2>&1 &
 echo $! > logs/api-gateway.pid
@@ -223,7 +226,7 @@ echo $! > logs/api-gateway.pid
 echo ""
 echo "=== Deploy complete ==="
 echo "Infra: Postgres=$POSTGRES_SOURCE  Redis=$REDIS_SOURCE  Memcached=$MEMCACHED_SOURCE"
-echo "Services: task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, memory-service, llm-router, prompt-manager, identity, access-control, planner-service, goal-service, evaluation-service, api-gateway"
+echo "Services: task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, memory-service, llm-router, prompt-manager, identity, access-control, planner-service, goal-service, evaluation-service, cost-tracker, api-gateway"
 echo "Logs:  logs/*.log"
 echo "PIDs:  logs/*.pid"
 echo "Stop:  for f in logs/*.pid; do kill \$(cat \$f) 2>/dev/null; done"
