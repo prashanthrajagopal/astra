@@ -64,6 +64,18 @@ Every agent may ONLY delegate to its direct reports:
 
 If you catch yourself about to bypass the hierarchy, **stop and route through the correct chain**.
 
+## Code-writing prohibition
+
+- **Architect NEVER writes code.** Architect designs and tells Tech Lead what to build.
+- **Tech Lead NEVER writes code.** Tech Lead delegates to Go Engineer, DevOps Engineer, QA Engineer.
+- Only leaf-node agents (Go Engineer, DevOps Engineer, QA Engineer, DB Architect, Debugger, Terminal Agent) produce artifacts.
+
+## Escalation flow
+
+- **Tech Lead → Architect**: Tech Lead asks Architect for clarification on design/specs.
+- **Architect → User**: Architect asks the user for clarification on intent/requirements.
+- Tech Lead does NOT escalate to the user directly — always goes through Architect.
+
 ## Model Routing — Cost-Optimised Delegation
 
 When delegating via `Task()`, callers **MUST** select the appropriate model tier to balance cost and capability. Pass `model="fast"` for Tier 1 agents; omit `model` (inherit parent) for Tier 2 and Tier 3.
