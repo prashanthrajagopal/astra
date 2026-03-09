@@ -1,0 +1,17 @@
+
+syntax="proto3";
+package astra.tasks;
+
+service TaskService{
+rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+}
+
+message CreateTaskRequest{
+string agent_id=1;
+string type=2;
+bytes payload=3;
+}
+
+message CreateTaskResponse{
+string task_id=1;
+}
