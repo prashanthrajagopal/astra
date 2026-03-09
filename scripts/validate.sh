@@ -379,7 +379,7 @@ echo "Observability:"
 assert_eq "docs/observability.md exists" "true" "$(test -f docs/observability.md && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
-# PHASE 6 — SDK & Apps (placeholder)
+# PHASE 6 — SDK & Apps
 # ═══════════════════════════════════════════════
 echo ""
 echo "$(bold '═══ PHASE 6: SDK & Apps ═══')"
@@ -399,6 +399,22 @@ if GO_DETECTED; then
 else
   skip_test "sdk build and dependency checks (go not installed)"
 fi
+
+# ═══════════════════════════════════════════════
+# PHASE 7 — Security Compliance & Production Auth
+# ═══════════════════════════════════════════════
+echo ""
+echo "$(bold '═══ PHASE 7: Security Compliance & Production Auth ═══')"
+assert_eq "pkg/grpc TLS helpers exist" "true" "$(test -f pkg/grpc/tls.go && echo true || echo false)"
+assert_eq "pkg/httpx TLS helpers exist" "true" "$(test -f pkg/httpx/httpx.go && echo true || echo false)"
+assert_eq "pkg/secrets vault loader exists" "true" "$(test -f pkg/secrets/vault.go && echo true || echo false)"
+assert_eq "config has TLS enable flag" "true" "$(rg -n 'TLSEnabled' pkg/config/config.go >/dev/null && echo true || echo false)"
+assert_eq "config has Vault address fields" "true" "$(rg -n 'VaultAddr|VaultToken|VaultPath' pkg/config/config.go >/dev/null && echo true || echo false)"
+assert_eq "grpc server uses config-aware constructor" "true" "$(rg -n 'NewServerFromConfig\\(' cmd/agent-service/main.go cmd/task-service/main.go cmd/memory-service/main.go cmd/llm-router/main.go >/dev/null && echo true || echo false)"
+assert_eq "http services use TLS-aware helper" "true" "$(rg -n 'httpx\\.ListenAndServe\\(' cmd >/dev/null && echo true || echo false)"
+assert_eq "helm values include tls and vault blocks" "true" "$(rg -n '^tls:|^vault:' deployments/helm/astra/values.yaml >/dev/null && echo true || echo false)"
+assert_eq "vault runbook exists" "true" "$(test -f docs/runbooks/vault-setup.md && echo true || echo false)"
+assert_eq "tls rotation runbook exists" "true" "$(test -f docs/runbooks/tls-rotation.md && echo true || echo false)"
 
 # ═══════════════════════════════════════════════
 # SUMMARY

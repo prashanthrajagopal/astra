@@ -15,14 +15,15 @@ import (
 	"astra/internal/prompt"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
 
 const (
-	cacheTTLSeconds       = 300
-	headerContentType    = "Content-Type"
-	contentTypeJSON      = "application/json"
-	msgMethodNotAllowed  = "method not allowed"
+	cacheTTLSeconds     = 300
+	headerContentType   = "Content-Type"
+	contentTypeJSON     = "application/json"
+	msgMethodNotAllowed = "method not allowed"
 )
 
 func main() {
@@ -50,7 +51,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.PromptManagerPort)
 	slog.Info("prompt manager started", "addr", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	srv := &http.Server{Addr: addr, Handler: nil}
+	if err := httpx.ListenAndServe(srv, cfg); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
 	}
@@ -83,12 +85,12 @@ func (s *server) handlePromptsPath(w http.ResponseWriter, r *http.Request) {
 	cacheKey := fmt.Sprintf("prompt:%s:%s", name, version)
 	if s.mc != nil {
 		item, err := s.mc.Get(cacheKey)
-	if err == nil {
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusOK)
-		w.Write(item.Value)
-		return
-	}
+		if err == nil {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusOK)
+			w.Write(item.Value)
+			return
+		}
 		if err != memcache.ErrCacheMiss {
 			slog.Warn("memcached get failed", "key", cacheKey, "err", err)
 		}

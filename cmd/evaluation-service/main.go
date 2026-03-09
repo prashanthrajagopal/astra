@@ -13,6 +13,7 @@ import (
 
 	"astra/internal/evaluation"
 	"astra/pkg/config"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
 
@@ -72,7 +73,7 @@ func main() {
 	srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: mux}
 	go func() {
 		slog.Info("evaluation service listening", "port", port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpx.ListenAndServe(srv, cfg); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "err", err)
 			os.Exit(1)
 		}

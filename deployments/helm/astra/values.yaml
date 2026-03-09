@@ -39,3 +39,18 @@ autoscaling:
 pdb:
   enabled: true
   minAvailable: 1
+
+tls:
+  enabled: false
+  certFile: /etc/astra/tls/tls.crt
+  keyFile: /etc/astra/tls/tls.key
+  caFile: /etc/astra/tls/ca.crt
+  serverName: ""
+  insecureSkipVerify: false
+  secretName: ""
+
+vault:
+  enabled: false
+  addr: ""
+  token: ""
+  path: secret/data/astra

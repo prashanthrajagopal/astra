@@ -15,6 +15,7 @@ import (
 
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
 
@@ -81,7 +82,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.AccessControlPort)
 	slog.Info("access control service started", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srvHTTP := &http.Server{Addr: addr, Handler: mux}
+	if err := httpx.ListenAndServe(srvHTTP, cfg); err != nil {
 		slog.Error("access control server failed", "err", err)
 		os.Exit(1)
 	}

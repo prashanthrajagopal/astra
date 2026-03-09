@@ -24,10 +24,12 @@ func metricsInterceptor(ctx context.Context, req interface{}, info *grpc.UnarySe
 	return handler(ctx, req)
 }
 
-func NewServer() *grpc.Server {
-	s := grpc.NewServer(
+func NewServer(opts ...grpc.ServerOption) *grpc.Server {
+	baseOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(loggingInterceptor, metricsInterceptor),
-	)
+	}
+	baseOpts = append(baseOpts, opts...)
+	s := grpc.NewServer(baseOpts...)
 	reflection.Register(s)
 	return s
 }

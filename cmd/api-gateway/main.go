@@ -12,18 +12,19 @@ import (
 	"time"
 
 	"astra/pkg/config"
+	astraGrpc "astra/pkg/grpc"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 
 	kernel_pb "astra/proto/kernel"
 	tasks_pb "astra/proto/tasks"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	gogrpc "google.golang.org/grpc"
 )
 
 var (
-	agentConn   *grpc.ClientConn
-	taskConn    *grpc.ClientConn
+	agentConn   *gogrpc.ClientConn
+	taskConn    *gogrpc.ClientConn
 	agentClient kernel_pb.KernelServiceClient
 	taskClient  tasks_pb.TaskServiceClient
 )
@@ -41,14 +42,14 @@ func main() {
 	agentAddr := fmt.Sprintf("localhost:%d", cfg.AgentGRPCPort)
 	taskAddr := fmt.Sprintf("localhost:%d", cfg.GRPCPort)
 
-	agentConn, err = grpc.NewClient(agentAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	agentConn, err = astraGrpc.Dial(context.Background(), agentAddr, cfg)
 	if err != nil {
 		slog.Error("failed to connect to agent service", "addr", agentAddr, "err", err)
 		os.Exit(1)
 	}
 	defer agentConn.Close()
 
-	taskConn, err = grpc.NewClient(taskAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	taskConn, err = astraGrpc.Dial(context.Background(), taskAddr, cfg)
 	if err != nil {
 		slog.Error("failed to connect to task service", "addr", taskAddr, "err", err)
 		os.Exit(1)
@@ -58,7 +59,11 @@ func main() {
 	agentClient = kernel_pb.NewKernelServiceClient(agentConn)
 	taskClient = tasks_pb.NewTaskServiceClient(taskConn)
 
-	auth := newAuthMiddleware(cfg.IdentityAddr, cfg.AccessControlAddr)
+	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr)
+	if err != nil {
+		slog.Error("failed to initialize auth middleware client", "err", err)
+		os.Exit(1)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
@@ -69,7 +74,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	slog.Info("api gateway started", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srv := &http.Server{Addr: addr, Handler: mux}
+	if err := httpx.ListenAndServe(srv, cfg); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
 	}
@@ -81,12 +87,16 @@ type authMiddleware struct {
 	client            *http.Client
 }
 
-func newAuthMiddleware(identityAddr, accessControlAddr string) *authMiddleware {
+func newAuthMiddleware(cfg *config.Config, identityAddr, accessControlAddr string) (*authMiddleware, error) {
+	client, err := httpx.NewClient(cfg, 100*time.Millisecond)
+	if err != nil {
+		return nil, err
+	}
 	return &authMiddleware{
 		identityAddr:      strings.TrimSuffix(identityAddr, "/"),
 		accessControlAddr: strings.TrimSuffix(accessControlAddr, "/"),
-		client:            &http.Client{Timeout: 100 * time.Millisecond},
-	}
+		client:            client,
+	}, nil
 }
 
 func (a *authMiddleware) protect(next http.Handler) http.Handler {

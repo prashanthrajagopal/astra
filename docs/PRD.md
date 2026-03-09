@@ -1373,6 +1373,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 - Secrets injected at runtime from Vault
 - Never persisted in code, logs, events, or artifact metadata
 - Tool sandboxes receive secrets via ephemeral volumes only
+- Phase 7 implementation adds Vault config overlay and TLS secret path configuration in `pkg/config`
 
 ## Tool & Action Governance
 
@@ -1384,6 +1385,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 - **Immutable event log** — The `events` table is the canonical audit log. It includes task/agent lifecycle events and, for phase/usage audit: `PhaseStarted`, `PhaseCompleted`, `PhaseFailed`, `PhaseSummary`, and `LLMUsage` (per-request model, tokens in/out, latency, cost). Index on `created_at` supports time-range audit queries.
 - **Phase/build history** — Each phase run is recorded in `phase_runs` (and optionally in `phase_summaries` for semantic search) and as a human-readable file per phase; phase lifecycle events are appended to `events`. Development-phase history (what was built in each implementation phase) is maintained in **docs/phase-history/** (e.g. phase-0.md).
 - **Per-request LLM usage** — Visible to the user in the response; persisted asynchronously to `llm_usage` and to `events` as `LLMUsage` for analytics and audit.
+- **Security compliance status** — S1 (mTLS transport) and S5 (Vault-backed secret management) are implemented in Phase 7 and validated in `scripts/validate.sh`.
 - Artifact immutability (once written, cannot be modified).
 - All state transitions logged with actor_id and timestamp.
 
@@ -1766,6 +1768,18 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [x] Additional example app `examples/echo-agent` ✅
 
 **Minimum scope (4-6 weeks):** AgentContext interface, MemoryClient interface, SimpleAgent example, SDK documentation are implemented. Ongoing post-MVP SDK roadmap still includes richer sample agents (autonomous developer, research), Python/TS bindings, and community docs.
+
+## Phase 7 — Security Compliance & Production Auth (6-8 weeks) ✅ COMPLETE
+
+**Goal:** Enforce production-ready transport security and runtime secret management for all core services.
+
+- [x] TLS-aware gRPC server/client wiring through `pkg/grpc` and all gRPC services ✅
+- [x] TLS-aware HTTP listener/client wiring through `pkg/httpx` and service mains ✅
+- [x] Vault-backed secret overlay via `pkg/secrets` + `pkg/config` ✅
+- [x] TLS/Vault operational runbooks in `docs/runbooks/` ✅
+- [x] Phase 7 validation checks in `scripts/validate.sh` ✅
+
+**Acceptance:** Security transport and secret-loading foundations are implemented in code paths used by services, with local-dev fallback still supported when TLS/Vault are disabled.
 
 ---
 

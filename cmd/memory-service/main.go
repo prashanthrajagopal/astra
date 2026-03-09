@@ -134,7 +134,11 @@ func main() {
 
 	store := memory.NewStore(dbConn, embedder)
 	srv := &memoryServer{store: store}
-	grpcSrv := grpc.NewServer()
+	grpcSrv, err := grpc.NewServerFromConfig(cfg)
+	if err != nil {
+		slog.Error("failed to initialize gRPC server", "err", err)
+		os.Exit(1)
+	}
 	memorypb.RegisterMemoryServiceServer(grpcSrv, srv)
 
 	port := cfg.MemoryGRPCPort

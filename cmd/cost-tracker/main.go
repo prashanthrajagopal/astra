@@ -12,6 +12,7 @@ import (
 	"astra/internal/cost"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
 
@@ -59,7 +60,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", port)
 	slog.Info("cost-tracker started", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srv := &http.Server{Addr: addr, Handler: mux}
+	if err := httpx.ListenAndServe(srv, cfg); err != nil {
 		slog.Error("cost-tracker failed", "err", err)
 		os.Exit(1)
 	}

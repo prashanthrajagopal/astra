@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"astra/pkg/config"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
 
@@ -57,7 +58,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.IdentityPort)
 	slog.Info("identity service started", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srv := &http.Server{Addr: addr, Handler: mux}
+	if err := httpx.ListenAndServe(srv, cfg); err != nil {
 		slog.Error("identity server failed", "err", err)
 		os.Exit(1)
 	}

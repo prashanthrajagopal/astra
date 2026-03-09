@@ -21,6 +21,7 @@ import (
 	"astra/internal/tools"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
 
@@ -40,10 +41,15 @@ func main() {
 	defer dbConn.Close()
 
 	runtime := newToolRuntime()
+	httpClient, err := httpx.NewClient(cfg, 100*time.Millisecond)
+	if err != nil {
+		slog.Error("failed to initialize HTTP client", "err", err)
+		os.Exit(1)
+	}
 	gate := &approvalGate{
 		accessControlAddr: strings.TrimSuffix(cfg.AccessControlAddr, "/"),
 		db:                dbConn,
-		client:            &http.Client{Timeout: 100 * time.Millisecond},
+		client:            httpClient,
 	}
 
 	port := 8083
@@ -153,7 +159,7 @@ func main() {
 	srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: mux}
 	go func() {
 		slog.Info("tool runtime listening", "port", port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpx.ListenAndServe(srv, cfg); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "err", err)
 		}
 	}()

@@ -16,6 +16,7 @@ import (
 	"astra/internal/workers"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/httpx"
 	"astra/pkg/logger"
 
 	"github.com/redis/go-redis/v9"
@@ -119,7 +120,7 @@ func main() {
 	srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: mux}
 	go func() {
 		slog.Info("worker manager listening", "port", port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpx.ListenAndServe(srv, cfg); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "err", err)
 		}
 	}()
