@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,14 +10,18 @@ import (
 func TestPlanner_Plan(t *testing.T) {
 	p := New()
 	goalID := uuid.New()
+	agentID := uuid.New()
 	goalText := "implement feature X"
-	g := p.Plan(goalID, goalText)
+	g, err := p.Plan(context.Background(), goalID, goalText, agentID)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
 
 	if len(g.Tasks) != 2 {
 		t.Fatalf("expected 2 tasks, got %d", len(g.Tasks))
 	}
-	if g.Dependencies != nil && len(g.Dependencies) != 0 {
-		t.Errorf("expected no dependencies, got %d", len(g.Dependencies))
+	if len(g.Dependencies) != 1 {
+		t.Errorf("expected 1 dependency (implement -> analyze), got %d", len(g.Dependencies))
 	}
 	if g.ID == uuid.Nil {
 		t.Error("expected non-nil Graph ID")
@@ -31,6 +36,9 @@ func TestPlanner_Plan(t *testing.T) {
 		}
 		if task.GoalID != goalID {
 			t.Errorf("task GoalID %s != goalID %s", task.GoalID, goalID)
+		}
+		if task.AgentID != agentID {
+			t.Errorf("task AgentID %s != agentID %s", task.AgentID, agentID)
 		}
 		types[task.Type] = true
 	}

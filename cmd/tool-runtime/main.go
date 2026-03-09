@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,8 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"astra/internal/tools"
 	"astra/pkg/config"
+	"astra/pkg/db"
 	"astra/pkg/logger"
 )
 
@@ -26,7 +32,19 @@ func main() {
 	}
 	slog.SetDefault(logger.New(cfg.LogLevel))
 
+	dbConn, err := db.Connect(cfg.PostgresDSN())
+	if err != nil {
+		slog.Error("failed to connect to database", "err", err)
+		os.Exit(1)
+	}
+	defer dbConn.Close()
+
 	runtime := newToolRuntime()
+	gate := &approvalGate{
+		accessControlAddr: strings.TrimSuffix(cfg.AccessControlAddr, "/"),
+		db:                dbConn,
+		client:            &http.Client{Timeout: 100 * time.Millisecond},
+	}
 
 	port := 8083
 	if p := os.Getenv("TOOL_RUNTIME_PORT"); p != "" {
@@ -45,11 +63,13 @@ func main() {
 	})
 	mux.HandleFunc("POST /execute", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Name           string `json:"name"`
-			Input          string `json:"input"` // base64
-			TimeoutSeconds int    `json:"timeout_seconds"`
-			MemoryLimit    int64  `json:"memory_limit"`
+			Name           string  `json:"name"`
+			Input          string  `json:"input"`
+			TimeoutSeconds int     `json:"timeout_seconds"`
+			MemoryLimit    int64   `json:"memory_limit"`
 			CPULimit       float64 `json:"cpu_limit"`
+			TaskID         string  `json:"task_id"`
+			WorkerID       string  `json:"worker_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
@@ -85,6 +105,33 @@ func main() {
 			CPULimit:    cpuLimit,
 		}
 
+		// Approval gate: check before execute
+		checkResp, err := gate.check(r.Context(), req.Name, req.TaskID, req.WorkerID)
+		if err != nil {
+			slog.Warn("approval gate check failed", "err", err)
+			http.Error(w, "approval check failed", http.StatusInternalServerError)
+			return
+		}
+		if checkResp.ApprovalRequired {
+			arID, err := gate.insertPending(r.Context(), req.Name, req.TaskID, req.WorkerID)
+			if err != nil {
+				slog.Error("insert approval request failed", "err", err)
+				http.Error(w, "failed to create approval request", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":              "pending_approval",
+				"approval_request_id": arID,
+			})
+			return
+		}
+		if !checkResp.Allowed {
+			http.Error(w, "forbidden: "+checkResp.Reason, http.StatusForbidden)
+			return
+		}
+
 		toolResult, err := runtime.Execute(r.Context(), toolReq)
 		if err != nil {
 			slog.Error("execute failed", "name", req.Name, "err", err)
@@ -94,10 +141,10 @@ func main() {
 
 		outputB64 := base64.StdEncoding.EncodeToString(toolResult.Output)
 		resp := map[string]interface{}{
-			"output":     outputB64,
-			"exit_code":  toolResult.ExitCode,
+			"output":      outputB64,
+			"exit_code":   toolResult.ExitCode,
 			"duration_ms": toolResult.Duration.Milliseconds(),
-			"artifacts":  toolResult.Artifacts,
+			"artifacts":   toolResult.Artifacts,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -124,4 +171,66 @@ func newToolRuntime() tools.Runtime {
 		return tools.NewDockerRuntime()
 	}
 	return tools.NewNoopRuntime()
+}
+
+type checkResult struct {
+	Allowed          bool   `json:"allowed"`
+	ApprovalRequired bool   `json:"approval_required"`
+	Reason           string `json:"reason"`
+}
+
+type approvalGate struct {
+	accessControlAddr string
+	db                *sql.DB
+	client            *http.Client
+}
+
+func (g *approvalGate) check(ctx context.Context, toolName, taskID, workerID string) (*checkResult, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"subject":   "tool-runtime",
+		"action":    "tool.execute",
+		"resource":  "tool:" + toolName,
+		"tool_name": toolName,
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", g.accessControlAddr+"/check", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var res checkResult
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (g *approvalGate) insertPending(ctx context.Context, toolName, taskID, workerID string) (string, error) {
+	id := uuid.New().String()
+	actionSummary := fmt.Sprintf("tool.execute:%s", toolName)
+
+	var tID, wID interface{}
+	if taskID != "" {
+		tID = taskID
+	} else {
+		tID = nil
+	}
+	if workerID != "" {
+		wID = workerID
+	} else {
+		wID = nil
+	}
+
+	_, err := g.db.ExecContext(ctx,
+		`INSERT INTO approval_requests (id, task_id, worker_id, tool_name, action_summary, status)
+		 VALUES ($1, $2, $3, $4, $5, 'pending')`,
+		id, tID, wID, toolName, actionSummary)
+	if err != nil {
+		return "", fmt.Errorf("insert approval_requests: %w", err)
+	}
+	return id, nil
 }
