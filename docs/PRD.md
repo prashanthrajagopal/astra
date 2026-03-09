@@ -1500,6 +1500,18 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] Observability traces visible for each task execution
 - [ ] Tool runtime can run sandboxed command and return artifact
 
+## MVP Milestone Map
+
+| MVP Criterion | Phase |
+|---|---|
+| Spawn and run persistent agent | Phase 1 |
+| Planner produces task DAGs | Phase 4 |
+| Scheduler dispatches to workers | Phase 1 |
+| Worker executes in sandbox | Phase 2 |
+| Event sourcing | Phase 1 |
+| Observability traces | Phase 5 |
+| Tool runtime in sandbox | Phase 2 |
+
 ## Production SLAs
 
 | SLA | Target |
@@ -1541,6 +1553,7 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] `internal/tasks` — Task model, state machine, Graph, transitions
 - [ ] `internal/scheduler` — Ready-task detection, shard dispatch
 - [ ] `internal/agent` — AgentActor, agent lifecycle
+- [ ] `internal/planner` — Stub: hardcoded single-task DAG (replaced in Phase 4)
 - [ ] `pkg/db` — Connection pool, migration runner
 - [ ] `pkg/config` — Env/Vault config loader
 - [ ] `pkg/logger` — Structured logging
@@ -1550,7 +1563,12 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] `cmd/agent-service` — Agent CRUD via gRPC
 - [ ] `cmd/scheduler-service` — Scheduling loop
 - [ ] `cmd/task-service` — Task CRUD via gRPC
+- [ ] `cmd/execution-worker` — Stub: pass-through marks tasks complete (replaced in Phase 2)
 - [ ] Unit tests for all packages, integration tests with testcontainers
+
+**Stubs & Replacements:** Planner stub: hardcoded single-task DAG in `internal/planner`, replaced in Phase 4 with LLM-driven planning. Worker stub: simple pass-through in `cmd/execution-worker` that marks tasks complete, replaced in Phase 2 with real tool execution.
+
+**Auth note:** api-gateway runs with no auth in dev/test. A placeholder middleware accepts all requests. Full S2 (JWT + mTLS) compliance is achieved in Phase 4.
 
 **Acceptance:** Spawn agent → create goal → planner stubs DAG → scheduler dispatches → worker stubs complete task → events in Postgres → query state returns correct data.
 
@@ -1569,7 +1587,7 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 ## Phase 3 — Memory & LLM Routing (6 weeks)
 
-**Goal:** Memory service with pgvector, LLM router, Memcached caching.
+**Goal:** Memory service with pgvector, LLM router, Memcached caching. Hot-path reads compliant with 10ms SLA.
 
 - [ ] `internal/memory` — Write, search (pgvector), embedding pipeline
 - [ ] `internal/llm` — Router logic, model selection, response caching
@@ -1577,22 +1595,27 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] `cmd/llm-router` — Model routing service
 - [ ] `cmd/prompt-manager` — Prompt template management
 - [ ] Memcached integration for LLM/embedding/tool caches
+- [ ] Redis cache-aside for actor state (`actor:state:<id>`) and task lookups
+- [ ] Memcached for hot-path API reads (task status, agent state)
 
-**Acceptance:** Agent writes memory → search returns semantically relevant results. LLM router selects model based on task type. Repeated prompts served from cache.
+**Caching note:** Phases 1-2 may exceed 10ms on reads (acceptable for dev). Phase 3 brings hot-path reads into SLA compliance.
+
+**Acceptance:** Agent writes memory → search returns semantically relevant results. LLM router selects model based on task type. Repeated prompts served from cache. API reads serve from Redis/Memcached; p99 ≤ 10ms.
 
 ## Phase 4 — Orchestration, Eval, Security (6-8 weeks)
 
-**Goal:** Planner service, evaluation service, OPA integration, approval gates.
+**Goal:** Planner service, goal service, evaluation service, OPA integration, approval gates.
 
 - [ ] `internal/planner` — Goal → DAG conversion using LLM
 - [ ] `internal/evaluation` — Result validators, auto-evaluators
 - [ ] `cmd/planner-service` — Planner API
+- [ ] `cmd/goal-service` — Goal ingestion, validation, routing to planner-service
 - [ ] `cmd/evaluation-service` — Evaluation API
 - [ ] `cmd/identity` — JWT token issuance
 - [ ] `cmd/access-control` — OPA policy enforcement
 - [ ] Tool execution approval gates
 
-**Acceptance:** Goal submitted → planner generates real DAG → scheduler executes → evaluator validates → security policies enforced.
+**Acceptance:** Goal submitted via goal-service → planner generates real DAG → scheduler executes → evaluator validates → security policies enforced.
 
 ## Phase 5 — Scale & Production Hardening (8 weeks)
 
@@ -1608,14 +1631,15 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** System handles target load within SLAs. Dashboards operational. Runbooks tested.
 
-## Phase 6 — SDK & Applications (ongoing)
+## Phase 6 — SDK & Applications (4-6 weeks initial)
 
-**Goal:** Public Astra SDK, sample applications.
+**Goal:** Public Astra SDK, minimum viable sample applications.
 
 - [ ] SDK package with AgentContext, MemoryClient, ToolClient
-- [ ] Sample autonomous developer agent
-- [ ] Sample research agent
+- [ ] SimpleAgent example
 - [ ] SDK documentation and examples
+
+**Minimum scope (4-6 weeks):** AgentContext interface, MemoryClient interface, SimpleAgent example, SDK documentation. After initial SDK, ongoing work includes additional sample agents (autonomous developer, research), Python/TS bindings, community docs.
 
 ---
 
@@ -1644,13 +1668,13 @@ Layer 2 (kernel engine — depend on Layer 1):
   internal/scheduler  (depends on: internal/tasks, internal/messaging, pkg/db)
 
 Layer 3 (services — depend on Layer 2):
+  internal/llm        (depends on: pkg/config)
   internal/agent      (depends on: internal/kernel, internal/tasks)
   internal/planner    (depends on: internal/tasks, internal/llm)
-  internal/memory     (depends on: pkg/db)
+  internal/memory     (depends on: pkg/db, internal/llm)
   internal/workers    (depends on: internal/messaging, internal/tasks)
   internal/tools      (depends on: pkg/config)
   internal/evaluation (depends on: internal/tasks)
-  internal/llm        (depends on: pkg/config)
 
 Layer 4 (entrypoints — depend on Layer 3):
   cmd/api-gateway
