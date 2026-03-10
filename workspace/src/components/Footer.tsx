@@ -1,10 +1,8 @@
-import React from 'react';
-
-const Footer: React.FC = () => {
+const Footer = () => {
   return (
-    <footer className="bg-gray-200 p-4 flex justify-center items-center">
-      <p className="text-gray-600 text-sm">
-        Copyright &copy; {new Date().getFullYear()} All Rights Reserved.
+    <footer className="bg-gray-800 p-4 shadow-md">
+      <p className="text-gray-300 text-center">
+        &copy; {new Date().getFullYear()} My App
       </p>
     </footer>
   );

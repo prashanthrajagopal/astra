@@ -15,9 +15,13 @@ fi
 echo "Services are running."
 echo ""
 
-# Ensure workspace directory exists
+# Clean and create workspace directory
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(pwd)/workspace}"
 WORKSPACE_DIR="$WORKSPACE_ROOT/ecommerce-store"
+if [[ -d "$WORKSPACE_DIR" ]]; then
+  echo "Cleaning previous workspace at $WORKSPACE_DIR"
+  rm -rf "$WORKSPACE_DIR"
+fi
 mkdir -p "$WORKSPACE_DIR"
 export WORKSPACE_ROOT
 

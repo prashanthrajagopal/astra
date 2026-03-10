@@ -9,8 +9,112 @@ Astra is the **operating system for autonomous agents**: a production-grade, mic
 ## Documentation
 
 - **[docs/PRD.md](docs/PRD.md)** — Single source of truth: architecture, 16 canonical services, kernel APIs, database schema, Redis streams, deployment, security, and phased roadmap.
+- **API reference:** [docs/api/openapi.yaml](docs/api/openapi.yaml) — OpenAPI 3.x spec for all REST/HTTP APIs (agents, goals, tasks, graphs, identity, access-control, and internal services); includes a full example flow (e.g. e-commerce builder). When adding or changing endpoints, update this spec and regenerate clients if used.
 - **Design & deployment:** [docs/local-deployment.md](docs/local-deployment.md), [docs/deployment-design.md](docs/deployment-design.md), [docs/phase-history-usage-audit-design.md](docs/phase-history-usage-audit-design.md).
 - **Phase history:** [docs/phase-history/](docs/phase-history/) — what was built in each implementation phase (e.g. [phase-0.md](docs/phase-history/phase-0.md)).
+
+---
+
+## Agent vs worker
+
+- **Agent** = logical entity that owns goals and task graphs. Agents (and kernel services) create tasks via the planner and task-service; they do **not** execute tasks.
+- **Worker** = process that pulls from Redis task streams, claims and runs tasks, and reports `CompleteTask` / `FailTask`.
+
+**Summary:** Agents (and kernel services) create and own tasks; workers execute them.
+
+| | Nature | Creates tasks? | Executes tasks? | Canonical services |
+|---|--------|----------------|------------------|--------------------|
+| **Agent** | Logical entity (goals, DAGs) | Yes (planner, task-service) | No | agent-service, goal-service, planner-service, scheduler-service, task-service |
+| **Worker** | Process (pulls from streams) | No | Yes | execution-worker, browser-worker, worker-manager, tool-runtime, llm-router, prompt-manager, evaluation-service |
+
+---
+
+## Example flow: coding agent
+
+End-to-end when a user asks a coding agent to "write some code for me":
+
+1. **User → goal** — `POST /goals` or `POST /agents/{id}/goals` with goal text.
+2. **Goal → planner** — Goal-service calls planner-service (LLM); planner produces a DAG of tasks (e.g. `code_generate`, `shell_exec`) and task-service persists it via `CreateGraph`.
+3. **Scheduler → Redis** — Scheduler marks ready tasks, pushes to Redis task stream; execution-worker pulls from the stream, claims and runs tasks (LLM + `file_write` via tool-runtime).
+4. **CompleteTask → result** — Worker reports `CompleteTask`; user gets output via `GET /tasks/{id}` or `GET /graphs/{id}`.
+
+```
+User → POST /goals → goal-service → planner (LLM) → DAG → CreateGraph
+       → scheduler → ready tasks → Redis stream → execution-worker
+       → runs (LLM + tools) → CompleteTask → GET /tasks/{id} or /graphs/{id}
+```
+
+See [docs/PRD.md](docs/PRD.md) for full detail.
+
+---
+
+## How the platform works
+
+This section gives new contributors and readers an end-to-end picture of Astra. **[docs/PRD.md](docs/PRD.md)** is the single source of truth for architecture, APIs, schema, and implementation details.
+
+### 1. High-level flow
+
+**From request to result:** A user or API client sends a request (e.g. create a goal) to the **api-gateway**. The gateway authenticates (JWT via identity) and authorizes (access-control/OPA), then routes to control-plane services. **Goals** are handled by **goal-service**, which invokes the **planner-service** (LLM) to produce a **task graph (DAG)**. The **task-service** persists the graph via `CreateGraph`. The **scheduler-service** periodically detects **ready** tasks (all dependencies completed), marks them queued, and **pushes** task messages to **Redis Streams** (sharded: `astra:tasks:shard:<n>`). **Workers** (e.g. **execution-worker**, **browser-worker**) pull from these streams via consumer groups, **claim** a task (lock, set status scheduled/running), **execute** it (LLM calls via **llm-router**, tool runs via **tool-runtime**), then report **CompleteTask** or **FailTask** to the **task-service**. Events are written to Postgres and/or published to Redis; the user gets results via **GET /tasks/{id}**, **GET /graphs/{id}**, or by subscribing to events.
+
+In short: **Entry** (api-gateway, goals) → **Kernel** (actors, task graph, scheduler, message bus, state) → **Workers** (execution-worker, tool-runtime, llm-router) → **Results/events** back to the user. The [Example flow: coding agent](#example-flow-coding-agent) above is one concrete instance of this path.
+
+### 2. Key components
+
+**Kernel** (in-process or gRPC):
+
+- **Actor runtime** — Goroutine-per-actor, mailboxes, supervision trees.
+- **Task graph engine** — DAG model, status lifecycle, dependency resolution, transactional transitions.
+- **Scheduler** — Ready-task detection (SQL with `FOR UPDATE SKIP LOCKED`), shard assignment, push to Redis.
+- **Message bus** — Redis Streams (publish, consumer groups, ack).
+- **State** — Postgres as source of truth; `events` table for audit/replay; Redis for working state and locks.
+
+**Control-plane services:**
+
+- **api-gateway** — REST/gRPC gateway, auth, rate limiting, routes to services.
+- **identity** — User/service auth, JWT issue/validate.
+- **access-control** — RBAC, OPA policy, approval gates.
+- **agent-service** — Agent lifecycle (spawn/stop/inspect), actor integration.
+- **goal-service** — Goal ingestion, context assembly, calls planner.
+- **planner-service** — Goals → task DAG (LLM).
+- **scheduler-service** — Distributed scheduler, ready detection, Redis push.
+- **task-service** — Task CRUD, CreateGraph, CompleteTask, FailTask, GetTask, GetGraph.
+
+**Worker-side:**
+
+- **execution-worker** — Pulls from task stream, claims, runs (LLM + tools), CompleteTask/FailTask.
+- **browser-worker** — Headless browser automation (Playwright/Puppeteer).
+- **worker-manager** — Worker registration, heartbeats, stale detection, re-queue orphaned tasks.
+- **tool-runtime** — Sandbox controller (WASM/Docker/Firecracker), resource limits, policy check.
+- **llm-router** — Model routing, caching (Memcached), usage tracking.
+
+**Data stores:**
+
+- **Postgres** — Agents, goals, tasks, task_dependencies, events, memories, artifacts, workers, phase_runs, llm_usage; source of truth.
+- **Redis** — Streams (tasks, events, worker heartbeats, usage), ephemeral state, locks (e.g. task claim).
+- **Memcached** — LLM response cache, embedding cache, tool result cache.
+
+### 3. Lifecycle
+
+1. **Goal** — User or agent creates a goal (e.g. `POST /goals`). Goal-service stores it and triggers planning.
+2. **Plan (DAG)** — Planner-service (LLM) produces a task graph; task-service persists it (`CreateGraph`) with tasks in `created`/`pending`.
+3. **Create tasks** — Tasks and dependencies are stored; tasks with no deps or all deps completed are eligible for scheduling.
+4. **Schedule** — Scheduler-service runs a loop: **ready detection** (SQL: pending tasks with all dependencies completed, `FOR UPDATE SKIP LOCKED`), mark `queued`, **push** to Redis stream `astra:tasks:shard:<n>`.
+5. **Workers** — Execution-worker (and others) **pull** from the stream, **claim** (lock, set scheduled/running), **execute** (LLM via llm-router, tools via tool-runtime).
+6. **CompleteTask / FailTask** — Worker calls task-service; task transitions to completed or failed; result stored; events emitted; dependent tasks may become ready.
+7. **Events and result APIs** — Events go to Postgres (`events` table) and/or Redis streams; user polls `GET /tasks/{id}`, `GET /graphs/{id}` or subscribes to streams.
+
+### 4. Request-to-result diagram
+
+```
+Request → api-gateway (auth) → goal-service → planner-service (LLM) → DAG
+    → task-service (CreateGraph) → scheduler-service (ready detection)
+    → Redis stream (astra:tasks:shard:<n>)
+    → execution-worker / browser-worker (pull, claim, execute)
+    → task-service (CompleteTask / FailTask) → events + GET /tasks|graphs
+    → result to user
+```
+
+For the full specification (APIs, schema, streams, security, phases), see **[docs/PRD.md](docs/PRD.md)**.
 
 ---
 

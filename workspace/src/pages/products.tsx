@@ -1,58 +1,50 @@
 import Head from 'next/head';
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/router';
-import { Container, Grid, Sidebar, CategoryFilter, ProductCard } from '../components';
-import { getProductList } from '../api/products';
+import { Grid, GridItem, Flex, Divider, Box } from '@chakra-ui/react';
+import Products from '../components/Products';
+import ProductCard from '../components/ProductCard';
+import Sidebar from '../components/Sidebar';
 
-const Products = () => {
+const ProductsPage = () => {
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState('all');
-  const [sort, setSort] = useState('price');
-  const router = useRouter();
+  const [sortBy, setSortBy] = useState('price');
 
   useEffect(() => {
-    const fetchProducts = async () => {
-      const response = await getProductList(category, sort);
-      setProducts(response.data);
-    };
-    fetchProducts();
-  }, [category, sort]);
+    // fetch products from API
+    const productsData = [...]; // replace with actual API response
+    setProducts(productsData);
+  }, []);
 
-  const handleCategoryChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setCategory(event.target.value);
+  const handleCategoryChange = (newCategory: string) => {
+    setCategory(newCategory);
   };
 
-  const handleSortChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSort(event.target.value);
+  const handleSortChange = (newSortBy: string) => {
+    setSortBy(newSortBy);
   };
 
   return (
-    <Container>
+    <Box>
       <Head>
-        <title>Products</title>
+        <title>Product Listing</title>
       </Head>
-      <Grid templateColumns={['repeat(3, 1fr)', 'repeat(4, 1fr)', 'repeat(6, 1fr)']} gap={6}>
-        {products.map((product) => (
-          <ProductCard key={product.id} product={product} />
-        ))}
-      </Grid>
-      <Sidebar>
-        <CategoryFilter
-          value={category}
-          onChange={handleCategoryChange}
-          options={['all', 'electronics', 'fashion', 'home']}
-        />
-        <div>
-          <label>Sort by:</label>
-          <select value={sort} onChange={handleSortChange}>
-            <option value="price">Price</option>
-            <option value="name">Name</option>
-            <option value="rating">Rating</option>
-          </select>
-        </div>
-      </Sidebar>
-    </Container>
+      <Flex direction="row" gap={4}>
+        <Sidebar category={category} onChange={handleCategoryChange} />
+        <Grid
+          templateColumns="repeat(3, 1fr)"
+          gap={4}
+          justifyContent="center"
+        >
+          {products.map((product) => (
+            <GridItem key={product.id}>
+              <ProductCard product={product} />
+            </GridItem>
+          ))}
+        </Grid>
+      </Flex>
+    </Box>
   );
 };
 
-export default Products;
+export default ProductsPage;

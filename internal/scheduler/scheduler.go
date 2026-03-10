@@ -41,6 +41,12 @@ func (s *Scheduler) Run(ctx context.Context) error {
 }
 
 func (s *Scheduler) tick(ctx context.Context) error {
+	if n, err := s.store.FailBlockedTasks(ctx); err != nil {
+		slog.Error("fail blocked tasks failed", "err", err)
+	} else if n > 0 {
+		slog.Info("cascade-failed blocked tasks", "count", n)
+	}
+
 	ready, err := s.store.FindReadyTasks(ctx, 100)
 	if err != nil {
 		return err
@@ -50,6 +56,19 @@ func (s *Scheduler) tick(ctx context.Context) error {
 			slog.Error("dispatch failed", "task_id", taskID, "err", err)
 		}
 	}
+
+	goals, err := s.store.FindGoalsToFinalize(ctx)
+	if err != nil {
+		slog.Error("find goals to finalize failed", "err", err)
+	}
+	for _, goalID := range goals {
+		if err := s.store.AutoFinalizeGoal(ctx, goalID); err != nil {
+			slog.Error("auto-finalize goal failed", "goal_id", goalID, "err", err)
+		} else {
+			slog.Info("auto-finalized goal", "goal_id", goalID)
+		}
+	}
+
 	return nil
 }
 
