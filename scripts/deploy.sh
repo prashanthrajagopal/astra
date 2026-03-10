@@ -175,17 +175,24 @@ go build -o bin/cost-tracker       ./cmd/cost-tracker
 echo "Build done."
 
 echo ""
-echo "Starting services..."
+echo "Restarting all services..."
 set -a; source .env 2>/dev/null || true; set +a
 
 SERVICES="task-service agent-service scheduler-service execution-worker worker-manager tool-runtime browser-worker memory-service llm-router prompt-manager identity access-control planner-service goal-service evaluation-service cost-tracker api-gateway"
+
+# Stop all running Astra services (by PID file)
+echo "  Stopping existing services..."
 for svc in $SERVICES; do
   if [[ -f "logs/${svc}.pid" ]]; then
-    kill "$(cat "logs/${svc}.pid")" 2>/dev/null || true
+    pid=$(cat "logs/${svc}.pid")
+    kill "$pid" 2>/dev/null || true
     rm -f "logs/${svc}.pid"
   fi
 done
-sleep 1
+sleep 2
+
+# Start all services
+echo "  Starting services..."
 
 ./bin/task-service       > logs/task-service.log 2>&1 &
 echo $! > logs/task-service.pid

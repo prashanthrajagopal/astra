@@ -1,15 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Astra Platform Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/dashboard/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <header id="dashboard-header" class="dashboard-header">
-    <h1 id="dashboard-title">Astra Platform Dashboard</h1>
+    <div class="header-row">
+      <h1 id="dashboard-title">Astra Platform Dashboard</h1>
+      <a href="/dashboard/swagger.html" class="swagger-link">API Docs</a>
+    </div>
     <div id="dashboard-meta" class="dashboard-meta">
       <span id="last-updated" class="meta-item">Last updated: never</span>
       <span id="refresh-status" class="meta-item">Idle</span>
@@ -17,6 +23,8 @@
     </div>
   </header>
 
+  <div class="dashboard-wrapper">
+    <div class="dashboard-main">
   <section id="section-summary" class="summary-grid">
     <div class="summary-card card-accent-blue">
       <div class="summary-value" id="sum-active-goals">0</div>
@@ -111,6 +119,36 @@
       <tbody id="tbody-pids"></tbody>
     </table>
   </section>
+
+    </div>
+    <aside class="dashboard-sidebar">
+      <section class="dashboard-card sidebar-card" id="sidebar-health">
+        <h3 class="section-title">Health at a glance</h3>
+        <div id="health-summary-text">—</div>
+        <canvas id="chart-health-donut" style="max-height: 100px;"></canvas>
+      </section>
+      <section class="dashboard-card sidebar-card" id="sidebar-task-queue">
+        <h3 class="section-title">Task queue</h3>
+        <div class="task-queue-row">
+          <span>Waiting: <strong id="task-queue-waiting">0</strong></span>
+          <span>Running: <strong id="task-queue-running">0</strong></span>
+        </div>
+      </section>
+      <section class="dashboard-card sidebar-card" id="sidebar-cost">
+        <h3 class="section-title">Cost (7d)</h3>
+        <div id="cost-summary-total">Total: $0.00</div>
+      </section>
+      <section class="dashboard-card sidebar-card" id="sidebar-workers">
+        <h3 class="section-title">Worker utilization</h3>
+        <div id="worker-util-summary">—</div>
+      </section>
+      <section class="dashboard-card sidebar-card" id="sidebar-approvals">
+        <h3 class="section-title">Pending approvals</h3>
+        <div id="approvals-summary-text">—</div>
+        <ul id="approvals-summary-list"></ul>
+      </section>
+    </aside>
+  </div>
 
   <script src="/dashboard/static/app.js"></script>
 </body>

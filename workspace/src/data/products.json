@@ -1,122 +1,83 @@
-[
-  {
-    "id": 1,
-    "name": "Apple iPhone 13",
-    "description": "A sleek and powerful smartphone with a 6.1-inch screen",
-    "price": 799.99,
-    "image": "/images/iphone13.jpg",
-    "category": "Electronics",
-    "rating": 4.5,
-    "inStock": true
-  },
-  {
-    "id": 2,
-    "name": "Samsung QN55Q80R",
-    "description": "A high-end 55-inch 4K smart TV with excellent picture quality",
-    "price": 999.99,
-    "image": "/images/samsung-tv.jpg",
-    "category": "Electronics",
-    "rating": 4.8,
-    "inStock": true
-  },
-  {
-    "id": 3,
-    "name": "Nike Air Force 1",
-    "description": "A classic and stylish sneaker with a low-top design",
-    "price": 69.99,
-    "image": "/images/nike-air-force-1.jpg",
-    "category": "Fashion",
-    "rating": 4.2,
-    "inStock": true
-  },
-  {
-    "id": 4,
-    "name": "Canon EOS 5D Mark IV",
-    "description": "A professional-grade digital camera with 30.4 megapixels",
-    "price": 2,999.99,
-    "image": "/images/canon-camera.jpg",
-    "category": "Electronics",
-    "rating": 4.9,
-    "inStock": false
-  },
-  {
-    "id": 5,
-    "name": "Amazon Echo Show 5",
-    "description": "A compact smart display with Alexa integration",
-    "price": 89.99,
-    "image": "/images/amazon-echo-show-5.jpg",
-    "category": "Home",
-    "rating": 4.5,
-    "inStock": true
-  },
-  {
-    "id": 6,
-    "name": "Levi's 501 Jeans",
-    "description": "A classic and comfortable pair of jeans with a straight leg",
-    "price": 59.99,
-    "image": "/images/levis-501-jeans.jpg",
-    "category": "Fashion",
-    "rating": 4.4,
-    "inStock": true
-  },
-  {
-    "id": 7,
-    "name": "Sony WH-1000XM4",
-    "description": "A high-end wireless headphone with advanced noise cancellation",
-    "price": 349.99,
-    "image": "/images/sony-headphones.jpg",
-    "category": "Electronics",
-    "rating": 4.7,
-    "inStock": true
-  },
-  {
-    "id": 8,
-    "name": "Taylor Swift Album",
-    "description": "A popular album by the renowned singer-songwriter",
-    "price": 9.99,
-    "image": "/images/taylor-swift-album.jpg",
-    "category": "Music",
-    "rating": 4.8,
-    "inStock": true
-  },
-  {
-    "id": 9,
-    "name": "Fitbit Charge 4",
-    "description": "A popular fitness tracker with advanced features and long battery life",
-    "price": 149.99,
-    "image": "/images/fitbit-charge-4.jpg",
-    "category": "Fitness",
-    "rating": 4.6,
-    "inStock": true
-  },
-  {
-    "id": 10,
-    "name": "Apple Watch Series 7",
-    "description": "A sleek and powerful smartwatch with advanced health features",
-    "price": 399.99,
-    "image": "/images/apple-watch-series-7.jpg",
-    "category": "Electronics",
-    "rating": 4.7,
-    "inStock": true
-  },
-  {
-    "id": 11,
-    "name": "Puma Fenty Trainer",
-    "description": "A stylish and comfortable pair of sneakers with a bold design",
-    "price": 99.99,
-    "image": "/images/puma-fenty-trainer.jpg",
-    "category": "Fashion",
-    "rating": 4.4,
-    "inStock": true
-  },
-  {
-    "id": 12,
-    "name": "Amazon Kindle Paperwhite",
-    "description": "A popular e-reader with a high-resolution display and long battery life",
-    "price": 129.99,
-    "image": "/images/amazon-kindle-paperwhite.jpg",
-    "category": "Electronics",
-    "rating": 4.5,
-    "inStock": true
-  }
-]
+src/data/products.json
+{
+  "categories": [
+    {
+      "name": "Electronics",
+      "products": [
+        {
+          "id": 1,
+          "name": "Smartphone X",
+          "description": "The latest smartphone with advanced camera features",
+          "price": 599.99,
+          "image": "/images/electronics/smartphone-x.jpg"
+        },
+        {
+          "id": 2,
+          "name": "Laptop Y",
+          "description": "A powerful laptop with long battery life",
+          "price": 799.99,
+          "image": "/images/electronics/laptop-y.jpg"
+        },
+        {
+          "id": 3,
+          "name": "Headphones Z",
+          "description": "Wireless headphones with excellent sound quality",
+          "price": 99.99,
+          "image": "/images/electronics/headphones-z.jpg"
+        }
+      ]
+    },
+    {
+      "name": "Clothing",
+      "products": [
+        {
+          "id": 4,
+          "name": "T-Shirt A",
+          "description": "Comfortable t-shirt with a relaxed fit",
+          "price": 19.99,
+          "image": "/images/clothing/t-shirt-a.jpg"
+        },
+        {
+          "id": 5,
+          "name": "Jeans B",
+          "description": "Durable jeans with a classic fit",
+          "price": 49.99,
+          "image": "/images/clothing/jeans-b.jpg"
+        },
+        {
+          "id": 6,
+          "name": "Sweater C",
+          "description": "Warm sweater for the winter season",
+          "price": 39.99,
+          "image": "/images/clothing/sweater-c.jpg"
+        }
+      ]
+    },
+    {
+      "name": "Home & Garden",
+      "products": [
+        {
+          "id": 7,
+          "name": "Garden Set D",
+          "description": "A comprehensive gardening set with all the essentials",
+          "price": 99.99,
+          "image": "/images/home-garden/garden-set-d.jpg"
+        },
+        {
+          "id": 8,
+          "name": "Coffee Table E",
+          "description": "A stylish coffee table with storage",
+          "price": 199.99,
+          "image": "/images/home-garden/coffee-table-e.jpg"
+        },
+        {
+          "id": 9,
+          "name": "Vase F",
+          "description": "A beautiful vase for any room",
+          "price": 29.99,
+          "image": "/images/home-garden/vase-f.jpg"
+        }
+      ]
+    }
+  ]
+}

@@ -277,7 +277,29 @@ func (s *Store) CompleteTask(ctx context.Context, taskID string, result []byte) 
 		return fmt.Errorf("tasks.CompleteTask: event: %w", err)
 	}
 
+	if err := promoteUnblockedTasks(tx, ctx, taskID); err != nil {
+		return fmt.Errorf("tasks.CompleteTask: promote: %w", err)
+	}
+
 	return tx.Commit()
+}
+
+// promoteUnblockedTasks moves tasks from 'created' to 'pending' when all their
+// dependencies are now completed. Called within the CompleteTask transaction.
+func promoteUnblockedTasks(tx *sql.Tx, ctx context.Context, completedTaskID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pending', updated_at = now()
+		WHERE status = 'created'
+		AND id IN (
+			SELECT d.task_id FROM task_dependencies d
+			WHERE d.depends_on = $1
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM task_dependencies d2
+			JOIN tasks dep ON dep.id = d2.depends_on
+			WHERE d2.task_id = tasks.id AND dep.status != 'completed'
+		)`, completedTaskID)
+	return err
 }
 
 func (s *Store) FailTask(ctx context.Context, taskID string, errMsg string) error {
@@ -385,6 +407,75 @@ func (s *Store) RequeueTask(ctx context.Context, taskID string) error {
 	}
 
 	return tx.Commit()
+}
+
+// FailBlockedTasks cascade-fails tasks in 'created' or 'pending' status
+// that have at least one dependency in 'failed' status. Returns count of affected tasks.
+func (s *Store) FailBlockedTasks(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'failed', result = '{"error":"dependency failed"}'::jsonb, updated_at = now()
+		WHERE status IN ('created', 'pending')
+		AND EXISTS (
+			SELECT 1 FROM task_dependencies d
+			JOIN tasks dep ON dep.id = d.depends_on
+			WHERE d.task_id = tasks.id AND dep.status = 'failed'
+		)`)
+	if err != nil {
+		return 0, fmt.Errorf("tasks.FailBlockedTasks: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// FindGoalsToFinalize returns goal IDs where all tasks are in terminal states
+// (completed or failed) but the goal is still 'active'.
+func (s *Store) FindGoalsToFinalize(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.id FROM goals g
+		WHERE g.status = 'active'
+		AND NOT EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.goal_id = g.id
+			AND t.status NOT IN ('completed', 'failed')
+		)
+		AND EXISTS (
+			SELECT 1 FROM tasks t WHERE t.goal_id = g.id
+		)`)
+	if err != nil {
+		return nil, fmt.Errorf("tasks.FindGoalsToFinalize: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("tasks.FindGoalsToFinalize: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// AutoFinalizeGoal marks a goal as completed or failed based on its task outcomes.
+func (s *Store) AutoFinalizeGoal(ctx context.Context, goalID string) error {
+	var hasFailed bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM tasks WHERE goal_id = $1 AND status = 'failed')`,
+		goalID).Scan(&hasFailed)
+	if err != nil {
+		return fmt.Errorf("tasks.AutoFinalizeGoal: check: %w", err)
+	}
+	goalStatus := "completed"
+	if hasFailed {
+		goalStatus = "failed"
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE goals SET status = $1 WHERE id = $2 AND status = 'active'`,
+		goalStatus, goalID)
+	if err != nil {
+		return fmt.Errorf("tasks.AutoFinalizeGoal: update: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error) {

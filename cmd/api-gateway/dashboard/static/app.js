@@ -57,14 +57,15 @@ var taskChart = null;
 var goalChart = null;
 var serviceChart = null;
 
+/* M3 theme palette for Chart.js (aligned with style.css tokens) */
 var chartColors = {
-  created: '#6b7280',
-  pending: '#6366f1',
-  queued: '#3b82f6',
-  scheduled: '#06b6d4',
-  running: '#f59e0b',
-  completed: '#22c55e',
-  failed: '#ef4444'
+  created: '#8e9099',
+  pending: '#c8b8ff',
+  queued: '#a8c7fa',
+  scheduled: '#9ecbf5',
+  running: '#e6c547',
+  completed: '#7dd87d',
+  failed: '#f2b8b5'
 };
 
 function renderTaskChart(tasks) {
@@ -72,7 +73,7 @@ function renderTaskChart(tasks) {
   if (!ctx) return;
   var labels = ['created', 'pending', 'queued', 'scheduled', 'running', 'completed', 'failed'];
   var values = labels.map(function (l) { return tasks[l] || 0; });
-  var colors = labels.map(function (l) { return chartColors[l] || '#6b7280'; });
+  var colors = labels.map(function (l) { return chartColors[l] || '#8e9099'; });
 
   if (taskChart) {
     taskChart.data.datasets[0].data = values;
@@ -89,7 +90,7 @@ function renderTaskChart(tasks) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { color: '#e5e7eb', font: { size: 11, family: 'monospace' } } }
+        legend: { position: 'right', labels: { color: '#e6e1e5', font: { size: 11, family: 'Roboto, sans-serif' } } }
       }
     }
   });
@@ -100,7 +101,7 @@ function renderGoalChart(goals) {
   if (!ctx) return;
   var labels = ['active', 'completed', 'failed', 'pending'];
   var values = labels.map(function (l) { return goals[l] || 0; });
-  var colors = ['#f59e0b', '#22c55e', '#ef4444', '#6366f1'];
+  var colors = ['#e6c547', '#7dd87d', '#f2b8b5', '#c8b8ff'];
 
   if (goalChart) {
     goalChart.data.datasets[0].data = values;
@@ -117,8 +118,8 @@ function renderGoalChart(goals) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { ticks: { color: '#9ca3af', font: { family: 'monospace' } }, grid: { color: '#374151' } },
-        y: { beginAtZero: true, ticks: { color: '#9ca3af', stepSize: 1, font: { family: 'monospace' } }, grid: { color: '#374151' } }
+        x: { ticks: { color: '#c4c6d0', font: { family: 'Roboto, sans-serif' } }, grid: { color: '#44474e' } },
+        y: { beginAtZero: true, ticks: { color: '#c4c6d0', stepSize: 1, font: { family: 'Roboto, sans-serif' } }, grid: { color: '#44474e' } }
       },
       plugins: { legend: { display: false } }
     }
@@ -145,8 +146,8 @@ function renderServiceChart(services) {
     data: {
       labels: labels,
       datasets: [
-        { label: 'Healthy', data: healthy, backgroundColor: '#22c55e', borderWidth: 0 },
-        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#ef4444', borderWidth: 0 }
+        { label: 'Healthy', data: healthy, backgroundColor: '#7dd87d', borderWidth: 0 },
+        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#f2b8b5', borderWidth: 0 }
       ]
     },
     options: {
@@ -154,12 +155,103 @@ function renderServiceChart(services) {
       maintainAspectRatio: false,
       indexAxis: 'y',
       scales: {
-        x: { stacked: true, max: 1, ticks: { display: false }, grid: { color: '#374151' } },
-        y: { stacked: true, ticks: { color: '#9ca3af', font: { size: 10, family: 'monospace' } }, grid: { display: false } }
+        x: { stacked: true, max: 1, ticks: { display: false }, grid: { color: '#44474e' } },
+        y: { stacked: true, ticks: { color: '#c4c6d0', font: { size: 10, family: 'Roboto, sans-serif' } }, grid: { display: false } }
       },
-      plugins: { legend: { labels: { color: '#e5e7eb', font: { size: 11, family: 'monospace' } } } }
+      plugins: { legend: { labels: { color: '#e6e1e5', font: { size: 11, family: 'Roboto, sans-serif' } } } }
     }
   });
+}
+
+// ─── Sidebar widgets ─────────────────────────────────────────────────
+
+var healthDonutChart = null;
+
+function renderHealthSummary(services) {
+  var el = document.getElementById('health-summary-text');
+  if (!el) return;
+  if (!services || services.length === 0) {
+    el.textContent = 'No services';
+    return;
+  }
+  var healthy = services.filter(function (s) { return s.healthy; }).length;
+  var unhealthy = services.length - healthy;
+  el.textContent = healthy + ' healthy / ' + unhealthy + ' unhealthy';
+
+  var canvas = document.getElementById('chart-health-donut');
+  if (!canvas) return;
+  if (healthDonutChart) {
+    healthDonutChart.data.datasets[0].data = [healthy, unhealthy];
+    healthDonutChart.update();
+    return;
+  }
+  healthDonutChart = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: ['Healthy', 'Unhealthy'],
+      datasets: [{
+        data: [healthy, unhealthy],
+        backgroundColor: ['#7dd87d', '#f2b8b5'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+
+function renderTaskQueueSummary(tasks) {
+  var waiting = (tasks.pending || 0) + (tasks.queued || 0) + (tasks.scheduled || 0);
+  var running = tasks.running || 0;
+  setText('task-queue-waiting', waiting);
+  setText('task-queue-running', running);
+}
+
+function renderCostSummary(cost) {
+  var el = document.getElementById('cost-summary-total');
+  if (!el) return;
+  var rows = (cost && cost.rows && Array.isArray(cost.rows)) ? cost.rows : [];
+  var total = 0;
+  rows.forEach(function (r) {
+    var v = parseFloat(r.cost_dollars);
+    if (!isNaN(v)) total += v;
+  });
+  el.textContent = 'Total: $' + total.toFixed(2);
+}
+
+function renderWorkerUtilization(workers, tasks) {
+  var el = document.getElementById('worker-util-summary');
+  if (!el) return;
+  var active = (workers || []).filter(function (w) {
+    var s = pick(w, ['status', 'Status'], '').toString().toLowerCase();
+    return s === 'active' || s === 'online';
+  }).length;
+  var running = (tasks && tasks.running) ? tasks.running : 0;
+  el.textContent = active + ' active workers, ' + running + ' tasks running';
+}
+
+function renderApprovalsSummary(approvals) {
+  var textEl = document.getElementById('approvals-summary-text');
+  var listEl = document.getElementById('approvals-summary-list');
+  if (!textEl) return;
+  var list = approvals || [];
+  if (list.length === 0) {
+    textEl.textContent = 'No pending approvals';
+    if (listEl) listEl.innerHTML = '';
+    return;
+  }
+  textEl.textContent = list.length + ' pending';
+  if (listEl) {
+    listEl.innerHTML = '';
+    list.slice(0, 3).forEach(function (a) {
+      var li = document.createElement('li');
+      li.textContent = (a.tool_name || a.id || '—').toString();
+      listEl.appendChild(li);
+    });
+  }
 }
 
 // ─── Tables ─────────────────────────────────────────────────────────
@@ -331,6 +423,13 @@ function fetchSnapshot() {
       renderCost(d.cost || { rows: [] });
       renderLogs(d.logs || {});
       renderPids(d.pids || {});
+
+      renderHealthSummary(d.services || []);
+      renderTaskQueueSummary(d.jobs && d.jobs.tasks ? d.jobs.tasks : {});
+      renderCostSummary(d.cost || { rows: [] });
+      renderWorkerUtilization(d.workers || [], d.jobs && d.jobs.tasks ? d.jobs.tasks : {});
+      renderApprovalsSummary(d.approvals || []);
+
       document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toISOString();
       setStatus('Idle', false);
     })
