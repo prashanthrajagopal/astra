@@ -106,6 +106,7 @@ func main() {
 		os.Exit(1)
 	}
 	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient)
+	mux.Handle("GET /agents", auth.protect(http.HandlerFunc(handleListAgents)))
 	mux.Handle("POST /agents", auth.protect(http.HandlerFunc(handleAgents)))
 	mux.Handle("PATCH /agents/{id}", auth.protect(http.HandlerFunc(handleUpdateAgent)))
 	mux.Handle("GET /agents/{id}/profile", auth.protect(http.HandlerFunc(handleGetProfile)))
@@ -293,6 +294,38 @@ func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *h
 		"approval_id": id,
 		"action":      action,
 	})
+}
+
+func handleListAgents(w http.ResponseWriter, r *http.Request) {
+	// Route is registered as "GET /agents" so only GET reaches this handler.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := agentClient.QueryState(ctx, &kernel_pb.QueryStateRequest{EntityType: "agents"})
+	if err != nil {
+		slog.Error("QueryState agents failed", "err", err)
+		http.Error(w, "list agents failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type agentRow struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	var agents []map[string]interface{}
+	for _, b := range resp.Results {
+		var row agentRow
+		if err := json.Unmarshal(b, &row); err != nil {
+			continue
+		}
+		agents = append(agents, map[string]interface{}{
+			"id":          row.ID,
+			"actor_type":  row.Name,
+			"name":        row.Name,
+			"status":      row.Status,
+		})
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
 }
 
 func handleAgents(w http.ResponseWriter, r *http.Request) {

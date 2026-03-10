@@ -504,3 +504,17 @@ func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error)
 	}
 	return ids, rows.Err()
 }
+
+// FindStaleQueuedTasks returns tasks stuck in 'queued' for more than 30 seconds
+// (their Redis message was likely lost). Resets them to 'pending' for re-dispatch.
+func (s *Store) RecoverStaleQueued(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pending', updated_at = now()
+		WHERE status = 'queued'
+		AND updated_at < now() - interval '30 seconds'`)
+	if err != nil {
+		return 0, fmt.Errorf("tasks.RecoverStaleQueued: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}

@@ -69,6 +69,7 @@
   --color-border: var(--md-sys-color-outline);
 }
 
+* { box-sizing: border-box; }
 body {
   margin: 0;
   padding: 16px;
@@ -77,6 +78,8 @@ body {
   font-family: 'Roboto', sans-serif;
   font-size: 0.875rem;
   line-height: 1.5;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 .dashboard-header {
@@ -140,9 +143,10 @@ button#btn-refresh:focus-visible {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr));
   gap: 12px;
   margin-bottom: 16px;
+  min-width: 0;
 }
 .summary-card {
   background: var(--md-sys-color-surface-container);
@@ -181,12 +185,14 @@ button#btn-refresh:focus-visible {
 
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   gap: 12px;
   margin-bottom: 16px;
+  min-width: 0;
 }
 .chart-container {
   min-height: 220px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--md-sys-color-surface-container);
@@ -197,6 +203,7 @@ button#btn-refresh:focus-visible {
 .chart-container canvas {
   flex: 1;
   max-height: 200px;
+  max-width: 100%;
 }
 
 .action-btn {
@@ -230,6 +237,7 @@ button#btn-refresh:focus-visible {
   margin-bottom: 12px;
   padding: 16px;
   box-shadow: var(--md-elevation-1);
+  min-width: 0;
 }
 .section-title {
   margin: 0 0 8px;
@@ -239,10 +247,15 @@ button#btn-refresh:focus-visible {
 }
 .data-table {
   width: 100%;
+  min-width: 500px;
   border-collapse: collapse;
   font-size: 0.875rem;
   border-radius: 12px;
   overflow: hidden;
+}
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .data-table th,
 .data-table td {
@@ -313,18 +326,29 @@ button#btn-refresh:focus-visible {
   white-space: nowrap;
 }
 
-/* Two-column layout: main + sidebar */
+/* Two-column layout: main + sidebar (production-grade alignment) */
 .dashboard-wrapper {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 360px);
+  gap: 20px;
   align-items: start;
+  width: 100%;
+  max-width: 100%;
 }
-.dashboard-main { min-width: 0; }
-.dashboard-sidebar { min-width: 0; }
+.dashboard-main {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.dashboard-sidebar {
+  min-width: 0;
+  width: 100%;
+  max-width: 360px;
+}
 
 @media (max-width: 900px) {
   .dashboard-wrapper { grid-template-columns: 1fr; }
+  .dashboard-sidebar { max-width: none; }
 }
 
 .sidebar-card {
