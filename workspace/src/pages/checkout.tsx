@@ -1,33 +1,34 @@
-import { useRouter } from 'next/router';
-import { useState } from 'react';
-import { Checkout } from '../components/Checkout';
+import { useCart } from '../context/CartContext';
 
-const CheckoutPage = () => {
-  const router = useRouter();
-  const [orderSummary, setOrderSummary] = useState({});
-
-  const handlePlaceOrder = () => {
-    localStorage.setItem('order', JSON.stringify(orderSummary));
-    router.push('/order-success');
-  };
+const Checkout = () => {
+  const { cartItems, cartCount } = useCart();
 
   return (
-    <div className="flex flex-col gap-4">
-      <Checkout
-        orderSummary={orderSummary}
-        setOrderSummary={setOrderSummary}
-        handlePlaceOrder={handlePlaceOrder}
-      />
-      <aside className="w-64 p-4">
-        <h2 className="text-lg">Order Summary</h2>
-        <ul>
-          {Object.keys(orderSummary).map((item) => (
-            <li key={item}>{item}: {orderSummary[item]}</li>
-          ))}
-        </ul>
-      </aside>
+    <div className="max-w-md mx-auto p-4">
+      <h1 className="text-3xl font-bold">Checkout</h1>
+      <p className="text-lg font-bold">
+        You have {cartCount} items in your cart. Total: ${cartTotal()}
+      </p>
+      <form>
+        <label>
+          Shipping Information:
+          <input type="text" placeholder="Name" />
+          <input type="email" placeholder="Email" />
+          <input type="text" placeholder="Address" />
+          <input type="text" placeholder="City" />
+          <input type="text" placeholder="Zip" />
+        </label>
+      </form>
+      <button
+        className="bg-indigo-500 p-2 rounded"
+        onClick={() => {
+          // Store to localStorage logic here
+        }}
+      >
+        Place Order
+      </button>
     </div>
   );
 };
 
-export default CheckoutPage;
+export default Checkout;

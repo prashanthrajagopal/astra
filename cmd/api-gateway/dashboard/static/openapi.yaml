@@ -85,6 +85,11 @@ info:
     npm install && npm run dev
     ```
 
+    ## Keeping the spec updated
+    When adding new endpoints or changing request/response shapes, update this
+    OpenAPI spec. If you use this spec for client generation (e.g. OpenAPI
+    Generator), regenerate clients after updating the spec.
+
   contact:
     name: Astra Platform
   license:
@@ -123,6 +128,8 @@ tags:
     description: Inspect task execution and dependency graphs
   - name: Gateway — Dashboard
     description: Platform visibility dashboard and approval actions
+  - name: Gateway — Workers
+    description: List workers (via API Gateway, JWT required; proxies to Worker Manager)
   - name: Goal Service
     description: Goal lifecycle, planning, finalization, and stats
   - name: Identity
@@ -168,11 +175,21 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateAgentRequest'
-            example:
-              actor_type: ecommerce-builder
-              name: E-Commerce Builder
-              system_prompt: "You are a senior full-stack developer specializing in Next.js 14, TypeScript, and Tailwind CSS. You produce clean, production-ready code."
-              config: '{"model_preference":"code"}'
+            examples:
+              ecommerce-builder:
+                summary: E-Commerce Builder
+                value:
+                  actor_type: ecommerce-builder
+                  name: E-Commerce Builder
+                  system_prompt: "You are a senior full-stack developer specializing in Next.js 14, TypeScript, and Tailwind CSS. You produce clean, production-ready code."
+                  config: '{"model_preference":"code"}'
+              python-expert:
+                summary: Python Expert
+                value:
+                  actor_type: python-expert
+                  name: Python Expert
+                  system_prompt: "You are a senior Python expert. You write clean, idiomatic Python (3.10+), follow PEP 8, use type hints, and prefer the standard library. You produce production-ready code with tests when appropriate."
+                  config: '{"model_preference":"code"}'
       responses:
         '200':
           description: Agent created
@@ -180,6 +197,35 @@ paths:
             application/json:
               example:
                 actor_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+        '400':
+          description: Invalid body (e.g. missing actor_type)
+        '401':
+          description: Missing or invalid JWT
+    get:
+      tags: [Gateway — Agents]
+      summary: List all agents
+      description: |
+        Returns all agents (summary fields only). Gateway proxies to agent-service.
+        Use GET /agents/{id}/profile for full profile including system_prompt and config.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of agent summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentListResponse'
+              example:
+                agents:
+                  - id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                    actor_type: ecommerce-builder
+                    name: E-Commerce Builder
+                    status: active
+                    created_at: "2026-03-10T12:00:00Z"
+                    updated_at: "2026-03-10T14:30:00Z"
+        '401':
+          description: Missing or invalid JWT
 
   /agents/{id}:
     patch:
@@ -208,6 +254,12 @@ paths:
             application/json:
               example:
                 status: ok
+        '400':
+          description: Invalid agent id or body
+        '401':
+          description: Missing or invalid JWT
+        '404':
+          description: Agent not found
 
   /agents/{id}/profile:
     get:
@@ -227,6 +279,12 @@ paths:
                 name: E-Commerce Builder
                 system_prompt: "You are a senior full-stack developer..."
                 config: '{"model_preference":"code"}'
+        '400':
+          description: Invalid agent id
+        '401':
+          description: Missing or invalid JWT
+        '404':
+          description: Agent not found
 
   # ═══════════════════════════════════════════════════════════════════
   # API GATEWAY — AGENT DOCUMENTS
@@ -390,6 +448,12 @@ paths:
                 status: completed
                 priority: 100
                 retries: 0
+        '400':
+          description: Invalid task id
+        '401':
+          description: Missing or invalid JWT
+        '404':
+          description: Task not found
 
   /tasks/{taskId}/complete:
     post:
@@ -445,6 +509,12 @@ paths:
                 dependencies:
                   - task_id: "task-2-uuid"
                     depends_on: "task-1-uuid"
+        '400':
+          description: Invalid graph id
+        '401':
+          description: Missing or invalid JWT
+        '404':
+          description: Graph not found
 
   # ═══════════════════════════════════════════════════════════════════
   # API GATEWAY — DASHBOARD
@@ -584,6 +654,16 @@ paths:
                 phase_run_id: "e1f2a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
                 task_count: 13
                 graph_id: "f635e11c-51b1-4978-ad16-2f50f8597eb5"
+        '400':
+          description: Invalid JSON, invalid agent_id, or missing goal_text
+          content:
+            application/json:
+              example:
+                error: "goal_text required"
+        '401':
+          description: Missing or invalid JWT (if gateway proxies to goal-service with auth)
+        '500':
+          description: Plan or create graph failed
     get:
       tags: [Goal Service]
       summary: List goals for an agent
@@ -883,26 +963,36 @@ paths:
                 approval_request_id: "approval-uuid"
 
   # ═══════════════════════════════════════════════════════════════════
-  # WORKER MANAGER (port 8082)
+  # API GATEWAY — WORKERS (proxies to Worker Manager port 8082)
   # ═══════════════════════════════════════════════════════════════════
 
   /workers:
     get:
-      tags: [Worker Manager]
-      summary: List registered workers
-      servers:
-        - url: http://localhost:8082
+      tags: [Gateway — Workers]
+      summary: List all workers
+      description: |
+        Returns all registered workers (id, hostname, status, capabilities,
+        last_heartbeat). The API Gateway proxies this request to the Worker
+        Manager (port 8082). Internal callers may call Worker Manager
+        directly at GET http://localhost:8082/workers without JWT.
+      security:
+        - BearerAuth: []
       responses:
         '200':
-          description: Worker list
+          description: List of workers
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerListResponse'
               example:
-                - id: "worker-uuid"
-                  hostname: "mac-mini.local"
-                  status: active
-                  capabilities: ["general", "code_generate", "shell_exec"]
-                  last_heartbeat: "2026-03-10T12:00:00Z"
+                workers:
+                  - id: "b4fe8196-2c4e-4929-a1gb-c65727b56832"
+                    hostname: "mac-mini.local"
+                    status: active
+                    capabilities: ["general", "code_generate", "shell_exec"]
+                    last_heartbeat: "2026-03-10T14:35:00Z"
+        '401':
+          description: Missing or invalid JWT
 
   # ═══════════════════════════════════════════════════════════════════
   # PROMPT MANAGER (port 8084)
@@ -1097,6 +1187,68 @@ components:
       description: Agent UUID
 
   schemas:
+    AgentListResponse:
+      type: object
+      required: [agents]
+      properties:
+        agents:
+          type: array
+          description: List of agent summaries
+          items:
+            $ref: '#/components/schemas/AgentSummary'
+    AgentSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Agent (actor) UUID
+        actor_type:
+          type: string
+          description: Agent type identifier from spawn/create
+        name:
+          type: string
+          description: Human-readable name
+        status:
+          type: string
+          enum: [active, stopped, error]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WorkerListResponse:
+      type: object
+      required: [workers]
+      properties:
+        workers:
+          type: array
+          description: List of registered workers
+          items:
+            $ref: '#/components/schemas/WorkerSummary'
+    WorkerSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+        status:
+          type: string
+          enum: [active, draining, offline]
+        capabilities:
+          type: array
+          items:
+            type: string
+        last_heartbeat:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+          description: Optional; may be omitted in list response
     CreateAgentRequest:
       type: object
       required: [actor_type]

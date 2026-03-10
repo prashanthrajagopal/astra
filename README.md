@@ -9,7 +9,7 @@ Astra is the **operating system for autonomous agents**: a production-grade, mic
 ## Documentation
 
 - **[docs/PRD.md](docs/PRD.md)** — Single source of truth: architecture, 16 canonical services, kernel APIs, database schema, Redis streams, deployment, security, and phased roadmap.
-- **API reference:** [docs/api/openapi.yaml](docs/api/openapi.yaml) — OpenAPI 3.x spec for all REST/HTTP APIs (agents, goals, tasks, graphs, identity, access-control, and internal services); includes a full example flow (e.g. e-commerce builder). When adding or changing endpoints, update this spec and regenerate clients if used.
+- **API reference:** [docs/api/openapi.yaml](docs/api/openapi.yaml) — OpenAPI 3.x spec for all REST/HTTP APIs (agents, goals, tasks, graphs, identity, access-control, and internal services), with example flows; when adding or changing endpoints, update this spec and regenerate clients if used.
 - **Design & deployment:** [docs/local-deployment.md](docs/local-deployment.md), [docs/deployment-design.md](docs/deployment-design.md), [docs/phase-history-usage-audit-design.md](docs/phase-history-usage-audit-design.md).
 - **Phase history:** [docs/phase-history/](docs/phase-history/) — what was built in each implementation phase (e.g. [phase-0.md](docs/phase-history/phase-0.md)).
 
@@ -46,6 +46,22 @@ User → POST /goals → goal-service → planner (LLM) → DAG → CreateGraph
 
 See [docs/PRD.md](docs/PRD.md) for full detail.
 
+### Creating agents via API
+
+After deployment, create specialized agents via the API Gateway and Identity service:
+
+- **Python Expert** — An agent that only writes Python (3.10+, PEP 8, type hints, production-ready). Deploy using the script:
+  ```bash
+  ./scripts/create-python-expert-agent.sh
+  ```
+  The script obtains a JWT from Identity, creates the agent with `POST /agents` (actor_type `python-expert`), attaches a Python-only rule document, and prints the agent ID and an example `curl` to submit a goal. See [docs/api/openapi.yaml](docs/api/openapi.yaml) for the full request/response schema and other agent examples (e.g. e-commerce builder).
+
+- **Seed multiple agents** — Create a default set of agents (Python Expert, Backend Dev, Frontend Dev, E-Commerce Builder, Generalist Coder, Documentation, DevOps, Testing) in one run:
+  ```bash
+  ./scripts/seed-agents.sh
+  ```
+  Requires `jq`. After deployment, run once to seed the platform; then use `GET /agents` to list agents and submit goals to any agent ID.
+
 ---
 
 ## How the platform works
@@ -60,61 +76,16 @@ In short: **Entry** (api-gateway, goals) → **Kernel** (actors, task graph, sch
 
 ### 2. Key components
 
-**Kernel** (in-process or gRPC):
-
-- **Actor runtime** — Goroutine-per-actor, mailboxes, supervision trees.
-- **Task graph engine** — DAG model, status lifecycle, dependency resolution, transactional transitions.
-- **Scheduler** — Ready-task detection (SQL with `FOR UPDATE SKIP LOCKED`), shard assignment, push to Redis.
-- **Message bus** — Redis Streams (publish, consumer groups, ack).
-- **State** — Postgres as source of truth; `events` table for audit/replay; Redis for working state and locks.
-
-**Control-plane services:**
-
-- **api-gateway** — REST/gRPC gateway, auth, rate limiting, routes to services.
-- **identity** — User/service auth, JWT issue/validate.
-- **access-control** — RBAC, OPA policy, approval gates.
-- **agent-service** — Agent lifecycle (spawn/stop/inspect), actor integration.
-- **goal-service** — Goal ingestion, context assembly, calls planner.
-- **planner-service** — Goals → task DAG (LLM).
-- **scheduler-service** — Distributed scheduler, ready detection, Redis push.
-- **task-service** — Task CRUD, CreateGraph, CompleteTask, FailTask, GetTask, GetGraph.
-
-**Worker-side:**
-
-- **execution-worker** — Pulls from task stream, claims, runs (LLM + tools), CompleteTask/FailTask.
-- **browser-worker** — Headless browser automation (Playwright/Puppeteer).
-- **worker-manager** — Worker registration, heartbeats, stale detection, re-queue orphaned tasks.
-- **tool-runtime** — Sandbox controller (WASM/Docker/Firecracker), resource limits, policy check.
-- **llm-router** — Model routing, caching (Memcached), usage tracking.
-
-**Data stores:**
-
-- **Postgres** — Agents, goals, tasks, task_dependencies, events, memories, artifacts, workers, phase_runs, llm_usage; source of truth.
-- **Redis** — Streams (tasks, events, worker heartbeats, usage), ephemeral state, locks (e.g. task claim).
-- **Memcached** — LLM response cache, embedding cache, tool result cache.
+**Kernel:** Actor runtime, task graph engine, scheduler, message bus, state.  
+**Control-plane:** api-gateway, identity, access-control, agent-service, goal-service, planner-service, scheduler-service, task-service.  
+**Worker-side:** execution-worker, browser-worker, worker-manager, tool-runtime, llm-router.  
+**Data stores:** Postgres (source of truth), Redis (streams, state, locks), Memcached (LLM/embedding/tool caches).
 
 ### 3. Lifecycle
 
-1. **Goal** — User or agent creates a goal (e.g. `POST /goals`). Goal-service stores it and triggers planning.
-2. **Plan (DAG)** — Planner-service (LLM) produces a task graph; task-service persists it (`CreateGraph`) with tasks in `created`/`pending`.
-3. **Create tasks** — Tasks and dependencies are stored; tasks with no deps or all deps completed are eligible for scheduling.
-4. **Schedule** — Scheduler-service runs a loop: **ready detection** (SQL: pending tasks with all dependencies completed, `FOR UPDATE SKIP LOCKED`), mark `queued`, **push** to Redis stream `astra:tasks:shard:<n>`.
-5. **Workers** — Execution-worker (and others) **pull** from the stream, **claim** (lock, set scheduled/running), **execute** (LLM via llm-router, tools via tool-runtime).
-6. **CompleteTask / FailTask** — Worker calls task-service; task transitions to completed or failed; result stored; events emitted; dependent tasks may become ready.
-7. **Events and result APIs** — Events go to Postgres (`events` table) and/or Redis streams; user polls `GET /tasks/{id}`, `GET /graphs/{id}` or subscribes to streams.
+Goal → Plan (DAG) → Create tasks → Schedule (ready detection, Redis push) → Workers pull/claim/execute → CompleteTask/FailTask → Events and result APIs.
 
-### 4. Request-to-result diagram
-
-```
-Request → api-gateway (auth) → goal-service → planner-service (LLM) → DAG
-    → task-service (CreateGraph) → scheduler-service (ready detection)
-    → Redis stream (astra:tasks:shard:<n>)
-    → execution-worker / browser-worker (pull, claim, execute)
-    → task-service (CompleteTask / FailTask) → events + GET /tasks|graphs
-    → result to user
-```
-
-For the full specification (APIs, schema, streams, security, phases), see **[docs/PRD.md](docs/PRD.md)**.
+See [docs/PRD.md](docs/PRD.md) for the full specification.
 
 ---
 
@@ -145,9 +116,9 @@ For the full specification (APIs, schema, streams, security, phases), see **[doc
    The script:
    - Uses existing Postgres/Redis/Memcached if running, otherwise starts them via Docker
    - Runs all SQL migrations in `migrations/`
-   - Builds `bin/api-gateway` and `bin/scheduler-service`, starts them in the background
-   - Logs: `logs/api-gateway.log`, `logs/scheduler-service.log`  
-   - Stop: `kill $(cat logs/api-gateway.pid) $(cat logs/scheduler-service.pid)`
+   - Builds all service binaries, restarts all Astra services (stops by PID, then starts task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, memory-service, llm-router, prompt-manager, identity, access-control, planner-service, goal-service, evaluation-service, cost-tracker, api-gateway)
+   - Logs: `logs/*.log`; PIDs: `logs/*.pid`  
+   - Stop: `for f in logs/*.pid; do kill $(cat $f) 2>/dev/null; done`
 
 3. **Build everything**
    ```bash
@@ -167,7 +138,7 @@ See [docs/local-deployment.md](docs/local-deployment.md) for details. **Deployme
 | `pkg/` | Shared packages (db, config, logger, metrics, grpc, models, otel) |
 | `proto/` | Protobuf/gRPC definitions; generated Go in `proto/kernel/`, `proto/tasks/` |
 | `migrations/` | Idempotent SQL migrations (0001–0009) |
-| `scripts/` | `deploy.sh`, `proto-generate.sh` |
+| `scripts/` | `deploy.sh`, `proto-generate.sh`, `create-python-expert-agent.sh`, `seed-agents.sh` |
 | `deployments/` | Helm charts and K8s manifests |
 | `docs/` | PRD, design docs, phase history, runbooks |
 

@@ -47,6 +47,12 @@ func (s *Scheduler) tick(ctx context.Context) error {
 		slog.Info("cascade-failed blocked tasks", "count", n)
 	}
 
+	if n, err := s.store.RecoverStaleQueued(ctx); err != nil {
+		slog.Error("recover stale queued failed", "err", err)
+	} else if n > 0 {
+		slog.Info("recovered stale queued tasks", "count", n)
+	}
+
 	ready, err := s.store.FindReadyTasks(ctx, 100)
 	if err != nil {
 		return err

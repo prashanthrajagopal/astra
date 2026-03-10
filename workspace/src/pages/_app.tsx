@@ -1,15 +1,17 @@
-import { AppProps } from 'next/app';
-import { SessionProvider } from 'next-auth/react';
-import { theme } from '../styles/theme';
+import type { NextPage } from 'next';
+import type { AppProps } from 'next/app';
+import { App } from 'next/app';
+import { ValidationProvider } from '../components/validation/ValidationProvider';
+import { ValidationEditor } from '../components/validation/ValidationEditor';
 
-function MyApp({ Component, pageProps }: AppProps) {
+const MyApp = ({ Component, pageProps }: AppProps) => {
   return (
-    <SessionProvider>
-      <div className={theme.bgDefault}>
+    <App>
+      <ValidationProvider>
         <Component {...pageProps} />
-      </div>
-    </SessionProvider>
+      </ValidationProvider>
+    </App>
   );
-}
+};
 
 export default MyApp;

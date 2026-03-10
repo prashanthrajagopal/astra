@@ -1,12 +1,9 @@
+import '../styles/globals.css';
 import { AppProps } from 'next/app';
-import { validatePhase1 } from '../utils/validatePhase1';
+import { validate } from '../api/validate';
 
 function MyApp({ Component, pageProps }: AppProps) {
-  const validationStatus = validatePhase1();
-
-  return (
-    <Component {...pageProps} validationStatus={validationStatus} />
-  );
+  return <Component {...pageProps} />;
 }
 
-export default MyApp;
+export default validate ? MyApp : (Component: any) => <Component />;

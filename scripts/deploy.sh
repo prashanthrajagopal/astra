@@ -154,6 +154,13 @@ fi
 echo "Go mod tidy..."
 go mod tidy
 mkdir -p bin logs "${WORKSPACE_ROOT:-workspace}"
+
+# Keep dashboard Swagger in sync with canonical OpenAPI spec (embedded at build time)
+if [[ -f docs/api/openapi.yaml ]]; then
+  cp docs/api/openapi.yaml cmd/api-gateway/dashboard/static/openapi.yaml
+  echo "Synced OpenAPI spec to dashboard (Swagger)."
+fi
+
 echo "Building..."
 go build -o bin/api-gateway        ./cmd/api-gateway
 go build -o bin/scheduler-service  ./cmd/scheduler-service
@@ -229,6 +236,15 @@ echo $! > logs/cost-tracker.pid
 sleep 1
 ./bin/api-gateway        > logs/api-gateway.log 2>&1 &
 echo $! > logs/api-gateway.pid
+
+echo ""
+echo "Seeding default agents (idempotent; skips existing)..."
+sleep 3
+if [[ -f "$REPO_ROOT/scripts/seed-agents.sh" ]]; then
+  "$REPO_ROOT/scripts/seed-agents.sh" || true
+else
+  echo "  (seed-agents.sh not found; skip)"
+fi
 
 echo ""
 echo "=== Deploy complete ==="
