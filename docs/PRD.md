@@ -139,6 +139,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
     /memory                    # memory APIs, embedding pipeline, pgvector search
     /workers                   # worker orchestration, heartbeats, health checks
     /tools                     # tool runtime control, sandbox lifecycle, permission checks
+    /agentdocs                 # agent document store, profile/context assembly
     /evaluation                # evaluators, test harness integration
     /events                    # event store, event replay, event sourcing
     /messaging                 # Redis Streams clients, consumer groups, backoff, ack
@@ -183,6 +184,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 | `internal/workers` | Service | Worker pool management, heartbeats, task assignment, health checks |
 | `internal/tools` | Service | Sandbox lifecycle (WASM/Docker/Firecracker), tool permission checks |
 | `internal/evaluation` | Service | Evaluators, result validators, test harness integration |
+| `internal/agentdocs` | Service | Agent document store (rules, skills, context docs), profile/context assembly for planner and workers |
 | `internal/llm` | Service | LLM model routing, cost-based selection, response caching |
 | `pkg/db` | Shared | Postgres connection pool (`pgx`), migration runner |
 | `pkg/config` | Shared | Config loader (environment variables, Vault integration) |
@@ -638,8 +640,8 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 | 1 | `api-gateway` | REST/gRPC gateway, auth middleware, rate limiting, versioning | control-plane |
 | 2 | `identity` | User/service auth, JWT tokens, audit log | control-plane |
 | 3 | `access-control` | RBAC, OPA policy enforcement, per-agent permission scopes | control-plane |
-| 4 | `agent-service` | Agent lifecycle (spawn/stop/inspect), actor supervisor integration | kernel |
-| 5 | `goal-service` | Goal ingestion, validation, routing to planner | kernel |
+| 4 | `agent-service` | Agent lifecycle (spawn/stop/inspect), actor supervisor integration, agent profile & document management | kernel |
+| 5 | `goal-service` | Goal ingestion, validation, routing to planner, context assembly (system_prompt + documents) | kernel |
 | 6 | `planner-service` | Core planner: goals → TaskGraphs using LLM | kernel |
 | 7 | `scheduler-service` | Distributed scheduler, shard manager, ready-task dispatch | kernel |
 | 8 | `task-service` | Task CRUD, dependency engine API, state queries | kernel |
@@ -651,6 +653,26 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 | 14 | `browser-worker` | Headless browser automation worker (Playwright/Puppeteer) | workers |
 | 15 | `tool-runtime` | Tool sandbox controller (WASM/Docker/Firecracker lifecycle) | workers |
 | 16 | `memory-service` | Episodic/semantic memory, embedding pipeline, pgvector search | kernel |
+
+## Agent Profile & Documents API (Phase 9)
+
+The following REST endpoints are added to the `api-gateway` for agent profile and document management:
+
+| Method | Path | Description |
+|---|---|---|
+| `PATCH` | `/agents/{id}` | Update agent profile (system_prompt, config) |
+| `GET` | `/agents/{id}/profile` | Get agent profile (served from Redis cache, 5min TTL) |
+| `POST` | `/agents/{id}/documents` | Attach a document (rule/skill/context_doc/reference) to an agent |
+| `GET` | `/agents/{id}/documents` | List agent documents, optional `?doc_type=` filter |
+| `DELETE` | `/agents/{id}/documents/{doc_id}` | Remove a document |
+| `POST` | `/goals` | (Updated) Accepts optional `documents` array for goal-scoped context |
+
+**Context propagation flow:**
+1. `goal-service` receives goal with optional inline documents → persists goal-scoped documents with `goal_id` set
+2. `goal-service` assembles full agent context: `system_prompt` + rules (priority-sorted) + skills + context_docs
+3. `goal-service` passes assembled `agent_context` to `planner-service`
+4. `planner-service` embeds `agent_context` in each task payload
+5. `execution-worker` includes `agent_context` when building LLM prompts for task execution
 
 ---
 
@@ -1000,6 +1022,40 @@ CREATE INDEX idx_events_created_at ON events(created_at);
 
 Idempotent migration: `migrations/0009_phase_history_and_usage.sql`. Phase history is also written to a human-readable file per phase (configurable path); development-phase history is maintained in **docs/phase-history/** (e.g. phase-0.md).
 
+## Migration 0013: Agent Profile & Documents
+
+```sql
+-- Add system_prompt to agents for persona definition
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS system_prompt TEXT DEFAULT '';
+
+-- Agent documents: rules, skills, context docs, and reference material attached to agents
+CREATE TABLE IF NOT EXISTS agent_documents (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  goal_id UUID REFERENCES goals(id) ON DELETE SET NULL,
+  doc_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  content TEXT,
+  uri TEXT,
+  metadata JSONB DEFAULT '{}',
+  priority INT NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE agent_documents ADD CONSTRAINT agent_documents_valid_doc_type
+  CHECK (doc_type IN ('rule', 'skill', 'context_doc', 'reference'));
+
+CREATE INDEX IF NOT EXISTS idx_agent_documents_agent ON agent_documents(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_documents_goal ON agent_documents(goal_id);
+CREATE INDEX IF NOT EXISTS idx_agent_documents_type ON agent_documents(agent_id, doc_type);
+
+CREATE TRIGGER agent_documents_updated_at BEFORE UPDATE ON agent_documents
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+```
+
+Idempotent migration: `migrations/0013_agent_profile_and_documents.sql`. Documents with `goal_id` set are scoped to that goal only. Documents without `goal_id` are global to the agent. Large document content may be stored in MinIO/S3 with a URI reference in the `uri` column.
+
 ---
 
 # 12. Message & Event Protocols
@@ -1148,6 +1204,8 @@ func (b *Bus) Consume(ctx context.Context, stream, group, consumer string, handl
 | `actor:state:<actor_id>` | Hash | 5m | Working memory for active actors |
 | `lock:task:<task_id>` | String (SET NX PX) | 30s | Distributed lock for task claiming (Redlock) |
 | `worker:heartbeat:<worker_id>` | String | 30s | Worker liveness tracking |
+| `agent:profile:<agent_id>` | Hash | 5m | Cached agent profile (system_prompt, config) |
+| `agent:docs:<agent_id>` | String (JSON) | 5m | Cached agent documents list (rules, skills, context_docs) |
 
 ## Memcached Keys
 
@@ -1792,6 +1850,25 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Operators can open one dashboard and inspect service health, workers, pending approvals, cost trends, process state, and recent logs without shell access.
 
+## Phase 9 — Agent Profile & Context Management (3-4 weeks)
+
+**Goal:** Give agents a structured identity (system prompt, config) and attach contextual documents (rules, skills, context docs) that propagate through the planning and execution pipeline.
+
+- [ ] `migrations/0013_agent_profile_and_documents.sql` — Add `system_prompt` to agents, create `agent_documents` table with indexes and constraints
+- [ ] `internal/agentdocs/store.go` — Document CRUD (Create, List, Delete), profile read/write, Redis cache-aside for `agent:profile:{id}` and `agent:docs:{id}` (5min TTL)
+- [ ] `internal/agentdocs/context.go` — Context assembly: merge system_prompt + priority-sorted rules + skills + context_docs into a single `AgentContext` struct
+- [ ] `cmd/api-gateway` — New REST endpoints: `PATCH /agents/{id}`, `GET /agents/{id}/profile`, `POST /agents/{id}/documents`, `GET /agents/{id}/documents`, `DELETE /agents/{id}/documents/{doc_id}`
+- [ ] `cmd/goal-service` — Accept optional `documents` array in `POST /goals`; persist as goal-scoped documents; assemble and pass `agent_context` to planner
+- [ ] `cmd/planner-service` — Embed `agent_context` into each task payload during DAG generation
+- [ ] `cmd/execution-worker` — Extract `agent_context` from task payload and include in LLM prompt construction
+- [ ] Redis caching — `agent:profile:{id}` (Hash, 5min TTL), `agent:docs:{id}` (JSON string, 5min TTL); invalidate on write
+- [ ] Large document support — Documents exceeding size threshold stored in MinIO/S3 with URI reference
+- [ ] Unit tests for `internal/agentdocs` (store, context assembly, cache invalidation)
+- [ ] Integration test: create agent with profile → attach documents → submit goal with inline docs → verify context propagates to worker task payload
+- [ ] Phase 9 validation checks in `scripts/validate.sh`
+
+**Acceptance:** Agent profiles and documents can be created and queried via REST API. Goal submission with inline documents works. The full agent context (system_prompt + rules + skills + context_docs) is assembled by goal-service, passed through the planner into task payloads, and available to execution workers for LLM prompt construction. Profile and document reads served from Redis cache within 10ms SLA.
+
 ---
 
 # 26. Build Order & Dependency Graph
@@ -1826,6 +1903,7 @@ Layer 3 (services — depend on Layer 2):
   internal/workers    (depends on: internal/messaging, internal/tasks)
   internal/tools      (depends on: pkg/config)
   internal/evaluation (depends on: internal/tasks)
+  internal/agentdocs  (depends on: pkg/db, pkg/config; used by: cmd/api-gateway, cmd/goal-service)
 
 Layer 4 (entrypoints — depend on Layer 3):
   cmd/api-gateway

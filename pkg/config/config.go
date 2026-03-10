@@ -35,6 +35,8 @@ type Config struct {
 	AccessControlAddr     string
 	WorkerManagerAddr     string
 	CostTrackerAddr       string
+	WorkspaceRoot         string
+	LLMGRPCAddr           string
 	LogsDir               string
 	JWTSecret             string
 	LogLevel              string
@@ -89,6 +91,8 @@ func Load() (*Config, error) {
 		AccessControlAddr:     getEnv("ACCESS_CONTROL_ADDR", "http://localhost:8086"),
 		WorkerManagerAddr:     getEnv("WORKER_MANAGER_ADDR", "http://localhost:8082"),
 		CostTrackerAddr:       getEnv("COST_TRACKER_ADDR", "http://localhost:8090"),
+		WorkspaceRoot:         getEnv("WORKSPACE_ROOT", "workspace"),
+		LLMGRPCAddr:           getEnv("LLM_GRPC_ADDR", "localhost:9093"),
 		LogsDir:               getEnv("ASTRA_LOGS_DIR", "logs"),
 		JWTSecret:             getEnv("ASTRA_JWT_SECRET", "astra-dev-secret"),
 		LogLevel:              getEnv("LOG_LEVEL", "info"),

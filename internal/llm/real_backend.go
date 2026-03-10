@@ -36,7 +36,7 @@ func NewEndpointBackendFromEnv() *EndpointBackend {
 		geminiKey:    strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
 		ollamaHost:   host,
 		fallback:     fallback,
-		httpClient:   &http.Client{Timeout: 60 * time.Second},
+		httpClient:   &http.Client{Timeout: 300 * time.Second},
 	}
 }
 

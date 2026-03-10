@@ -1,0 +1,286 @@
+package agentdocs
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	profileKeyPrefix = "agent:profile:"
+	docsKeyPrefix    = "agent:docs:"
+)
+
+type DocType string
+
+const (
+	DocTypeRule       DocType = "rule"
+	DocTypeSkill      DocType = "skill"
+	DocTypeContextDoc DocType = "context_doc"
+	DocTypeReference  DocType = "reference"
+)
+
+type Document struct {
+	ID        uuid.UUID       `json:"id"`
+	AgentID   uuid.UUID       `json:"agent_id"`
+	GoalID    *uuid.UUID      `json:"goal_id,omitempty"`
+	DocType   DocType         `json:"doc_type"`
+	Name      string          `json:"name"`
+	Content   *string         `json:"content,omitempty"`
+	URI       *string         `json:"uri,omitempty"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	Priority  int             `json:"priority"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+type AgentProfile struct {
+	ID           uuid.UUID       `json:"id"`
+	Name         string          `json:"name"`
+	SystemPrompt string          `json:"system_prompt"`
+	Config       json.RawMessage `json:"config"`
+}
+
+type ListOptions struct {
+	DocType    *DocType
+	GoalID     *uuid.UUID
+	GlobalOnly bool
+}
+
+type Store struct {
+	db  *sql.DB
+	rdb *redis.Client
+	ttl time.Duration
+}
+
+func NewStore(db *sql.DB, rdb *redis.Client) *Store {
+	return &Store{db: db, rdb: rdb, ttl: 5 * time.Minute}
+}
+
+func (s *Store) GetProfile(ctx context.Context, agentID uuid.UUID) (*AgentProfile, error) {
+	if s.rdb != nil {
+		key := profileKeyPrefix + agentID.String()
+		data, err := s.rdb.Get(ctx, key).Bytes()
+		if err == nil {
+			var p AgentProfile
+			if err := json.Unmarshal(data, &p); err != nil {
+				return nil, fmt.Errorf("agentdocs.GetProfile unmarshal: %w", err)
+			}
+			return &p, nil
+		}
+		if err != redis.Nil {
+			return nil, fmt.Errorf("agentdocs.GetProfile redis: %w", err)
+		}
+	}
+
+	var p AgentProfile
+	var idStr, name string
+	var systemPrompt sql.NullString
+	var config []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, system_prompt, config FROM agents WHERE id = $1`,
+		agentID).Scan(&idStr, &name, &systemPrompt, &config)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agentdocs.GetProfile: %w", err)
+	}
+	p.ID = agentID
+	p.Name = name
+	if systemPrompt.Valid {
+		p.SystemPrompt = systemPrompt.String
+	}
+	if len(config) > 0 {
+		p.Config = config
+	}
+	if s.rdb != nil {
+		data, _ := json.Marshal(&p)
+		_ = s.rdb.SetEx(ctx, profileKeyPrefix+agentID.String(), data, s.ttl).Err()
+	}
+	return &p, nil
+}
+
+func (s *Store) UpdateProfile(ctx context.Context, agentID uuid.UUID, systemPrompt *string, config *json.RawMessage) error {
+	if systemPrompt == nil && config == nil {
+		return nil
+	}
+	updates := []string{}
+	args := []interface{}{agentID}
+	argIdx := 2
+	if systemPrompt != nil {
+		updates = append(updates, fmt.Sprintf("system_prompt = $%d", argIdx))
+		args = append(args, *systemPrompt)
+		argIdx++
+	}
+	if config != nil {
+		updates = append(updates, fmt.Sprintf("config = $%d::jsonb", argIdx))
+		args = append(args, config)
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	q := fmt.Sprintf("UPDATE agents SET %s, updated_at = now() WHERE id = $1", joinStrings(updates, ", "))
+	_, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("agentdocs.UpdateProfile: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+		_ = s.rdb.Del(ctx, docsKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
+func joinStrings(ss []string, sep string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	r := ss[0]
+	for i := 1; i < len(ss); i++ {
+		r += sep + ss[i]
+	}
+	return r
+}
+
+func (s *Store) CreateDocument(ctx context.Context, doc *Document) error {
+	if doc.ID == uuid.Nil {
+		doc.ID = uuid.New()
+	}
+	contentVal := interface{}(nil)
+	if doc.Content != nil {
+		contentVal = *doc.Content
+	}
+	uriVal := interface{}(nil)
+	if doc.URI != nil {
+		uriVal = *doc.URI
+	}
+	goalVal := interface{}(nil)
+	if doc.GoalID != nil {
+		goalVal = doc.GoalID
+	}
+	metadata := doc.Metadata
+	if metadata == nil {
+		metadata = []byte("{}")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO agent_documents (id, agent_id, goal_id, doc_type, name, content, uri, metadata, priority)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
+		doc.ID, doc.AgentID, goalVal, string(doc.DocType), doc.Name, contentVal, uriVal, metadata, doc.Priority)
+	if err != nil {
+		return fmt.Errorf("agentdocs.CreateDocument: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, docsKeyPrefix+doc.AgentID.String()).Err()
+	}
+	return nil
+}
+
+func (s *Store) ListDocuments(ctx context.Context, agentID uuid.UUID, opts ListOptions) ([]Document, error) {
+	hasFilters := opts.DocType != nil || opts.GoalID != nil || opts.GlobalOnly
+
+	if !hasFilters && s.rdb != nil {
+		key := docsKeyPrefix + agentID.String()
+		data, err := s.rdb.Get(ctx, key).Bytes()
+		if err == nil {
+			var docs []Document
+			if err := json.Unmarshal(data, &docs); err != nil {
+				return nil, fmt.Errorf("agentdocs.ListDocuments unmarshal: %w", err)
+			}
+			return docs, nil
+		}
+		if err != redis.Nil {
+			return nil, fmt.Errorf("agentdocs.ListDocuments redis: %w", err)
+		}
+	}
+
+	query := `SELECT id, agent_id, goal_id, doc_type, name, content, uri, metadata, priority, created_at, updated_at
+		FROM agent_documents WHERE agent_id = $1`
+	args := []interface{}{agentID}
+	argIdx := 2
+	if opts.GlobalOnly {
+		query += " AND goal_id IS NULL"
+	}
+	if opts.DocType != nil {
+		query += fmt.Sprintf(" AND doc_type = $%d", argIdx)
+		args = append(args, string(*opts.DocType))
+		argIdx++
+	}
+	if opts.GoalID != nil {
+		query += fmt.Sprintf(" AND goal_id = $%d", argIdx)
+		args = append(args, *opts.GoalID)
+		argIdx++
+	}
+	query += " ORDER BY priority ASC, created_at ASC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("agentdocs.ListDocuments: %w", err)
+	}
+	defer rows.Close()
+
+	var docs []Document
+	for rows.Next() {
+		var d Document
+		var goalID sql.NullString
+		var idStr, agentIDStr string
+		var docType string
+		var content, uri sql.NullString
+		var metadata []byte
+		err := rows.Scan(&idStr, &agentIDStr, &goalID, &docType, &d.Name, &content, &uri, &metadata, &d.Priority, &d.CreatedAt, &d.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("agentdocs.ListDocuments scan: %w", err)
+		}
+		d.ID, _ = uuid.Parse(idStr)
+		d.AgentID, _ = uuid.Parse(agentIDStr)
+		if goalID.Valid {
+			g, _ := uuid.Parse(goalID.String)
+			d.GoalID = &g
+		}
+		d.DocType = DocType(docType)
+		if content.Valid {
+			d.Content = &content.String
+		}
+		if uri.Valid {
+			d.URI = &uri.String
+		}
+		if len(metadata) > 0 {
+			d.Metadata = metadata
+		}
+		docs = append(docs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("agentdocs.ListDocuments: %w", err)
+	}
+
+	if !hasFilters && s.rdb != nil {
+		data, _ := json.Marshal(docs)
+		_ = s.rdb.SetEx(ctx, docsKeyPrefix+agentID.String(), data, s.ttl).Err()
+	}
+
+	return docs, nil
+}
+
+func (s *Store) DeleteDocument(ctx context.Context, docID uuid.UUID) error {
+	var agentIDStr string
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id FROM agent_documents WHERE id = $1`, docID).Scan(&agentIDStr)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("agentdocs.DeleteDocument lookup: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM agent_documents WHERE id = $1`, docID)
+	if err != nil {
+		return fmt.Errorf("agentdocs.DeleteDocument: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, docsKeyPrefix+agentIDStr).Err()
+	}
+	return nil
+}

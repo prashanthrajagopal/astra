@@ -61,7 +61,7 @@ func main() {
 			http.Error(w, `{"error":"invalid agent_id"}`, http.StatusBadRequest)
 			return
 		}
-		graph, err := p.Plan(r.Context(), goalID, req.GoalText, agentID)
+		graph, err := p.Plan(r.Context(), goalID, req.GoalText, agentID, nil)
 		if err != nil {
 			slog.Error("plan failed", "err", err)
 			http.Error(w, `{"error":"plan failed"}`, http.StatusInternalServerError)
