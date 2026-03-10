@@ -123,13 +123,36 @@ func TestResolveModel(t *testing.T) {
 		{"premium", ModelPremium},
 		{"code", ModelCode},
 		{"custom/model", "custom/model"},
+		{"mlx", "mlx/Qwen2.5-7B-Instruct-4bit"},
 	}
 	for _, tt := range tests {
+		// Ensure default env for deterministic results (no LLM_DEFAULT_PROVIDER=mlx)
+		t.Setenv("LLM_DEFAULT_PROVIDER", "")
+		t.Setenv("MLX_MODEL", "")
 		got := resolveModel(tt.hint)
 		if got != tt.want {
 			t.Errorf("resolveModel(%q) = %q, want %q", tt.hint, got, tt.want)
 		}
 	}
+
+	t.Run("local with LLM_DEFAULT_PROVIDER=mlx", func(t *testing.T) {
+		t.Setenv("LLM_DEFAULT_PROVIDER", "mlx")
+		t.Setenv("MLX_MODEL", "")
+		got := resolveModel("local")
+		want := "mlx/Qwen2.5-7B-Instruct-4bit"
+		if got != want {
+			t.Errorf("resolveModel(\"local\") with MLX = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("mlx with MLX_MODEL override", func(t *testing.T) {
+		t.Setenv("MLX_MODEL", "custom-model")
+		got := resolveModel("mlx")
+		want := "mlx/custom-model"
+		if got != want {
+			t.Errorf("resolveModel(\"mlx\") with override = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestCacheKey(t *testing.T) {

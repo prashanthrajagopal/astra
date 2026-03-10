@@ -46,6 +46,48 @@ Set in `.env`:
   - `ANTHROPIC_API_KEY`
   - `GEMINI_API_KEY`
 
+## MLX-LM (macOS / Apple Silicon)
+
+On macOS with Apple Silicon, Astra supports [MLX-LM](https://github.com/ml-explore/mlx-lm) for local LLM inference with Metal acceleration.
+
+### Setup
+
+1. Install MLX-LM:
+   ```bash
+   pip install mlx-lm
+   ```
+
+2. Start the MLX-LM server:
+   ```bash
+   mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8888
+   ```
+
+3. Configure in `.env`:
+   ```
+   MLX_HOST=http://localhost:8888
+   MLX_MODEL=Qwen2.5-7B-Instruct-4bit
+   LLM_DEFAULT_PROVIDER=mlx
+   ```
+
+4. Run deploy: `./scripts/deploy.sh` — auto-detects MLX on macOS.
+
+### How it works
+
+- MLX-LM exposes an OpenAI-compatible API (`/v1/chat/completions`)
+- Astra reuses the OpenAI wire format with the local MLX-LM URL
+- On macOS, `deploy.sh` auto-detects MLX and sets `LLM_DEFAULT_PROVIDER=mlx`
+- If cloud API keys are set in `.env`, cloud providers take priority
+- Fallback chain: cloud providers → MLX-LM → Ollama
+
+### Alternative models
+
+Change `MLX_MODEL` in `.env` to use any MLX-compatible model:
+```
+MLX_MODEL=mlx-community/Mistral-7B-Instruct-v0.3-4bit
+```
+
+The model name is passed directly to the MLX-LM server.
+
 ## Workspace and code generation
 
 Execution workers can generate code via LLM and write files to disk. Configure in `.env`:
