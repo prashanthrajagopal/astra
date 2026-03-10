@@ -16,6 +16,11 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+# --- LLM provider auto-detection ---
+export MLX_HOST="${MLX_HOST:-http://localhost:8888}"
+export MLX_MODEL="${MLX_MODEL:-Qwen2.5-7B-Instruct-4bit}"
+export LLM_DEFAULT_PROVIDER="${LLM_DEFAULT_PROVIDER:-ollama}"
+
 export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 export POSTGRES_DB="${POSTGRES_DB:-astra}"
@@ -61,6 +66,32 @@ redis_ok() {
   fi
 }
 memcached_ok() { tcp_ok "$MEMCACHED_HOST" "$MEMCACHED_PORT"; }
+
+# On macOS, prefer MLX-LM if available (unless cloud keys are set)
+DETECTED_OS="$(uname -s)"
+if [[ "$DETECTED_OS" == "Darwin" ]]; then
+  HAS_CLOUD_KEYS=false
+  if [[ -n "${OPENAI_API_KEY:-}" ]] || [[ -n "${ANTHROPIC_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    HAS_CLOUD_KEYS=true
+  fi
+
+  if [[ "$HAS_CLOUD_KEYS" == "false" ]]; then
+    MLX_CHECK_HOST="${MLX_HOST#http://}"
+    MLX_CHECK_HOST="${MLX_CHECK_HOST#https://}"
+    MLX_CHECK_PORT="${MLX_CHECK_HOST##*:}"
+    MLX_CHECK_HOST="${MLX_CHECK_HOST%%:*}"
+    [[ "$MLX_CHECK_PORT" == "$MLX_CHECK_HOST" ]] && MLX_CHECK_PORT="8888"
+
+    if tcp_ok "$MLX_CHECK_HOST" "$MLX_CHECK_PORT"; then
+      export LLM_DEFAULT_PROVIDER="mlx"
+      echo "MLX-LM: detected on $MLX_HOST (macOS) — using as default LLM provider"
+    else
+      echo "MLX-LM: not reachable on $MLX_HOST (macOS) — using Ollama"
+    fi
+  else
+    echo "Cloud API keys detected — using cloud LLM providers"
+  fi
+fi
 
 POSTGRES_SOURCE=""
 REDIS_SOURCE=""
@@ -249,6 +280,13 @@ fi
 echo ""
 echo "=== Deploy complete ==="
 echo "Infra: Postgres=$POSTGRES_SOURCE  Redis=$REDIS_SOURCE  Memcached=$MEMCACHED_SOURCE"
+if [[ "$LLM_DEFAULT_PROVIDER" == "mlx" ]]; then
+  echo "LLM:    MLX-LM on $MLX_HOST (model: $MLX_MODEL)"
+elif [[ -n "${OPENAI_API_KEY:-}" ]] || [[ -n "${ANTHROPIC_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
+  echo "LLM:    Cloud providers configured"
+else
+  echo "LLM:    Ollama on ${OLLAMA_HOST:-http://localhost:11434}"
+fi
 echo "Services: task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, memory-service, llm-router, prompt-manager, identity, access-control, planner-service, goal-service, evaluation-service, cost-tracker, api-gateway"
 echo "Logs:  logs/*.log"
 echo "PIDs:  logs/*.pid"

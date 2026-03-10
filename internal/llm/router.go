@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -147,7 +148,20 @@ func resolveModel(modelHint string) string {
 	}
 	switch modelHint {
 	case "local":
+		if strings.ToLower(os.Getenv("LLM_DEFAULT_PROVIDER")) == "mlx" {
+			mlxModel := os.Getenv("MLX_MODEL")
+			if mlxModel == "" {
+				mlxModel = "Qwen2.5-7B-Instruct-4bit"
+			}
+			return "mlx/" + mlxModel
+		}
 		return ModelLocal
+	case "mlx":
+		mlxModel := os.Getenv("MLX_MODEL")
+		if mlxModel == "" {
+			mlxModel = "Qwen2.5-7B-Instruct-4bit"
+		}
+		return "mlx/" + mlxModel
 	case "premium":
 		return ModelPremium
 	case "code":
