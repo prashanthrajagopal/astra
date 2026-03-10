@@ -6,6 +6,9 @@
   --color-bg: #111827;
   --color-surface: #1f2937;
   --color-border: #374151;
+  --color-blue: #3b82f6;
+  --color-purple: #8b5cf6;
+  --color-orange: #f97316;
 }
 body {
   margin: 0;
@@ -14,7 +17,7 @@ body {
   background: var(--color-bg);
   font-family: Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
-.dashboard-header { margin-bottom: 12px; }
+.dashboard-header { margin-bottom: 16px; }
 #dashboard-title { margin: 0 0 8px; font-size: 20px; }
 .dashboard-meta { display: flex; gap: 12px; align-items: center; }
 .dashboard-meta.has-error #refresh-status { color: var(--color-unhealthy); }
@@ -25,6 +28,61 @@ button#btn-refresh {
   padding: 4px 8px;
   cursor: pointer;
 }
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.summary-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-border);
+  padding: 14px 12px;
+  text-align: center;
+}
+.summary-value {
+  font-size: 28px;
+  font-weight: bold;
+  line-height: 1.2;
+}
+.summary-label {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.card-accent-blue { border-top-color: var(--color-blue); }
+.card-accent-blue .summary-value { color: var(--color-blue); }
+.card-accent-green { border-top-color: var(--color-healthy); }
+.card-accent-green .summary-value { color: var(--color-healthy); }
+.card-accent-yellow { border-top-color: var(--color-warning); }
+.card-accent-yellow .summary-value { color: var(--color-warning); }
+.card-accent-red { border-top-color: var(--color-unhealthy); }
+.card-accent-red .summary-value { color: var(--color-unhealthy); }
+.card-accent-purple { border-top-color: var(--color-purple); }
+.card-accent-purple .summary-value { color: var(--color-purple); }
+.card-accent-orange { border-top-color: var(--color-orange); }
+.card-accent-orange .summary-value { color: var(--color-orange); }
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.chart-container {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+}
+.chart-container canvas {
+  flex: 1;
+  max-height: 200px;
+}
+
 .action-btn {
   border: 1px solid var(--color-border);
   background: #0f172a;
@@ -50,9 +108,10 @@ button#btn-refresh {
   text-align: left;
   vertical-align: top;
 }
-.td-status.status-healthy, .td-status.status-active, .td-status.status-approved { color: var(--color-healthy); }
-.td-status.status-unhealthy, .td-status.status-inactive, .td-status.status-denied { color: var(--color-unhealthy); }
-.td-status.status-pending, .td-status.status-stale, .latency-warning { color: var(--color-warning); }
+.td-status.status-healthy, .td-status.status-active, .td-status.status-approved, .td-status.status-completed { color: var(--color-healthy); }
+.td-status.status-unhealthy, .td-status.status-inactive, .td-status.status-denied, .td-status.status-failed { color: var(--color-unhealthy); }
+.td-status.status-pending, .td-status.status-stale, .td-status.status-running, .latency-warning { color: var(--color-warning); }
+.td-status.status-queued, .td-status.status-scheduled { color: var(--color-blue); }
 .empty-message { color: #9ca3af; }
 .log-block { border: 1px solid var(--color-border); margin-bottom: 8px; }
 .log-block-title { margin: 0; padding: 6px; font-size: 12px; border-bottom: 1px solid var(--color-border); }
@@ -64,3 +123,4 @@ button#btn-refresh {
   overflow: auto;
   white-space: pre-wrap;
 }
+.goal-text-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

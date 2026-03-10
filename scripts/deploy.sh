@@ -153,7 +153,7 @@ if ! command -v go &>/dev/null; then
 fi
 echo "Go mod tidy..."
 go mod tidy
-mkdir -p bin logs
+mkdir -p bin logs "${WORKSPACE_ROOT:-workspace}"
 echo "Building..."
 go build -o bin/api-gateway        ./cmd/api-gateway
 go build -o bin/scheduler-service  ./cmd/scheduler-service

@@ -69,7 +69,7 @@ func (a *Agent) handleMessage(ctx context.Context, msg actors.Message) error {
 			return err
 		}
 
-		graph, err := a.planner.Plan(ctx, goalID, goalText, a.ID)
+		graph, err := a.planner.Plan(ctx, goalID, goalText, a.ID, nil)
 		if err != nil {
 			slog.Error("agent CreateGoal: Plan failed", "agent_id", a.ID, "err", err)
 			return err

@@ -447,6 +447,52 @@ else
 fi
 
 # ═══════════════════════════════════════════════
+# PHASE 9 — Agent Profile & Context Management
+# ═══════════════════════════════════════════════
+echo ""
+echo "$(bold '═══ PHASE 9: Agent Profile & Context ═══')"
+
+echo "Migration:"
+assert_eq "0013 migration exists" "true" "$(test -f migrations/0013_agent_profile_and_documents.sql && echo true || echo false)"
+
+echo "Agent docs package:"
+assert_eq "agentdocs store exists" "true" "$(test -f internal/agentdocs/store.go && echo true || echo false)"
+assert_eq "agentdocs context exists" "true" "$(test -f internal/agentdocs/context.go && echo true || echo false)"
+
+echo "Structural checks:"
+assert_eq "store has CreateDocument" "true" "$(grep -q 'func.*Store.*CreateDocument' internal/agentdocs/store.go && echo true || echo false)"
+assert_eq "store has GetProfile" "true" "$(grep -q 'func.*Store.*GetProfile' internal/agentdocs/store.go && echo true || echo false)"
+assert_eq "store has ListDocuments" "true" "$(grep -q 'func.*Store.*ListDocuments' internal/agentdocs/store.go && echo true || echo false)"
+assert_eq "context has AssembleContext" "true" "$(grep -q 'func.*Store.*AssembleContext' internal/agentdocs/context.go && echo true || echo false)"
+assert_eq "planner has AgentContext in PlanOptions" "true" "$(grep -q 'AgentContext' internal/planner/planner.go && echo true || echo false)"
+assert_eq "codegen has AgentContext" "true" "$(grep -q 'AgentContext' internal/codegen/codegen.go && echo true || echo false)"
+
+echo "API endpoints (structural):"
+assert_eq "api-gateway has PATCH /agents/{id}" "true" "$(grep -q 'PATCH /agents' cmd/api-gateway/main.go && echo true || echo false)"
+assert_eq "api-gateway has GET /agents/{id}/profile" "true" "$(grep -q '/profile' cmd/api-gateway/main.go && echo true || echo false)"
+assert_eq "api-gateway has POST /agents/{id}/documents" "true" "$(grep -q '/documents' cmd/api-gateway/main.go && echo true || echo false)"
+assert_eq "goal-service accepts documents" "true" "$(grep -q 'Documents' cmd/goal-service/main.go && echo true || echo false)"
+
+# ═══════════════════════════════════════════════
+# E-COMMERCE TEST STRUCTURE
+# ═══════════════════════════════════════════════
+echo ""
+echo "$(bold '═══ E-Commerce Test Structure ═══')"
+
+assert_eq "ecommerce test main.go exists" "true" "$(test -f examples/ecommerce-test/main.go && echo true || echo false)"
+assert_eq "ecommerce test run.sh exists" "true" "$(test -f examples/ecommerce-test/run.sh && echo true || echo false)"
+assert_eq "ecommerce test README exists" "true" "$(test -f examples/ecommerce-test/README.md && echo true || echo false)"
+assert_eq "workspace runtime exists" "true" "$(test -f internal/tools/workspace.go && echo true || echo false)"
+assert_eq "codegen package exists" "true" "$(test -f internal/codegen/codegen.go && echo true || echo false)"
+ECOMM_BUILD=$(go build ./examples/ecommerce-test/ 2>/dev/null && echo ok || echo fail)
+assert_eq "ecommerce test compiles" "ok" "$ECOMM_BUILD"
+assert_eq "workspace runtime has file_write" "true" "$(grep -q 'file_write' internal/tools/workspace.go && echo true || echo false)"
+assert_eq "workspace runtime has shell_exec" "true" "$(grep -q 'shell_exec' internal/tools/workspace.go && echo true || echo false)"
+assert_eq "codegen has LLM integration" "true" "$(grep -q 'LLMRouterClient' internal/codegen/codegen.go && echo true || echo false)"
+assert_eq "goal-service uses LLM-backed planner" "true" "$(grep -q 'NewWithRouter' cmd/goal-service/main.go && echo true || echo false)"
+assert_eq "execution-worker handles code_generate" "true" "$(grep -q 'code_generate' cmd/execution-worker/main.go && echo true || echo false)"
+
+# ═══════════════════════════════════════════════
 # SUMMARY
 # ═══════════════════════════════════════════════
 echo ""

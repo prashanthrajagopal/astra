@@ -13,8 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"astra/internal/agentdocs"
 	"astra/internal/dashboard"
 	"astra/pkg/config"
+	"astra/pkg/db"
 	astraGrpc "astra/pkg/grpc"
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
@@ -22,14 +24,17 @@ import (
 	kernel_pb "astra/proto/kernel"
 	tasks_pb "astra/proto/tasks"
 
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	gogrpc "google.golang.org/grpc"
 )
 
 var (
-	agentConn   *gogrpc.ClientConn
-	taskConn    *gogrpc.ClientConn
-	agentClient kernel_pb.KernelServiceClient
-	taskClient  tasks_pb.TaskServiceClient
+	agentConn    *gogrpc.ClientConn
+	taskConn     *gogrpc.ClientConn
+	agentClient  kernel_pb.KernelServiceClient
+	taskClient   tasks_pb.TaskServiceClient
+	docStore     *agentdocs.Store
 )
 
 const (
@@ -70,6 +75,18 @@ func main() {
 	agentClient = kernel_pb.NewKernelServiceClient(agentConn)
 	taskClient = tasks_pb.NewTaskServiceClient(taskConn)
 
+	database, err := db.Connect(cfg.PostgresDSN())
+	if err != nil {
+		slog.Error("failed to connect to database", "err", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	defer rdb.Close()
+
+	docStore = agentdocs.NewStore(database, rdb)
+
 	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr)
 	if err != nil {
 		slog.Error("failed to initialize auth middleware client", "err", err)
@@ -90,6 +107,11 @@ func main() {
 	}
 	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient)
 	mux.Handle("POST /agents", auth.protect(http.HandlerFunc(handleAgents)))
+	mux.Handle("PATCH /agents/{id}", auth.protect(http.HandlerFunc(handleUpdateAgent)))
+	mux.Handle("GET /agents/{id}/profile", auth.protect(http.HandlerFunc(handleGetProfile)))
+	mux.Handle("POST /agents/{id}/documents", auth.protect(http.HandlerFunc(handleCreateDocument)))
+	mux.Handle("GET /agents/{id}/documents", auth.protect(http.HandlerFunc(handleListDocuments)))
+	mux.Handle("DELETE /agents/{id}/documents/{doc_id}", auth.protect(http.HandlerFunc(handleDeleteDocument)))
 	mux.Handle("POST /agents/{id}/goals", auth.protect(http.HandlerFunc(handleAgentGoals)))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
 	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
@@ -275,8 +297,10 @@ func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *h
 
 func handleAgents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ActorType string `json:"actor_type"`
-		Config    string `json:"config"`
+		ActorType    string `json:"actor_type"`
+		Config       string `json:"config"`
+		Name         string `json:"name"`
+		SystemPrompt string `json:"system_prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -294,8 +318,218 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spawn failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if req.SystemPrompt != "" {
+		agentID, err := uuid.Parse(resp.ActorId)
+		if err == nil && docStore != nil {
+			_ = docStore.UpdateProfile(ctx, agentID, &req.SystemPrompt, nil)
+		}
+	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"actor_id": resp.ActorId})
+}
+
+func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		SystemPrompt *string          `json:"system_prompt"`
+		Config       *json.RawMessage `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	id, err := uuid.Parse(agentID)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := docStore.UpdateProfile(ctx, id, req.SystemPrompt, req.Config); err != nil {
+		slog.Error("UpdateProfile failed", "err", err)
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	id, err := uuid.Parse(agentID)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	profile, err := docStore.GetProfile(ctx, id)
+	if err != nil {
+		slog.Error("GetProfile failed", "err", err)
+		http.Error(w, "get profile failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if profile == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":            profile.ID.String(),
+		"name":          profile.Name,
+		"system_prompt": profile.SystemPrompt,
+		"config":        profile.Config,
+	})
+}
+
+func handleCreateDocument(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	agentUUID, err := uuid.Parse(agentID)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		DocType  string          `json:"doc_type"`
+		Name     string          `json:"name"`
+		Content  *string         `json:"content,omitempty"`
+		URI      *string         `json:"uri,omitempty"`
+		Metadata json.RawMessage `json:"metadata,omitempty"`
+		Priority int             `json:"priority"`
+		GoalID   *string         `json:"goal_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.DocType == "" || req.Name == "" {
+		http.Error(w, "doc_type and name required", http.StatusBadRequest)
+		return
+	}
+	dt := agentdocs.DocType(req.DocType)
+	if dt != agentdocs.DocTypeRule && dt != agentdocs.DocTypeSkill && dt != agentdocs.DocTypeContextDoc && dt != agentdocs.DocTypeReference {
+		http.Error(w, "invalid doc_type", http.StatusBadRequest)
+		return
+	}
+	if req.Content == nil && req.URI == nil {
+		http.Error(w, "content or uri required", http.StatusBadRequest)
+		return
+	}
+	if req.Priority == 0 {
+		req.Priority = 100
+	}
+	doc := &agentdocs.Document{
+		AgentID:   agentUUID,
+		DocType:   dt,
+		Name:      req.Name,
+		Content:   req.Content,
+		URI:       req.URI,
+		Metadata:  req.Metadata,
+		Priority:  req.Priority,
+	}
+	if req.GoalID != nil {
+		g, err := uuid.Parse(*req.GoalID)
+		if err == nil {
+			doc.GoalID = &g
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := docStore.CreateDocument(ctx, doc); err != nil {
+		slog.Error("CreateDocument failed", "err", err)
+		http.Error(w, "create document failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"id": doc.ID.String()})
+}
+
+func handleListDocuments(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	agentUUID, err := uuid.Parse(agentID)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	opts := agentdocs.ListOptions{}
+	if dt := r.URL.Query().Get("doc_type"); dt != "" {
+		d := agentdocs.DocType(dt)
+		opts.DocType = &d
+	}
+	if gID := r.URL.Query().Get("goal_id"); gID != "" {
+		g, err := uuid.Parse(gID)
+		if err == nil {
+			opts.GoalID = &g
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	docs, err := docStore.ListDocuments(ctx, agentUUID, opts)
+	if err != nil {
+		slog.Error("ListDocuments failed", "err", err)
+		http.Error(w, "list documents failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	items := make([]map[string]interface{}, len(docs))
+	for i, d := range docs {
+		items[i] = map[string]interface{}{
+			"id":         d.ID.String(),
+			"agent_id":   d.AgentID.String(),
+			"doc_type":   string(d.DocType),
+			"name":       d.Name,
+			"content":    d.Content,
+			"uri":        d.URI,
+			"metadata":   d.Metadata,
+			"priority":   d.Priority,
+			"created_at": d.CreatedAt,
+			"updated_at": d.UpdatedAt,
+		}
+		if d.GoalID != nil {
+			items[i]["goal_id"] = d.GoalID.String()
+		}
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]interface{}{"documents": items})
+}
+
+func handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	docID := r.PathValue("doc_id")
+	if agentID == "" || docID == "" {
+		http.Error(w, "agent id and doc_id required", http.StatusBadRequest)
+		return
+	}
+	docUUID, err := uuid.Parse(docID)
+	if err != nil {
+		http.Error(w, "invalid doc_id", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := docStore.DeleteDocument(ctx, docUUID); err != nil {
+		slog.Error("DeleteDocument failed", "err", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func handleAgentGoals(w http.ResponseWriter, r *http.Request) {

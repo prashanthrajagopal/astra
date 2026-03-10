@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Astra Platform Dashboard</title>
   <link rel="stylesheet" href="/dashboard/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <header id="dashboard-header" class="dashboard-header">
@@ -15,6 +16,56 @@
       <button id="btn-refresh" class="meta-item">Refresh now</button>
     </div>
   </header>
+
+  <section id="section-summary" class="summary-grid">
+    <div class="summary-card card-accent-blue">
+      <div class="summary-value" id="sum-active-goals">0</div>
+      <div class="summary-label">Active Goals</div>
+    </div>
+    <div class="summary-card card-accent-green">
+      <div class="summary-value" id="sum-completed-tasks">0</div>
+      <div class="summary-label">Completed Tasks</div>
+    </div>
+    <div class="summary-card card-accent-yellow">
+      <div class="summary-value" id="sum-running-tasks">0</div>
+      <div class="summary-label">Running Tasks</div>
+    </div>
+    <div class="summary-card card-accent-red">
+      <div class="summary-value" id="sum-failed-tasks">0</div>
+      <div class="summary-label">Failed Tasks</div>
+    </div>
+    <div class="summary-card card-accent-purple">
+      <div class="summary-value" id="sum-workers">0</div>
+      <div class="summary-label">Active Workers</div>
+    </div>
+    <div class="summary-card card-accent-orange">
+      <div class="summary-value" id="sum-approvals">0</div>
+      <div class="summary-label">Pending Approvals</div>
+    </div>
+  </section>
+
+  <section id="section-charts" class="charts-grid">
+    <div class="dashboard-card chart-container">
+      <h2 class="section-title">Task Status Distribution</h2>
+      <canvas id="chart-tasks"></canvas>
+    </div>
+    <div class="dashboard-card chart-container">
+      <h2 class="section-title">Goal Status</h2>
+      <canvas id="chart-goals"></canvas>
+    </div>
+    <div class="dashboard-card chart-container">
+      <h2 class="section-title">Service Health</h2>
+      <canvas id="chart-services"></canvas>
+    </div>
+  </section>
+
+  <section id="section-recent-goals" class="dashboard-card card-goals">
+    <h2 class="section-title">Recent Goals</h2>
+    <table id="table-goals" class="data-table">
+      <thead><tr><th>ID</th><th>Agent</th><th>Goal</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody id="tbody-goals"></tbody>
+    </table>
+  </section>
 
   <section id="section-services" class="dashboard-card card-services">
     <h2 class="section-title">Services</h2>

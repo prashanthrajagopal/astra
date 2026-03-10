@@ -11,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"astra/internal/agentdocs"
 	"astra/internal/events"
+	"astra/internal/llm"
 	"astra/internal/planner"
 	"astra/internal/tasks"
 	"astra/pkg/config"
@@ -19,7 +21,9 @@ import (
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -37,9 +41,17 @@ func main() {
 	}
 	defer database.Close()
 
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	defer rdb.Close()
+
+	docStore := agentdocs.NewStore(database, rdb)
 	taskStore := tasks.NewStore(database)
 	eventStore := events.NewStore(database)
-	p := planner.New()
+
+	backend := llm.NewEndpointBackendFromEnv()
+	mc := memcache.New(cfg.MemcachedAddr)
+	router := llm.NewRouterWithCache(backend, mc, 86400)
+	p := planner.NewWithRouter(router)
 
 	port := cfg.GoalServicePort
 	if port == 0 {
@@ -54,9 +66,18 @@ func main() {
 
 	mux.HandleFunc("POST /goals", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			AgentID  string `json:"agent_id"`
-			GoalText string `json:"goal_text"`
-			Priority int    `json:"priority"`
+			AgentID   string `json:"agent_id"`
+			GoalText  string `json:"goal_text"`
+			Priority  int    `json:"priority"`
+			Workspace string `json:"workspace"`
+			Documents []struct {
+				DocType  string          `json:"doc_type"`
+				Name     string          `json:"name"`
+				Content  *string         `json:"content,omitempty"`
+				URI      *string         `json:"uri,omitempty"`
+				Metadata json.RawMessage `json:"metadata,omitempty"`
+				Priority int             `json:"priority"`
+			} `json:"documents,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -88,6 +109,31 @@ func main() {
 			return
 		}
 
+		for _, d := range req.Documents {
+			if d.DocType == "" || d.Name == "" || (d.Content == nil && d.URI == nil) {
+				continue
+			}
+			dt := agentdocs.DocType(d.DocType)
+			if dt != agentdocs.DocTypeRule && dt != agentdocs.DocTypeSkill && dt != agentdocs.DocTypeContextDoc && dt != agentdocs.DocTypeReference {
+				continue
+			}
+			pri := d.Priority
+			if pri == 0 {
+				pri = 100
+			}
+			doc := &agentdocs.Document{
+				AgentID:  agentID,
+				GoalID:   &goalID,
+				DocType:  dt,
+				Name:     d.Name,
+				Content:  d.Content,
+				URI:      d.URI,
+				Metadata: d.Metadata,
+				Priority: pri,
+			}
+			_ = docStore.CreateDocument(ctx, doc)
+		}
+
 		phaseRunID := uuid.New()
 		_, err = database.ExecContext(ctx,
 			`INSERT INTO phase_runs (id, goal_id, agent_id, status) VALUES ($1, $2, $3, 'running')`,
@@ -109,7 +155,14 @@ func main() {
 			slog.Warn("append PhaseStarted event failed", "err", err)
 		}
 
-		graph, err := p.Plan(ctx, goalID, req.GoalText, agentID)
+		agentCtx, err := docStore.AssembleContext(ctx, agentID, &goalID)
+		var agentCtxJSON json.RawMessage
+		if err == nil && agentCtx != nil {
+			agentCtxJSON, _ = agentdocs.SerializeContext(agentCtx)
+		}
+
+		planOpts := &planner.PlanOptions{Workspace: req.Workspace, AgentContext: agentCtxJSON}
+		graph, err := p.Plan(ctx, goalID, req.GoalText, agentID, planOpts)
 		if err != nil {
 			slog.Error("plan failed", "err", err)
 			http.Error(w, `{"error":"plan failed"}`, http.StatusInternalServerError)
@@ -290,6 +343,60 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	})
+
+	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		stats := map[string]any{}
+
+		var totalGoals, activeGoals, completedGoals, failedGoals int
+		database.QueryRowContext(ctx, `SELECT count(*) FROM goals`).Scan(&totalGoals)
+		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'active'`).Scan(&activeGoals)
+		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'completed'`).Scan(&completedGoals)
+		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'failed'`).Scan(&failedGoals)
+		stats["goals"] = map[string]int{
+			"total": totalGoals, "active": activeGoals,
+			"completed": completedGoals, "failed": failedGoals,
+			"pending": totalGoals - activeGoals - completedGoals - failedGoals,
+		}
+
+		taskRows, _ := database.QueryContext(ctx, `SELECT status, count(*) FROM tasks GROUP BY status`)
+		taskCounts := map[string]int{}
+		if taskRows != nil {
+			defer taskRows.Close()
+			for taskRows.Next() {
+				var status string
+				var count int
+				if taskRows.Scan(&status, &count) == nil {
+					taskCounts[status] = count
+				}
+			}
+		}
+		stats["tasks"] = taskCounts
+
+		var recentGoals []map[string]any
+		recentRows, _ := database.QueryContext(ctx,
+			`SELECT id, agent_id, goal_text, status, created_at::text FROM goals ORDER BY created_at DESC LIMIT 10`)
+		if recentRows != nil {
+			defer recentRows.Close()
+			for recentRows.Next() {
+				var id, agentID, text, status, createdAt string
+				if recentRows.Scan(&id, &agentID, &text, &status, &createdAt) == nil {
+					goalText := text
+					if len(goalText) > 100 {
+						goalText = goalText[:100] + "..."
+					}
+					recentGoals = append(recentGoals, map[string]any{
+						"id": id, "agent_id": agentID, "goal_text": goalText,
+						"status": status, "created_at": createdAt,
+					})
+				}
+			}
+		}
+		stats["recent_goals"] = recentGoals
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
 	})
 
 	srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: mux}

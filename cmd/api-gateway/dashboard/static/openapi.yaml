@@ -1,0 +1,1200 @@
+openapi: 3.0.3
+info:
+  title: Astra — Autonomous Agent OS Platform API
+  version: 1.0.0
+  description: |
+    Astra is a planet-scale autonomous agent operating system. This specification
+    documents every HTTP endpoint across all Astra microservices.
+
+    ## Architecture Overview
+
+    Astra runs as a set of cooperating microservices:
+    - **API Gateway** (port 8080) — public-facing, JWT-protected
+    - **Goal Service** (port 8088) — goal lifecycle and planning
+    - **Identity** (port 8085) — JWT issuance and validation
+    - **Access Control** (port 8086) — OPA-like policy checks and approval workflow
+    - **Tool Runtime** (port 8083) — sandboxed tool execution
+    - **Worker Manager** (port 8082) — worker registry and heartbeats
+    - **Prompt Manager** (port 8084) — prompt template storage
+    - **Planner Service** (port 8087) — goal-to-task DAG decomposition
+    - **Evaluation Service** (port 8089) — task result evaluation
+    - **Cost Tracker** (port 8090) — LLM usage cost aggregation
+
+    ## Real-World Use Case: Building an E-Commerce Website
+
+    This walkthrough shows how a user interacts with Astra to autonomously
+    build a full Next.js e-commerce site.
+
+    ### Step 1 — Acquire a JWT token
+    ```
+    POST http://localhost:8085/tokens
+    {"subject": "developer", "scopes": ["admin"], "ttl_seconds": 3600}
+    ```
+
+    ### Step 2 — Create an e-commerce builder agent
+    ```
+    POST http://localhost:8080/agents
+    Authorization: Bearer <token>
+    {
+      "actor_type": "ecommerce-builder",
+      "name": "E-Commerce Builder",
+      "system_prompt": "You are a senior full-stack developer specializing in Next.js, TypeScript, and Tailwind CSS.",
+      "config": {"model_preference": "code"}
+    }
+    ```
+
+    ### Step 3 — Attach coding rules
+    ```
+    POST http://localhost:8080/agents/{agent_id}/documents
+    Authorization: Bearer <token>
+    {
+      "doc_type": "rule",
+      "name": "typescript-only",
+      "content": "All code must be TypeScript. No JavaScript files."
+    }
+    ```
+
+    ### Step 4 — Submit the e-commerce goal with a PRD
+    ```
+    POST http://localhost:8088/goals
+    {
+      "agent_id": "<agent_id>",
+      "goal_text": "Build a Next.js 14 e-commerce site with product catalog, cart, and checkout",
+      "workspace": "./workspace/ecommerce-store",
+      "documents": [{
+        "doc_type": "context_doc",
+        "name": "ecommerce-prd",
+        "content": "# E-Commerce PRD\n\n## Pages: Home, Products, Product Detail, Cart, Checkout, Order Confirmation\n..."
+      }]
+    }
+    ```
+
+    ### Step 5 — Monitor via dashboard
+    Open `http://localhost:8080/dashboard/` to see task progress, worker activity,
+    and pending approvals in real time.
+
+    ### Step 6 — Auto-approve or manually approve dangerous operations
+    ```
+    GET  http://localhost:8086/approvals/pending
+    POST http://localhost:8086/approvals/{id}/approve
+    ```
+
+    ### Step 7 — Run the generated site
+    ```
+    cd workspace/ecommerce-store
+    npm install && npm run dev
+    ```
+
+  contact:
+    name: Astra Platform
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: API Gateway (public-facing)
+  - url: http://localhost:8088
+    description: Goal Service (internal)
+  - url: http://localhost:8085
+    description: Identity Service (internal)
+  - url: http://localhost:8086
+    description: Access Control Service (internal)
+  - url: http://localhost:8083
+    description: Tool Runtime (internal)
+  - url: http://localhost:8082
+    description: Worker Manager (internal)
+  - url: http://localhost:8084
+    description: Prompt Manager (internal)
+  - url: http://localhost:8087
+    description: Planner Service (internal)
+  - url: http://localhost:8089
+    description: Evaluation Service (internal)
+  - url: http://localhost:8090
+    description: Cost Tracker (internal)
+
+tags:
+  - name: Gateway — Agents
+    description: Agent lifecycle management (via API Gateway, JWT required)
+  - name: Gateway — Agent Documents
+    description: Attach rules, skills, and context docs to agents
+  - name: Gateway — Goals
+    description: Submit goals to agents
+  - name: Gateway — Tasks & Graphs
+    description: Inspect task execution and dependency graphs
+  - name: Gateway — Dashboard
+    description: Platform visibility dashboard and approval actions
+  - name: Goal Service
+    description: Goal lifecycle, planning, finalization, and stats
+  - name: Identity
+    description: JWT token issuance and validation
+  - name: Access Control
+    description: Policy checks and approval workflow
+  - name: Tool Runtime
+    description: Sandboxed tool execution
+  - name: Worker Manager
+    description: Worker registry
+  - name: Prompt Manager
+    description: Prompt template storage
+  - name: Planner
+    description: Goal-to-task DAG decomposition
+  - name: Evaluation
+    description: Task result evaluation
+  - name: Cost Tracker
+    description: LLM usage cost aggregation
+
+security:
+  - BearerAuth: []
+
+paths:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # API GATEWAY — AGENTS
+  # ═══════════════════════════════════════════════════════════════════
+
+  /agents:
+    post:
+      tags: [Gateway — Agents]
+      summary: Create a new agent
+      description: |
+        Spawns a new agent actor in the kernel. Optionally provide a system
+        prompt and structured config for the agent's persona.
+
+        **E-Commerce example**: Create an agent that builds websites.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+            example:
+              actor_type: ecommerce-builder
+              name: E-Commerce Builder
+              system_prompt: "You are a senior full-stack developer specializing in Next.js 14, TypeScript, and Tailwind CSS. You produce clean, production-ready code."
+              config: '{"model_preference":"code"}'
+      responses:
+        '200':
+          description: Agent created
+          content:
+            application/json:
+              example:
+                actor_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+
+  /agents/{id}:
+    patch:
+      tags: [Gateway — Agents]
+      summary: Update agent profile
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                system_prompt:
+                  type: string
+                config:
+                  type: string
+            example:
+              system_prompt: "You are a principal architect. You design systems but never write code."
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              example:
+                status: ok
+
+  /agents/{id}/profile:
+    get:
+      tags: [Gateway — Agents]
+      summary: Get agent profile
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Agent profile
+          content:
+            application/json:
+              example:
+                id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                name: E-Commerce Builder
+                system_prompt: "You are a senior full-stack developer..."
+                config: '{"model_preference":"code"}'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # API GATEWAY — AGENT DOCUMENTS
+  # ═══════════════════════════════════════════════════════════════════
+
+  /agents/{id}/documents:
+    post:
+      tags: [Gateway — Agent Documents]
+      summary: Attach a document to an agent
+      description: |
+        Upload a rule, skill, or context document. Documents persist across
+        goals unless a `goal_id` is provided.
+
+        **E-Commerce example**: Attach coding standards as a rule.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDocumentRequest'
+            examples:
+              rule:
+                summary: Coding rule
+                value:
+                  doc_type: rule
+                  name: typescript-only
+                  content: "All code must use TypeScript. No .js files. Use strict mode."
+                  priority: 10
+              skill:
+                summary: React skill
+                value:
+                  doc_type: skill
+                  name: nextjs-patterns
+                  content: "Use Next.js 14 App Router. Use server components by default. Client components only when needed for interactivity."
+                  priority: 20
+              context_doc:
+                summary: PRD document
+                value:
+                  doc_type: context_doc
+                  name: ecommerce-prd
+                  content: "# E-Commerce PRD\n\n## Pages\n- Home with hero + featured products\n- Product listing with filters\n- Product detail with add-to-cart\n- Cart with quantity controls\n- Checkout with form validation\n- Order confirmation"
+                  priority: 50
+      responses:
+        '201':
+          description: Document created
+          content:
+            application/json:
+              example:
+                id: "d4f5e6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a"
+    get:
+      tags: [Gateway — Agent Documents]
+      summary: List agent documents
+      description: List all documents attached to an agent. Filter by type or goal.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - name: doc_type
+          in: query
+          schema:
+            type: string
+            enum: [rule, skill, context_doc, reference]
+        - name: goal_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document list
+          content:
+            application/json:
+              example:
+                documents:
+                  - id: "d4f5e6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a"
+                    agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                    doc_type: rule
+                    name: typescript-only
+                    content: "All code must use TypeScript..."
+                    priority: 10
+                    created_at: "2026-03-10T12:00:00Z"
+
+  /agents/{id}/documents/{docId}:
+    delete:
+      tags: [Gateway — Agent Documents]
+      summary: Delete a document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              example:
+                status: ok
+
+  # ═══════════════════════════════════════════════════════════════════
+  # API GATEWAY — GOALS
+  # ═══════════════════════════════════════════════════════════════════
+
+  /agents/{id}/goals:
+    post:
+      tags: [Gateway — Goals]
+      summary: Submit a goal to an agent (via gateway)
+      description: |
+        Creates a goal and triggers the agent's internal planner. This routes
+        through the kernel's actor message system.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              goal_text: "Build a Next.js 14 e-commerce website with product catalog, shopping cart, checkout flow, and Tailwind CSS styling"
+      responses:
+        '200':
+          description: Goal submitted to agent
+
+  # ═══════════════════════════════════════════════════════════════════
+  # API GATEWAY — TASKS & GRAPHS
+  # ═══════════════════════════════════════════════════════════════════
+
+  /tasks/{taskId}:
+    get:
+      tags: [Gateway — Tasks & Graphs]
+      summary: Get task details
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              example:
+                id: "13806f4b-6a7e-4642-b606-6bea145d8f07"
+                graph_id: "f635e11c-51b1-4978-ad16-2f50f8597eb5"
+                agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                type: code_generate
+                status: completed
+                priority: 100
+                retries: 0
+
+  /tasks/{taskId}/complete:
+    post:
+      tags: [Gateway — Tasks & Graphs]
+      summary: Manually complete a task
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            example:
+              result: "Task manually completed by operator"
+      responses:
+        '200':
+          description: Task completed
+
+  /graphs/{graphId}:
+    get:
+      tags: [Gateway — Tasks & Graphs]
+      summary: Get task dependency graph
+      description: Returns all tasks and their dependency relationships for a goal's task graph.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: graphId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Graph with tasks and dependencies
+          content:
+            application/json:
+              example:
+                tasks:
+                  - id: "task-1-uuid"
+                    type: shell_exec
+                    status: completed
+                    priority: 100
+                  - id: "task-2-uuid"
+                    type: code_generate
+                    status: running
+                    priority: 100
+                dependencies:
+                  - task_id: "task-2-uuid"
+                    depends_on: "task-1-uuid"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # API GATEWAY — DASHBOARD
+  # ═══════════════════════════════════════════════════════════════════
+
+  /api/dashboard/snapshot:
+    get:
+      tags: [Gateway — Dashboard]
+      summary: Get full platform snapshot
+      description: |
+        Returns a comprehensive snapshot of the entire platform: service health,
+        active workers, pending approvals, job statistics, cost data, log tails,
+        and process IDs. Powers the dashboard UI.
+      responses:
+        '200':
+          description: Platform snapshot
+          content:
+            application/json:
+              example:
+                generated_at: "2026-03-10T12:00:00Z"
+                services:
+                  - name: api-gateway
+                    port: 8080
+                    type: http
+                    healthy: true
+                    latency_ms: 1
+                jobs:
+                  goals:
+                    total: 15
+                    active: 3
+                    completed: 10
+                    failed: 2
+                    pending: 0
+                  tasks:
+                    created: 5
+                    running: 2
+                    completed: 45
+                    failed: 3
+                  recent_goals:
+                    - id: "goal-uuid"
+                      agent_id: "agent-uuid"
+                      goal_text: "Build e-commerce site..."
+                      status: active
+                workers:
+                  - id: "worker-uuid"
+                    hostname: "mac-mini"
+                    status: active
+                    capabilities: ["general", "code_generate"]
+                approvals: []
+                cost:
+                  rows:
+                    - day: "2026-03-10"
+                      model: "openai/gpt-4.1-mini"
+                      tokens_in: 1500
+                      tokens_out: 3200
+                      cost_dollars: 0.02
+
+  /api/dashboard/approvals/{id}/approve:
+    post:
+      tags: [Gateway — Dashboard]
+      summary: Approve a pending request (from dashboard)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            example:
+              decided_by: dashboard-ui
+      responses:
+        '200':
+          description: Approved
+
+  /api/dashboard/approvals/{id}/reject:
+    post:
+      tags: [Gateway — Dashboard]
+      summary: Reject a pending request (from dashboard)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            example:
+              decided_by: dashboard-ui
+      responses:
+        '200':
+          description: Rejected
+
+  # ═══════════════════════════════════════════════════════════════════
+  # GOAL SERVICE (port 8088)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /goals:
+    post:
+      tags: [Goal Service]
+      summary: Create a goal with optional documents
+      description: |
+        Creates a goal, runs the LLM-backed planner to decompose it into a task
+        DAG, and persists the graph. Optionally attach inline documents (PRD,
+        specs) scoped to this goal.
+
+        **E-Commerce example**: Submit a goal to build a full store with an
+        inline PRD that describes all pages and features.
+      servers:
+        - url: http://localhost:8088
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGoalRequest'
+            example:
+              agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+              goal_text: "Build a complete Next.js 14 e-commerce website with product catalog, shopping cart, checkout, and order confirmation. Use TypeScript and Tailwind CSS."
+              priority: 50
+              workspace: "./workspace/ecommerce-store"
+              documents:
+                - doc_type: context_doc
+                  name: ecommerce-prd
+                  content: "# E-Commerce PRD\n\n## Pages\n1. Home — hero section, featured products grid, category cards\n2. Products — filterable listing with sort by price/name\n3. Product Detail — image, description, add-to-cart\n4. Cart — quantity controls, remove, totals\n5. Checkout — shipping form, order summary\n6. Order Confirmation — success message with order details\n\n## Data\n- 12 mock products across 3 categories\n- Client-side cart state with React Context\n\n## Tech Stack\n- Next.js 14, App Router, TypeScript, Tailwind CSS"
+      responses:
+        '200':
+          description: Goal created and task DAG generated
+          content:
+            application/json:
+              example:
+                goal_id: "df60612c-8024-42d0-a9f5-057350797e00"
+                phase_run_id: "e1f2a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+                task_count: 13
+                graph_id: "f635e11c-51b1-4978-ad16-2f50f8597eb5"
+    get:
+      tags: [Goal Service]
+      summary: List goals for an agent
+      servers:
+        - url: http://localhost:8088
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Goals list
+          content:
+            application/json:
+              example:
+                goals:
+                  - id: "df60612c-8024-42d0-a9f5-057350797e00"
+                    agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                    goal_text: "Build a complete Next.js 14 e-commerce website..."
+                    priority: 50
+                    status: active
+                    created_at: "2026-03-10 02:31:32+05:30"
+
+  /goals/{id}:
+    get:
+      tags: [Goal Service]
+      summary: Get goal details
+      servers:
+        - url: http://localhost:8088
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Goal details
+          content:
+            application/json:
+              example:
+                id: "df60612c-8024-42d0-a9f5-057350797e00"
+                agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                goal_text: "Build a complete Next.js 14 e-commerce website..."
+                priority: 50
+                status: active
+                created_at: "2026-03-10 02:31:32+05:30"
+
+  /goals/{id}/finalize:
+    post:
+      tags: [Goal Service]
+      summary: Finalize a goal
+      description: Checks all task statuses and marks the goal's phase run as completed or failed.
+      servers:
+        - url: http://localhost:8088
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Finalization result
+          content:
+            application/json:
+              example:
+                goal_id: "df60612c-8024-42d0-a9f5-057350797e00"
+                phase_run_id: "e1f2a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+                status: completed
+                summary: "All tasks completed"
+
+  /stats:
+    get:
+      tags: [Goal Service]
+      summary: Get platform job statistics
+      description: Returns aggregate counts of goals and tasks by status, plus recent goals.
+      servers:
+        - url: http://localhost:8088
+      responses:
+        '200':
+          description: Job statistics
+          content:
+            application/json:
+              example:
+                goals:
+                  total: 15
+                  active: 3
+                  completed: 10
+                  failed: 2
+                  pending: 0
+                tasks:
+                  created: 5
+                  pending: 2
+                  queued: 1
+                  running: 2
+                  completed: 45
+                  failed: 3
+                recent_goals:
+                  - id: "df60612c-8024-42d0-a9f5-057350797e00"
+                    agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                    goal_text: "Build e-commerce site..."
+                    status: active
+                    created_at: "2026-03-10 02:31:32+05:30"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # IDENTITY SERVICE (port 8085)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /tokens:
+    post:
+      tags: [Identity]
+      summary: Issue a JWT token
+      description: |
+        Creates a signed HS256 JWT. Use this token in `Authorization: Bearer <token>`
+        headers for all API Gateway endpoints.
+
+        **E-Commerce example**: Get a token before creating the builder agent.
+      servers:
+        - url: http://localhost:8085
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+            example:
+              subject: developer
+              scopes: [admin]
+              ttl_seconds: 3600
+      responses:
+        '200':
+          description: JWT issued
+          content:
+            application/json:
+              example:
+                token: "eyJhbGciOiJIUzI1NiIs..."
+                expires_at: 1773093157
+
+  /validate:
+    post:
+      tags: [Identity]
+      summary: Validate a JWT token
+      servers:
+        - url: http://localhost:8085
+      requestBody:
+        content:
+          application/json:
+            example:
+              token: "eyJhbGciOiJIUzI1NiIs..."
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              example:
+                valid: true
+                subject: developer
+                scopes: [admin]
+
+  # ═══════════════════════════════════════════════════════════════════
+  # ACCESS CONTROL SERVICE (port 8086)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /check:
+    post:
+      tags: [Access Control]
+      summary: Check if an action is allowed
+      servers:
+        - url: http://localhost:8086
+      requestBody:
+        content:
+          application/json:
+            example:
+              subject: developer
+              action: execute
+              resource: tool-runtime
+              tool_name: shell_exec
+      responses:
+        '200':
+          description: Policy decision
+          content:
+            application/json:
+              example:
+                allowed: true
+                approval_required: true
+                reason: "shell_exec requires approval"
+
+  /approvals/pending:
+    get:
+      tags: [Access Control]
+      summary: List pending approval requests
+      description: |
+        Returns all approval requests that haven't been decided yet.
+        The dashboard UI polls this endpoint to show pending items.
+      servers:
+        - url: http://localhost:8086
+      responses:
+        '200':
+          description: Pending approvals
+          content:
+            application/json:
+              example:
+                - id: "approval-uuid"
+                  tool_name: shell_exec
+                  action_summary: "npm install"
+                  status: pending
+                  requested_at: "2026-03-10T12:00:00Z"
+
+  /approvals/{id}/approve:
+    post:
+      tags: [Access Control]
+      summary: Approve a request
+      servers:
+        - url: http://localhost:8086
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            example:
+              decided_by: admin
+      responses:
+        '200':
+          description: Approved
+
+  /approvals/{id}/deny:
+    post:
+      tags: [Access Control]
+      summary: Deny a request
+      servers:
+        - url: http://localhost:8086
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            example:
+              decided_by: admin
+      responses:
+        '200':
+          description: Denied
+
+  # ═══════════════════════════════════════════════════════════════════
+  # TOOL RUNTIME (port 8083)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /execute:
+    post:
+      tags: [Tool Runtime]
+      summary: Execute a tool in a sandbox
+      description: |
+        Runs a tool (file_write, shell_exec, etc.) in the workspace runtime.
+        Dangerous tools trigger an approval request and return 202.
+      servers:
+        - url: http://localhost:8083
+      requestBody:
+        content:
+          application/json:
+            example:
+              name: shell_exec
+              input: "eyJjb21tYW5kIjoibnBtIGluc3RhbGwifQ=="
+              timeout_seconds: 120
+              task_id: "task-uuid"
+              worker_id: "worker-uuid"
+      responses:
+        '200':
+          description: Execution result
+          content:
+            application/json:
+              example:
+                output: "YWRkZWQgMTUwIHBhY2thZ2Vz"
+                exit_code: 0
+                duration_ms: 15000
+                artifacts: []
+        '202':
+          description: Approval required
+          content:
+            application/json:
+              example:
+                status: pending_approval
+                approval_request_id: "approval-uuid"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # WORKER MANAGER (port 8082)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /workers:
+    get:
+      tags: [Worker Manager]
+      summary: List registered workers
+      servers:
+        - url: http://localhost:8082
+      responses:
+        '200':
+          description: Worker list
+          content:
+            application/json:
+              example:
+                - id: "worker-uuid"
+                  hostname: "mac-mini.local"
+                  status: active
+                  capabilities: ["general", "code_generate", "shell_exec"]
+                  last_heartbeat: "2026-03-10T12:00:00Z"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PROMPT MANAGER (port 8084)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /prompts:
+    post:
+      tags: [Prompt Manager]
+      summary: Create a prompt template
+      servers:
+        - url: http://localhost:8084
+      requestBody:
+        content:
+          application/json:
+            example:
+              name: ecommerce-page-generator
+              version: 1
+              body: "Generate a {{page_type}} page for an e-commerce site using Next.js 14 and Tailwind CSS. Include: {{requirements}}"
+              variables_schema: '{"type":"object","properties":{"page_type":{"type":"string"},"requirements":{"type":"string"}}}'
+      responses:
+        '201':
+          description: Prompt created
+
+  /prompts/{name}/{version}:
+    get:
+      tags: [Prompt Manager]
+      summary: Get a prompt template
+      servers:
+        - url: http://localhost:8084
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Prompt template
+          content:
+            application/json:
+              example:
+                id: "prompt-uuid"
+                name: ecommerce-page-generator
+                version: 1
+                body: "Generate a {{page_type}} page..."
+                variables_schema: '{"type":"object"}'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PLANNER SERVICE (port 8087)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /plan:
+    post:
+      tags: [Planner]
+      summary: Decompose a goal into a task DAG
+      description: |
+        Uses the LLM to break a goal into concrete tasks with dependencies.
+        Returns the task graph. Normally called by goal-service, not directly.
+      servers:
+        - url: http://localhost:8087
+      requestBody:
+        content:
+          application/json:
+            example:
+              goal_id: "goal-uuid"
+              agent_id: "agent-uuid"
+              goal_text: "Build a Next.js product listing page with category filters and sort options"
+      responses:
+        '200':
+          description: Task DAG
+          content:
+            application/json:
+              example:
+                graph_id: "graph-uuid"
+                tasks:
+                  - id: "task-1"
+                    type: code_generate
+                    status: created
+                    priority: 100
+                  - id: "task-2"
+                    type: code_generate
+                    status: created
+                    priority: 100
+                dependencies:
+                  - task_id: "task-2"
+                    depends_on: "task-1"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # EVALUATION SERVICE (port 8089)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /evaluate:
+    post:
+      tags: [Evaluation]
+      summary: Evaluate a task result
+      servers:
+        - url: http://localhost:8089
+      requestBody:
+        content:
+          application/json:
+            example:
+              task_id: "task-uuid"
+              result: "Generated 3 files: src/pages/products.tsx, src/components/ProductCard.tsx, src/types/product.ts"
+              criteria: "must contain TypeScript files"
+      responses:
+        '200':
+          description: Evaluation result
+          content:
+            application/json:
+              example:
+                passed: true
+                feedback: "Result contains TypeScript files as required"
+                score: 1.0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # COST TRACKER (port 8090)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /cost/daily:
+    get:
+      tags: [Cost Tracker]
+      summary: Get daily LLM cost breakdown
+      servers:
+        - url: http://localhost:8090
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+      responses:
+        '200':
+          description: Daily cost breakdown
+          content:
+            application/json:
+              example:
+                rows:
+                  - day: "2026-03-10"
+                    agent_id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
+                    model: "openai/gpt-4.1-mini"
+                    tokens_in: 5200
+                    tokens_out: 12800
+                    cost_dollars: 0.08
+                  - day: "2026-03-09"
+                    agent_id: null
+                    model: "ollama/llama3:8b"
+                    tokens_in: 2100
+                    tokens_out: 4500
+                    cost_dollars: 0.0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # HEALTH CHECKS (all services)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /health:
+    get:
+      tags: [Gateway — Dashboard]
+      summary: Health check (available on all services)
+      description: Every Astra service exposes GET /health returning "ok".
+      responses:
+        '200':
+          description: Healthy
+          content:
+            text/plain:
+              example: ok
+
+# ═══════════════════════════════════════════════════════════════════
+# COMPONENTS
+# ═══════════════════════════════════════════════════════════════════
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT from POST /tokens on the Identity service"
+
+  parameters:
+    AgentId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Agent UUID
+
+  schemas:
+    CreateAgentRequest:
+      type: object
+      required: [actor_type]
+      properties:
+        actor_type:
+          type: string
+          description: Agent type identifier
+          example: ecommerce-builder
+        name:
+          type: string
+          description: Human-readable name
+          example: E-Commerce Builder
+        system_prompt:
+          type: string
+          description: Agent persona / system prompt injected into all LLM calls
+          example: "You are a senior full-stack developer..."
+        config:
+          type: string
+          description: JSON-encoded agent configuration
+          example: '{"model_preference":"code"}'
+
+    CreateDocumentRequest:
+      type: object
+      required: [doc_type, name]
+      properties:
+        doc_type:
+          type: string
+          enum: [rule, skill, context_doc, reference]
+          description: Document type
+        name:
+          type: string
+          description: Document name
+          example: coding-standards
+        content:
+          type: string
+          description: Inline text content (for docs under 1MB)
+        uri:
+          type: string
+          description: Object storage URI for large documents
+        metadata:
+          type: object
+          description: Tags and applicability scope
+          example: {"applies_to": ["code_generate"]}
+        priority:
+          type: integer
+          default: 100
+          description: Ordering for prompt context assembly (lower = higher priority)
+        goal_id:
+          type: string
+          format: uuid
+          description: If set, document is scoped to this goal only
+
+    CreateGoalRequest:
+      type: object
+      required: [agent_id, goal_text]
+      properties:
+        agent_id:
+          type: string
+          format: uuid
+        goal_text:
+          type: string
+          description: Natural language description of what to build
+          example: "Build a Next.js 14 e-commerce website with product catalog, cart, and checkout"
+        priority:
+          type: integer
+          default: 100
+        workspace:
+          type: string
+          description: Filesystem path where generated files are written
+          example: "./workspace/ecommerce-store"
+        documents:
+          type: array
+          description: Inline documents scoped to this goal
+          items:
+            type: object
+            properties:
+              doc_type:
+                type: string
+                enum: [rule, skill, context_doc, reference]
+              name:
+                type: string
+              content:
+                type: string
+              priority:
+                type: integer
+
+    TokenRequest:
+      type: object
+      required: [subject]
+      properties:
+        subject:
+          type: string
+          example: developer
+        scopes:
+          type: array
+          items:
+            type: string
+          example: [admin]
+        ttl_seconds:
+          type: integer
+          default: 3600

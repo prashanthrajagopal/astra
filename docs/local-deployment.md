@@ -46,6 +46,20 @@ Set in `.env`:
   - `ANTHROPIC_API_KEY`
   - `GEMINI_API_KEY`
 
+## Workspace and code generation
+
+Execution workers can generate code via LLM and write files to disk. Configure in `.env`:
+
+- `WORKSPACE_ROOT` — root directory for generated projects (default `./workspace`)
+- `TOOL_RUNTIME=workspace` — enables the file/shell workspace runtime
+- `LLM_GRPC_ADDR` — address of the llm-router gRPC service (default `localhost:9093`)
+
+Run the e-commerce test to verify the full pipeline:
+
+```bash
+bash examples/ecommerce-test/run.sh
+```
+
 ## Mac Mini and native hardware
 
 For Mac Mini with Metal/ANE: use the same `scripts/deploy.sh`. Run Ollama natively on the host for Metal-accelerated embeddings/inference. See [Mac Mini deployment](mac-mini-deployment.md) for details.

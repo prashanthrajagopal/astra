@@ -32,6 +32,7 @@ type Snapshot struct {
 	Services    []ServiceStatus     `json:"services"`
 	Workers     []map[string]any    `json:"workers"`
 	Approvals   []map[string]any    `json:"approvals"`
+	Jobs        map[string]any      `json:"jobs"`
 	Cost        map[string]any      `json:"cost"`
 	Logs        map[string][]string `json:"logs"`
 	PIDs        map[string]int      `json:"pids"`
@@ -57,29 +58,17 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		Services:    probeServices(ctx),
 		Workers:     []map[string]any{},
 		Approvals:   []map[string]any{},
+		Jobs:        map[string]any{},
 		Cost:        map[string]any{"rows": []any{}},
 		Logs:        map[string][]string{},
 		PIDs:        map[string]int{},
 		Errors:      map[string]string{},
 	}
 
-	if workers, err := c.fetchArray(ctx, strings.TrimSuffix(c.cfg.WorkerManagerAddr, "/")+"/workers"); err == nil {
-		snap.Workers = normalizeWorkers(workers)
-	} else {
-		snap.Errors["workers"] = err.Error()
-	}
-
-	if approvals, err := c.fetchArray(ctx, strings.TrimSuffix(c.cfg.AccessControlAddr, "/")+"/approvals/pending"); err == nil {
-		snap.Approvals = approvals
-	} else {
-		snap.Errors["approvals"] = err.Error()
-	}
-
-	if cost, err := c.fetchObject(ctx, strings.TrimSuffix(c.cfg.CostTrackerAddr, "/")+"/cost/daily?days=7"); err == nil {
-		snap.Cost = cost
-	} else {
-		snap.Errors["cost"] = err.Error()
-	}
+	c.collectJobs(ctx, &snap)
+	c.collectWorkers(ctx, &snap)
+	c.collectApprovals(ctx, &snap)
+	c.collectCost(ctx, &snap)
 
 	services := serviceNames()
 	for _, svc := range services {
@@ -104,6 +93,46 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		snap.Errors = nil
 	}
 	return snap
+}
+
+func (c *Collector) goalServiceAddr() string {
+	port := c.cfg.GoalServicePort
+	if port == 0 {
+		port = 8088
+	}
+	return fmt.Sprintf("http://localhost:%d", port)
+}
+
+func (c *Collector) collectJobs(ctx context.Context, snap *Snapshot) {
+	if jobs, err := c.fetchObject(ctx, c.goalServiceAddr()+"/stats"); err == nil {
+		snap.Jobs = jobs
+	} else {
+		snap.Errors["jobs"] = err.Error()
+	}
+}
+
+func (c *Collector) collectWorkers(ctx context.Context, snap *Snapshot) {
+	if workers, err := c.fetchArray(ctx, strings.TrimSuffix(c.cfg.WorkerManagerAddr, "/")+"/workers"); err == nil {
+		snap.Workers = normalizeWorkers(workers)
+	} else {
+		snap.Errors["workers"] = err.Error()
+	}
+}
+
+func (c *Collector) collectApprovals(ctx context.Context, snap *Snapshot) {
+	if approvals, err := c.fetchArray(ctx, strings.TrimSuffix(c.cfg.AccessControlAddr, "/")+"/approvals/pending"); err == nil {
+		snap.Approvals = approvals
+	} else {
+		snap.Errors["approvals"] = err.Error()
+	}
+}
+
+func (c *Collector) collectCost(ctx context.Context, snap *Snapshot) {
+	if cost, err := c.fetchObject(ctx, strings.TrimSuffix(c.cfg.CostTrackerAddr, "/")+"/cost/daily?days=7"); err == nil {
+		snap.Cost = cost
+	} else {
+		snap.Errors["cost"] = err.Error()
+	}
 }
 
 func (c *Collector) fetchArray(ctx context.Context, url string) ([]map[string]any, error) {
