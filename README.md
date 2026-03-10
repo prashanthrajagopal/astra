@@ -296,6 +296,34 @@ Typical namespace layout and flow: external traffic to api-gateway (mTLS between
 
 ---
 
+## MLX setup (Apple Silicon)
+
+On macOS with Apple Silicon, you can use [MLX-LM](https://github.com/ml-explore/mlx-lm) for local LLM inference with Metal acceleration instead of (or as fallback after) Ollama.
+
+1. **Install MLX-LM** (use the same Python you run from the shell):
+   ```bash
+   python -m pip install mlx-lm
+   ```
+   Verify: `python -c "import mlx; print('MLX installed')"`
+
+2. **Start the MLX server** (in a separate terminal; keep it running):
+   ```bash
+   mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8888
+   ```
+
+3. **Configure `.env`**:
+   ```bash
+   MLX_HOST=http://localhost:8888
+   MLX_MODEL=Qwen2.5-7B-Instruct-4bit
+   LLM_DEFAULT_PROVIDER=mlx
+   ```
+
+4. **Deploy** — Run `./scripts/deploy.sh` as usual. On macOS, the deploy script may auto-detect MLX and set `LLM_DEFAULT_PROVIDER=mlx` if not already set.
+
+**Other models:** Set `MLX_MODEL` to any MLX-compatible model (e.g. `mlx-community/Mistral-7B-Instruct-v0.3-4bit`). Astra talks to MLX via its OpenAI-compatible `/v1/chat/completions` endpoint. See [docs/local-deployment.md](docs/local-deployment.md) for more detail.
+
+---
+
 ## Quick start (local dev)
 
 1. **Clone and env**
