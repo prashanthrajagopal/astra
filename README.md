@@ -89,6 +89,200 @@ See [docs/PRD.md](docs/PRD.md) for the full specification.
 
 ---
 
+## Architecture
+
+The following diagrams align with [docs/PRD.md](docs/PRD.md). Each shows a different view of the system.
+
+### High-level platform
+
+Applications and SDK sit above the kernel; the kernel is minimal (actors, task graph, scheduler, message bus, state). Infrastructure is shared.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Applications (Agent Apps)                              │
+│    └── Astra SDK (agent dev framework)                  │
+│          └── Astra Kernel (microkernel)                 │
+│                ├ Actor Runtime                          │
+│                ├ Task Graph Engine                      │
+│                ├ Scheduler                              │
+│                ├ Message Bus                             │
+│                └ State Manager                           │
+├─────────────────────────────────────────────────────────┤
+│  Infrastructure                                          │
+│    Postgres (source of truth, pgvector)                 │
+│    Redis (streams, state, locks)   Memcached (caches)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Kernel vs control-plane vs workers
+
+**Control-plane:** API gateway, auth, and routing. **Kernel:** task graph, scheduling, and agent/task state. **Workers:** execution, tools, LLM, and evaluation.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  CONTROL-PLANE                                                        │
+│  api-gateway │ identity │ access-control                              │
+└────────────────────────────┬─────────────────────────────────────────┘
+                              │ JWT + OPA
+┌─────────────────────────────▼─────────────────────────────────────────┐
+│  KERNEL                                                                │
+│  agent-service │ goal-service │ planner-service │ scheduler-service   │
+│  task-service │ memory-service                                        │
+└─────────────────────────────┬─────────────────────────────────────────┘
+                              │ Redis Streams (task shards)
+┌─────────────────────────────▼─────────────────────────────────────────┐
+│  WORKERS                                                               │
+│  execution-worker │ browser-worker │ worker-manager │ tool-runtime     │
+│  llm-router │ prompt-manager │ evaluation-service                     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Request-to-result data flow
+
+End-to-end path from user request to task result: gateway → goals → planner → task-service → scheduler → Redis → workers → CompleteTask → APIs/events.
+
+```
+  User/API
+      │
+      ▼  POST /goals (JWT)
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
+│ api-gateway │────▶│ goal-service │────▶│ planner-service │
+└─────────────┘     └──────────────┘     └────────┬────────┘
+       │                    │                    │ DAG
+       │                    │                    ▼
+       │                    │             ┌─────────────┐
+       │                    │             │ task-service│ CreateGraph
+       │                    │             └──────┬──────┘
+       │                    │                    │
+       │                    │                    ▼
+       │                    │             ┌─────────────┐
+       │                    │             │  scheduler   │ ready → queued
+       │                    │             └──────┬──────┘
+       │                    │                    │ XADD
+       │                    │                    ▼
+       │                    │             ┌─────────────┐
+       │                    │             │ Redis Stream │ astra:tasks:shard:<n>
+       │                    │             └──────┬──────┘
+       │                    │                    │ XREADGROUP
+       │                    │                    ▼
+       │                    │             ┌─────────────┐     ┌──────────────┐
+       │                    │             │ execution-  │────▶│ tool-runtime │
+       │                    │             │ worker      │◀────│ llm-router   │
+       │                    │             └──────┬──────┘     └──────────────┘
+       │                    │                    │ CompleteTask / FailTask
+       │                    │                    ▼
+       │                    │             ┌─────────────┐     Postgres events
+       │                    │             │ task-service│─────────────────────▶
+       │                    │             └──────┬──────┘
+       │                    │                    │
+       ▼                    ▼                    ▼
+  GET /tasks/{id}   GET /graphs/{id}   GET /agents/{id}/goals
+```
+
+### Service topology (16 canonical services + data stores)
+
+All 16 services and their backing stores. Hot-path reads use Redis/Memcached; writes go to Postgres and emit to streams.
+
+```
+                    ┌─────────────┐
+                    │ api-gateway │
+                    └──────┬──────┘
+         ┌────────────────┼────────────────┐
+         ▼                ▼                 ▼
+  ┌────────────┐   ┌────────────┐   ┌───────────────┐
+  │  identity  │   │access-     │   │ agent-service │
+  │            │   │control     │   │ goal-service  │
+  └────────────┘   └────────────┘   │ planner-svc   │
+                                    │ scheduler-svc │
+                                    │ task-service  │
+                                    │ memory-service│
+                                    └───────┬───────┘
+                                            │
+    ┌───────────────────────────────────────┼───────────────────────────────────────┐
+    ▼                   ▼                   ▼                   ▼                   ▼
+┌────────┐         ┌────────┐         ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│Postgres│         │ Redis  │         │ Memcached   │     │execution-    │     │ llm-router  │
+│        │         │Streams │         │(LLM/embed/  │     │worker        │     │ prompt-mgr  │
+│source  │         │state   │         │ tool cache) │     │browser-worker │     │ evaluation  │
+│of truth│         │locks   │         └─────────────┘     │worker-manager │     │ tool-runtime│
+└────────┘         └────────┘                             └──────────────┘     └─────────────┘
+```
+
+### Task lifecycle (state machine)
+
+Tasks move through states; transitions are transactional and emit events. Workers drive scheduled → running → completed or failed.
+
+```
+  created ──▶ pending ──▶ queued ──▶ scheduled ──▶ running ──┬──▶ completed
+       │         │          │           │            │      │
+       │         │          │           │            └──────┴──▶ failed ──▶ (retry → queued | dead-letter)
+       │         │          │           │
+       │         │          │           └── Scheduler pushes to Redis; worker claims
+       │         │          └── All deps completed; scheduler marks ready
+       │         └── In graph, waiting for dependencies
+       └── Task created in graph
+```
+
+### Agent–worker interaction
+
+Agents (and kernel services) create and own tasks; they do not execute them. Workers pull from Redis, claim, execute, and report back.
+
+```
+  ┌─────────────────────────────────────────────────────────┐
+  │  AGENT SIDE (create & own tasks)                         │
+  │  agent-service, goal-service, planner-service,           │
+  │  scheduler-service, task-service                         │
+  │                                                          │
+  │  CreateGoal → Plan (DAG) → CreateGraph → Mark ready       │
+  │       │                                    │             │
+  │       │                                    ▼             │
+  │       │                            Push to Redis Stream  │
+  └───────┼────────────────────────────────────┼─────────────┘
+          │                                    │
+          │                                    ▼
+  ┌───────┼──────────────────────────────────────────────────┐
+  │       │     Redis Streams (astra:tasks:shard:<n>)         │
+  │       │     Consumer groups; workers XREADGROUP           │
+  └───────┼────────────────────────────────────┼──────────────┘
+          │                                    │
+          │                                    ▼
+  ┌───────┼──────────────────────────────────────────────────┐
+  │  WORKER SIDE (execute tasks)                             │
+  │  execution-worker, browser-worker                        │
+  │  (use tool-runtime, llm-router, prompt-manager)          │
+  │                                                          │
+  │  Pull → Claim (lock, status scheduled→running)          │
+  │    → Execute (LLM + tools) → CompleteTask / FailTask     │
+  └──────────────────────────────────────────────────────────┘
+```
+
+### Deployment and network (Kubernetes view)
+
+Typical namespace layout and flow: external traffic to api-gateway (mTLS between services); workers in dedicated namespace.
+
+```
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  control-plane    api-gateway, identity, access-control              │
+  │  (ingress / JWT)                                                     │
+  └──────────────────────────────┬─────────────────────────────────────┘
+                                  │ mTLS
+  ┌───────────────────────────────▼─────────────────────────────────────┐
+  │  kernel           scheduler-service, task-service, agent-service,    │
+  │                   goal-service, planner-service, memory-service      │
+  └───────────────────────────────┬─────────────────────────────────────┘
+                                  │ Redis Streams / gRPC
+  ┌───────────────────────────────▼─────────────────────────────────────┐
+  │  workers          execution-worker, browser-worker, worker-manager, │
+  │                   tool-runtime, llm-router, prompt-manager, eval-svc  │
+  └───────────────────────────────┬─────────────────────────────────────┘
+                                  │
+  ┌───────────────────────────────▼─────────────────────────────────────┐
+  │  infrastructure   Postgres, Redis, Memcached, MinIO/S3               │
+  └─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Prerequisites
 
 | Requirement | Purpose |
