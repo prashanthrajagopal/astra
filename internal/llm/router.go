@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -96,8 +97,15 @@ func (r *routerImpl) Route(taskType string, priority int) ModelTier {
 	}
 }
 
+// cachedResponse is the value stored in memcache: response text plus token counts so cache hits return real usage.
+type cachedResponse struct {
+	R   string `json:"r"`
+	In  int    `json:"in"`
+	Out int    `json:"out"`
+}
+
 // Complete returns a completion for the prompt, using cache when available.
-// Cache key: llm:resp:{model}:{sha256(prompt)}. On cache hit, usage is zero with LatencyMs=0.
+// Cache key: llm:resp:{model}:{sha256(prompt)}. On cache hit, usage includes cached TokensIn/TokensOut (LatencyMs=0).
 func (r *routerImpl) Complete(ctx context.Context, modelHint string, prompt string, options *CompletionOptions) (string, Usage, error) {
 	model := resolveModel(modelHint)
 	key := cacheKey(model, prompt)
@@ -105,6 +113,11 @@ func (r *routerImpl) Complete(ctx context.Context, modelHint string, prompt stri
 	if r.mc != nil {
 		item, err := r.mc.Get(key)
 		if err == nil {
+			var cached cachedResponse
+			if jsonErr := json.Unmarshal(item.Value, &cached); jsonErr == nil {
+				return cached.R, Usage{TokensIn: cached.In, TokensOut: cached.Out, Model: model, LatencyMs: 0}, nil
+			}
+			// backward compat: value may be raw response (no usage)
 			return string(item.Value), Usage{Model: model, LatencyMs: 0}, nil
 		}
 		if err != memcache.ErrCacheMiss {
@@ -132,7 +145,8 @@ func (r *routerImpl) Complete(ctx context.Context, modelHint string, prompt stri
 	}
 
 	if r.mc != nil && r.ttl > 0 {
-		if err := r.mc.Set(&memcache.Item{Key: key, Value: []byte(resp), Expiration: r.ttl}); err != nil {
+		payload, _ := json.Marshal(cachedResponse{R: resp, In: tokensIn, Out: tokensOut})
+		if err := r.mc.Set(&memcache.Item{Key: key, Value: payload, Expiration: r.ttl}); err != nil {
 			// non-fatal: response still valid
 			_ = err
 		}

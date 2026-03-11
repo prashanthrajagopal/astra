@@ -1,0 +1,27 @@
+{
+  "name": "my-app",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@babel/preset-env": "^7.18.2",
+    "@babel/preset-react": "^7.18.2",
+    "@babel/preset-typescript": "^7.18.2",
+    "autoprefixer": "^10.4.8",
+    "clsx": "^1.8.1",
+    "next": "14.3.1",
+    "postcss": "9.0.1",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "tailwindcss": "3.3.8",
+    "typescript": "4.6.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "tsconfig": "^5.20.0"
+  }
+}

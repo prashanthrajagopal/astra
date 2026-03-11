@@ -115,7 +115,8 @@ func main() {
 	}
 
 	fmt.Println(strings.Repeat("-", 60))
-	if completed {
+	finalStatus, _ := checkGoalStatus(*goalSvc, goalID)
+	if completed && finalStatus == "completed" {
 		fmt.Println("Goal completed successfully!")
 		fmt.Printf("\nYour e-commerce site is at: %s\n", *workspace)
 		fmt.Println("\nTo run it:")
@@ -123,10 +124,16 @@ func main() {
 		fmt.Println("  npm install  # if not already done")
 		fmt.Println("  npm run dev")
 		fmt.Println("  # Open http://localhost:3000")
+	} else if completed && finalStatus == "failed" {
+		fmt.Println("Goal FAILED. Some tasks did not complete successfully.")
+		fmt.Printf("Check the dashboard for details: %s/dashboard/\n", *gateway)
+		fmt.Printf("Workspace (partial output): %s\n", *workspace)
+		os.Exit(1)
 	} else {
 		finalizeGoal(*goalSvc, goalID)
 		fmt.Println("Goal did not complete within timeout. Check the dashboard for details.")
 		fmt.Printf("Dashboard: %s/dashboard/\n", *gateway)
+		os.Exit(1)
 	}
 }
 

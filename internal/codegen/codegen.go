@@ -51,10 +51,8 @@ var fileBlockRe = regexp.MustCompile("(?m)^```(?:(?:typescript|tsx|ts|javascript
 
 // Process handles a code_generate task: reads workspace context, calls LLM, writes files.
 func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceRuntime, llmClient llmpb.LLMRouterClient) (*Result, error) {
-	workspace := payload.Workspace
-	if workspace == "" {
-		workspace = runtime.Root
-	}
+	wsRuntime := scopedRuntime(runtime, payload.Workspace)
+	workspace := wsRuntime.Root
 
 	existingContext := gatherContext(workspace, payload.OutputFiles)
 
@@ -86,7 +84,7 @@ func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceR
 	var written []string
 	for path, content := range files {
 		input, _ := json.Marshal(tools.FileWriteRequest{Path: path, Content: content})
-		result, err := runtime.Execute(ctx, tools.ToolRequest{
+		result, err := wsRuntime.Execute(ctx, tools.ToolRequest{
 			Name:    "file_write",
 			Input:   input,
 			Timeout: 10 * time.Second,
@@ -114,8 +112,9 @@ func ProcessShellExec(ctx context.Context, payload TaskPayload, runtime *tools.W
 	}
 	cmd = cleanShellCommand(cmd)
 
+	wsRuntime := scopedRuntime(runtime, payload.Workspace)
 	input, _ := json.Marshal(map[string]string{"command": cmd})
-	result, err := runtime.Execute(ctx, tools.ToolRequest{
+	result, err := wsRuntime.Execute(ctx, tools.ToolRequest{
 		Name:    "shell_exec",
 		Input:   input,
 		Timeout: 180 * time.Second,
@@ -319,6 +318,19 @@ func parseLooseContent(content string, outputFiles []string) map[string]string {
 		return nil
 	}
 	return map[string]string{outputFiles[0]: cleaned}
+}
+
+// scopedRuntime returns a WorkspaceRuntime scoped to the payload's workspace path.
+// If the payload workspace is an absolute path, use it directly. If relative, join with runtime root.
+// If empty, use the runtime as-is.
+func scopedRuntime(runtime *tools.WorkspaceRuntime, workspace string) *tools.WorkspaceRuntime {
+	if workspace == "" {
+		return runtime
+	}
+	if filepath.IsAbs(workspace) {
+		return tools.NewWorkspaceRuntime(workspace)
+	}
+	return tools.NewWorkspaceRuntime(filepath.Join(runtime.Root, workspace))
 }
 
 // cleanShellCommand strips common LLM formatting from shell commands.
