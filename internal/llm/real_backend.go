@@ -210,6 +210,8 @@ func (b *EndpointBackend) geminiComplete(ctx context.Context, model string, prom
 	return resp.Candidates[0].Content.Parts[0].Text, resp.UsageMetadata.PromptTokenCount, resp.UsageMetadata.CandidatesTokenCount, nil
 }
 
+// ollamaComplete calls Ollama /api/generate. Token counts come from prompt_eval_count and eval_count.
+// Note: Ollama may return 0 for prompt_eval_count when the prompt is cached server-side.
 func (b *EndpointBackend) ollamaComplete(ctx context.Context, model string, prompt string) (string, int, int, error) {
 	reqBody := map[string]any{
 		"model":  model,

@@ -1,18 +1,17 @@
 import Head from 'next/head';
-import { useRouter } from 'next/router';
-import Home from '../components/Home';
+import Hero from '../components/Hero';
+import FeaturedProductsGrid from '../components/FeaturedProductsGrid';
 
-const IndexPage = () => {
-  const router = useRouter();
-
+const Home = () => {
   return (
     <div>
       <Head>
-        <title>Home Page</title>
+        <title>My App - Home</title>
       </Head>
-      <Home />
+      <Hero />
+      <FeaturedProductsGrid />
     </div>
   );
 };
 
-export default IndexPage;
+export default Home;

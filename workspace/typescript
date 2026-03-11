@@ -1,0 +1,42 @@
+import { useState } from 'react';
+
+interface CartSummaryProps {
+  cartItems: { id: string; name: string; quantity: number; price: number }[];
+}
+
+const CartSummary = ({ cartItems }: CartSummaryProps) => {
+  const [subtotal, setSubtotal] = useState(0);
+  const [tax, setTax] = useState(0);
+  const [total, setTotal] = useState(0);
+
+  useEffect(() => {
+    const subtotalCalculated = cartItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
+    const taxCalculated = subtotalCalculated * 0.08; // 8% tax
+    setSubtotal(subtotalCalculated);
+    setTax(taxCalculated);
+    setTotal(subtotalCalculated + taxCalculated);
+  }, [cartItems]);
+
+  return (
+    <div className="bg-gray-200 p-4">
+      <h2 className="font-bold">Cart Summary</h2>
+      <p>
+        Subtotal: ${subtotal.toLocaleString()}
+      </p>
+      <p>
+        Tax: ${tax.toLocaleString()}
+      </p>
+      <p>
+        Total: ${total.toLocaleString()}
+      </p>
+      <button
+        className="bg-orange-500 hover:bg-orange-700 text-white py-1 px-2 rounded"
+        onClick={() => console.log('Proceed to checkout')}
+      >
+        Proceed to Checkout
+      </button>
+    </div>
+  );
+};
+
+export default CartSummary;

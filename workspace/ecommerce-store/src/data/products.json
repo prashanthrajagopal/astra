@@ -1,0 +1,123 @@
+// src/data/products.json
+[
+  {
+    "id": "1",
+    "name": "Product 1",
+    "description": "This is product 1",
+    "price": 19.99,
+    "image": "/product1.jpg",
+    "category": "Electronics",
+    "rating": 4.5,
+    "inStock": true
+  },
+  {
+    "id": "2",
+    "name": "Product 2",
+    "description": "This is product 2",
+    "price": 9.99,
+    "image": "/product2.jpg",
+    "category": "Electronics",
+    "rating": 4.2,
+    "inStock": true
+  },
+  {
+    "id": "3",
+    "name": "Product 3",
+    "description": "This is product 3",
+    "price": 29.99,
+    "image": "/product3.jpg",
+    "category": "Electronics",
+    "rating": 4.8,
+    "inStock": false
+  },
+  {
+    "id": "4",
+    "name": "Product 4",
+    "description": "This is product 4",
+    "price": 14.99,
+    "image": "/product4.jpg",
+    "category": "Clothing",
+    "rating": 4.5,
+    "inStock": true
+  },
+  {
+    "id": "5",
+    "name": "Product 5",
+    "description": "This is product 5",
+    "price": 24.99,
+    "image": "/product5.jpg",
+    "category": "Clothing",
+    "rating": 4.2,
+    "inStock": true
+  },
+  {
+    "id": "6",
+    "name": "Product 6",
+    "description": "This is product 6",
+    "price": 39.99,
+    "image": "/product6.jpg",
+    "category": "Clothing",
+    "rating": 4.8,
+    "inStock": true
+  },
+  {
+    "id": "7",
+    "name": "Product 7",
+    "description": "This is product 7",
+    "price": 19.99,
+    "image": "/product7.jpg",
+    "category": "Home Goods",
+    "rating": 4.5,
+    "inStock": true
+  },
+  {
+    "id": "8",
+    "name": "Product 8",
+    "description": "This is product 8",
+    "price": 14.99,
+    "image": "/product8.jpg",
+    "category": "Home Goods",
+    "rating": 4.2,
+    "inStock": true
+  },
+  {
+    "id": "9",
+    "name": "Product 9",
+    "description": "This is product 9",
+    "price": 29.99,
+    "image": "/product9.jpg",
+    "category": "Home Goods",
+    "rating": 4.8,
+    "inStock": true
+  },
+  {
+    "id": "10",
+    "name": "Product 10",
+    "description": "This is product 10",
+    "price": 24.99,
+    "image": "/product10.jpg",
+    "category": "Electronics",
+    "rating": 4.5,
+    "inStock": false
+  },
+  {
+    "id": "11",
+    "name": "Product 11",
+    "description": "This is product 11",
+    "price": 19.99,
+    "image": "/product11.jpg",
+    "category": "Electronics",
+    "rating": 4.2,
+    "inStock": true
+  },
+  {
+    "id": "12",
+    "name": "Product 12",
+    "description": "This is product 12",
+    "price": 39.99,
+    "image": "/product12.jpg",
+    "category": "Electronics",
+    "rating": 4.8,
+    "inStock": true
+  }
+]

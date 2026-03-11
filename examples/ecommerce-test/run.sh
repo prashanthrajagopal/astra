@@ -15,13 +15,11 @@ fi
 echo "Services are running."
 echo ""
 
-# Clean and create workspace directory
+# Clean workspace completely to prevent npx create-next-app conflicts
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(pwd)/workspace}"
 WORKSPACE_DIR="$WORKSPACE_ROOT/ecommerce-store"
-if [[ -d "$WORKSPACE_DIR" ]]; then
-  echo "Cleaning previous workspace at $WORKSPACE_DIR"
-  rm -rf "$WORKSPACE_DIR"
-fi
+echo "Cleaning workspace at $WORKSPACE_ROOT"
+find "$WORKSPACE_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 mkdir -p "$WORKSPACE_DIR"
 export WORKSPACE_ROOT
 

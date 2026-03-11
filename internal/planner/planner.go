@@ -18,12 +18,14 @@ const planningPrompt = `You are an expert software architect. Decompose this goa
 RULES:
 - Return ONLY valid JSON, no markdown fences, no explanation.
 - Each task must have: type, description, instructions, output_files.
-- type must be one of: "shell_exec" (for running commands like npm init, npm install) or "code_generate" (for writing code files).
+- type MUST be "code_generate" for ALL tasks. Do NOT use "shell_exec". The agent writes files directly.
+- The FIRST task must generate project configuration files (package.json, tsconfig.json, next.config.js, tailwind.config.ts, postcss.config.js, etc.).
 - instructions: detailed, self-contained prompt that a code-generation LLM can follow to produce the output files.
 - output_files: list of file paths relative to the project root that this task produces.
 - dependencies: task_index depends_on depends_on_index (0-based indices into the tasks array).
-- Order tasks so that foundational work (project init, data models, shared layouts) comes before pages/features.
-- Aim for 8-15 tasks. Each task should produce 1-4 files.
+- ALL subsequent tasks must depend on task 0 (the config/setup task).
+- Order tasks so that foundational work (config, data models, shared layouts) comes before pages/features.
+- Aim for 8-12 tasks. Each task should produce 1-4 files.
 
 Schema:
 {"tasks":[{"type":"code_generate","description":"short summary","instructions":"detailed generation prompt","output_files":["src/file.ts"]}],"dependencies":[{"task_index":1,"depends_on_index":0}]}
