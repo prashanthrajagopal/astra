@@ -197,6 +197,36 @@ func handleApplyPlan(w http.ResponseWriter, r *http.Request, db *sql.DB, taskSto
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func assignApprovalToAdmin(ctx context.Context, database *sql.DB, approvalID, agentID uuid.UUID) {
+	var assignedTo string
+	err := database.QueryRowContext(ctx,
+		`SELECT user_id FROM agent_admins WHERE agent_id = $1 LIMIT 1`,
+		agentID).Scan(&assignedTo)
+	if err == nil && assignedTo != "" {
+		_, execErr := database.ExecContext(ctx,
+			`UPDATE approval_requests SET assigned_to = $1 WHERE id = $2`,
+			assignedTo, approvalID)
+		if execErr != nil {
+			slog.Warn("assignApprovalToAdmin: update assigned_to failed", "err", execErr)
+		}
+		return
+	}
+
+	err = database.QueryRowContext(ctx,
+		`SELECT om.user_id FROM org_memberships om
+		 JOIN agents a ON a.org_id = om.org_id
+		 WHERE a.id = $1 AND om.role = 'admin' LIMIT 1`,
+		agentID).Scan(&assignedTo)
+	if err == nil && assignedTo != "" {
+		_, execErr := database.ExecContext(ctx,
+			`UPDATE approval_requests SET assigned_to = $1 WHERE id = $2`,
+			assignedTo, approvalID)
+		if execErr != nil {
+			slog.Warn("assignApprovalToAdmin: update assigned_to (org admin) failed", "err", execErr)
+		}
+	}
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -379,24 +409,27 @@ func main() {
 				http.Error(w, `{"error":"serialize plan failed"}`, http.StatusInternalServerError)
 				return
 			}
-			approvalID := uuid.New()
-			_, err = database.ExecContext(ctx,
-				`INSERT INTO approval_requests (id, request_type, goal_id, graph_id, plan_payload, status)
-				 VALUES ($1, 'plan', $2, $3, $4, 'pending')`,
-				approvalID, goalID, graph.ID, planPayloadJSON)
-			if err != nil {
-				slog.Error("insert plan approval failed", "err", err)
-				http.Error(w, `{"error":"create approval request failed"}`, http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"goal_id":             goalID.String(),
-				"approval_request_id": approvalID.String(),
-				"message":             "Plan pending approval",
-				"graph_id":            graph.ID.String(),
-			})
+		approvalID := uuid.New()
+		_, err = database.ExecContext(ctx,
+			`INSERT INTO approval_requests (id, request_type, goal_id, graph_id, plan_payload, status, org_id, requested_by)
+			 VALUES ($1, 'plan', $2, $3, $4, 'pending', $5, $6)`,
+			approvalID, goalID, graph.ID, planPayloadJSON, orgVal, userVal)
+		if err != nil {
+			slog.Error("insert plan approval failed", "err", err)
+			http.Error(w, `{"error":"create approval request failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		assignApprovalToAdmin(ctx, database, approvalID, agentID)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"goal_id":             goalID.String(),
+			"approval_request_id": approvalID.String(),
+			"message":             "Plan pending approval",
+			"graph_id":            graph.ID.String(),
+		})
 			return
 		}
 

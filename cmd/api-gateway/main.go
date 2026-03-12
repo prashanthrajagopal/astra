@@ -123,10 +123,10 @@ func main() {
 			memoryStore = nil
 		}
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore)
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth)
 	orgStore := orgs.NewStore(database)
 	identityStore := identity.NewStore(database)
-	registerMultiTenantRoutes(mux, cfg, orgStore, identityStore, dashboardClient, database)
+	registerMultiTenantRoutes(mux, cfg, orgStore, identityStore, dashboardClient, database, auth)
 	mux.HandleFunc("GET /login", handleLoginPage)
 	mux.HandleFunc("POST /login", makeLoginProxyHandler(dashboardClient, cfg.IdentityAddr))
 	if cfg.ChatEnabled {
@@ -153,9 +153,10 @@ func main() {
 		http.Redirect(w, r, "/login", http.StatusFound)
 	})
 
+	handler := orgSlugInterceptor(mux, orgStore, dashboardClient, cfg.IdentityAddr)
 	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	slog.Info("api gateway started", "addr", addr)
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Addr: addr, Handler: handler}
 	if err := httpx.ListenAndServe(srv, cfg); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
@@ -417,11 +418,375 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 </body>
 </html>`
 
+var reservedPaths = map[string]bool{
+	"login": true, "logout": true, "health": true, "agents": true, "tasks": true,
+	"graphs": true, "superadmin": true, "org": true, "api": true, "dashboard": true,
+	"chat": true, "goals": true, "":true,
+}
+
+func orgSlugInterceptor(mux http.Handler, orgStore *orgs.Store, client *http.Client, identityAddr string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+		first := parts[0]
+		if first == "" || reservedPaths[first] {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		org, err := orgStore.GetOrgBySlug(ctx, first)
+		if err != nil || org == nil {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		rest := ""
+		if len(parts) > 1 {
+			rest = "/" + parts[1]
+		}
+		switch {
+		case r.Method == "POST" && rest == "/login":
+			handleOrgLoginPost(w, r, org, client, identityAddr, ctx)
+		case r.Method == "GET" && rest == "/dashboard":
+			handleOrgDashboardPage(w, org)
+		case r.Method == "GET" && (rest == "" || rest == "/"):
+			handleOrgLoginPage(w, org)
+		default:
+			mux.ServeHTTP(w, r)
+		}
+	})
+}
+
+func handleOrgLoginPage(w http.ResponseWriter, org *orgs.Organization) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	html := strings.ReplaceAll(orgLoginPageHTML, "{{ORG_NAME}}", org.Name)
+	html = strings.ReplaceAll(html, "{{ORG_SLUG}}", org.Slug)
+	html = strings.ReplaceAll(html, "{{ORG_ID}}", org.ID.String())
+	w.Write([]byte(html))
+}
+
+func handleOrgLoginPost(w http.ResponseWriter, r *http.Request, org *orgs.Organization, client *http.Client, identityAddr string, ctx context.Context) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+	var loginReq map[string]interface{}
+	json.Unmarshal(body, &loginReq)
+	loginReq["org_id"] = org.ID.String()
+	enriched, _ := json.Marshal(loginReq)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(identityAddr, "/")+"/users/login", bytes.NewReader(enriched))
+	if err != nil {
+		http.Error(w, `{"error":"request build failed"}`, http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"identity service unavailable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func handleOrgDashboardPage(w http.ResponseWriter, org *orgs.Organization) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	html := strings.ReplaceAll(orgDashboardHTML, "{{ORG_NAME}}", org.Name)
+	html = strings.ReplaceAll(html, "{{ORG_SLUG}}", org.Slug)
+	html = strings.ReplaceAll(html, "{{ORG_ID}}", org.ID.String())
+	w.Write([]byte(html))
+}
+
+func makeOrgDashboardHandler(orgStore *orgs.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		org, err := orgStore.GetOrgBySlug(ctx, slug)
+		if err != nil || org == nil {
+			http.Error(w, "Organization not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		html := strings.ReplaceAll(orgDashboardHTML, "{{ORG_NAME}}", org.Name)
+		html = strings.ReplaceAll(html, "{{ORG_SLUG}}", org.Slug)
+		html = strings.ReplaceAll(html, "{{ORG_ID}}", org.ID.String())
+		w.Write([]byte(html))
+	}
+}
+
+const orgDashboardHTML = `<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{{ORG_NAME}} — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#242736;--border:#2e3348;
+  --text:#e4e6f0;--text2:#9399b2;--primary:#6c8aff;--primary-hover:#8ba3ff;
+  --error:#f87171;--success:#34d399;--warn:#fbbf24}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh}
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;background:var(--surface);border-bottom:1px solid var(--border)}
+.hdr h1{font-size:1.25rem;font-weight:700}.hdr h1 span{color:var(--primary)}
+.badge{display:inline-block;background:rgba(108,138,255,.15);border:1px solid rgba(108,138,255,.3);border-radius:6px;padding:2px 10px;font-size:.75rem;color:var(--primary);margin-left:8px;vertical-align:middle}
+.btn{padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:.8125rem;font-weight:600;cursor:pointer;transition:background .15s}
+.btn:hover{background:var(--primary-hover)}.btn-sm{padding:6px 12px;font-size:.75rem}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text2)}.btn-ghost:hover{background:var(--surface2);color:var(--text)}
+.nav{display:flex;gap:0;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border)}
+.nav button{padding:12px 20px;background:none;border:none;color:var(--text2);font-size:.875rem;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.nav button:hover{color:var(--text)}.nav button.active{color:var(--primary);border-bottom-color:var(--primary)}
+.content{padding:24px;max-width:1200px;margin:0 auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
+.card .label{font-size:.75rem;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.card .value{font-size:1.75rem;font-weight:700}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.panel-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.panel-hdr h2{font-size:1rem;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:.8125rem}
+th{text-align:left;color:var(--text2);font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid rgba(46,51,72,.5)}
+tr:hover td{background:rgba(108,138,255,.03)}
+.st{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.6875rem;font-weight:600;text-transform:uppercase}
+.st-active,.st-running{background:rgba(52,211,153,.15);color:var(--success)}
+.st-idle,.st-stopped,.st-unknown{background:rgba(147,153,178,.15);color:var(--text2)}
+.st-error{background:rgba(248,113,113,.15);color:var(--error)}
+.empty{text-align:center;padding:40px;color:var(--text2);font-size:.875rem}
+.mo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+.mo.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:100%;max-width:440px}
+.modal h3{font-size:1.125rem;font-weight:600;margin-bottom:20px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:.8125rem;font-weight:500;color:var(--text2);margin-bottom:6px}
+.field input,.field select{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem;outline:none}
+.field input:focus,.field select:focus{border-color:var(--primary)}
+.mact{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+.tab{display:none}.tab.active{display:block}
+.pag{display:flex;gap:8px;justify-content:center;margin-top:16px}
+code{background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:.75rem}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div><h1><span>{{ORG_NAME}}</span> Dashboard</h1><span class="badge">{{ORG_SLUG}}</span></div>
+  <button class="btn btn-ghost" onclick="localStorage.clear();location.href='/{{ORG_SLUG}}'">Sign out</button>
+</div>
+<div class="nav" id="nav">
+  <button class="active" data-tab="overview">Overview</button>
+  <button data-tab="agents">Agents</button>
+  <button data-tab="goals">Goals</button>
+  <button data-tab="teams">Teams</button>
+  <button data-tab="members">Members</button>
+</div>
+<div class="content">
+  <div class="tab active" id="tab-overview">
+    <div class="cards">
+      <div class="card"><div class="label">Agents</div><div class="value" id="s-ag">&#8212;</div></div>
+      <div class="card"><div class="label">Teams</div><div class="value" id="s-tm">&#8212;</div></div>
+      <div class="card"><div class="label">Members</div><div class="value" id="s-mb">&#8212;</div></div>
+      <div class="card"><div class="label">Goals</div><div class="value" id="s-gl">&#8212;</div></div>
+    </div>
+  </div>
+  <div class="tab" id="tab-agents">
+    <div class="panel"><div class="panel-hdr"><h2>Agents</h2></div>
+    <table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Visibility</th><th>ID</th></tr></thead>
+    <tbody id="ag-tb"></tbody></table>
+    <div id="ag-e" class="empty" style="display:none">No agents found</div>
+    <div class="pag" id="ag-pg"></div></div>
+  </div>
+  <div class="tab" id="tab-goals">
+    <div class="panel"><div class="panel-hdr"><h2>Goals</h2></div>
+    <div class="empty">Org-scoped goal listing coming soon.<br/>Use the <a href="/superadmin/dashboard/" style="color:var(--primary)">super-admin dashboard</a> for goal management.</div></div>
+  </div>
+  <div class="tab" id="tab-teams">
+    <div class="panel"><div class="panel-hdr"><h2>Teams</h2><button class="btn btn-sm" onclick="openM('tm-mo')">Create Team</button></div>
+    <table><thead><tr><th>Name</th><th>Slug</th><th>Description</th><th>Created</th></tr></thead>
+    <tbody id="tm-tb"></tbody></table>
+    <div id="tm-e" class="empty" style="display:none">No teams yet</div></div>
+  </div>
+  <div class="tab" id="tab-members">
+    <div class="panel"><div class="panel-hdr"><h2>Members</h2><button class="btn btn-sm" onclick="openM('mb-mo')">Invite Member</button></div>
+    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th></tr></thead>
+    <tbody id="mb-tb"></tbody></table>
+    <div id="mb-e" class="empty" style="display:none">No members yet</div></div>
+  </div>
+</div>
+<div class="mo" id="tm-mo"><div class="modal"><h3>Create Team</h3>
+  <div class="field"><label>Name</label><input id="tf-n" placeholder="Engineering"/></div>
+  <div class="field"><label>Slug</label><input id="tf-s" placeholder="engineering"/></div>
+  <div class="mact"><button class="btn btn-ghost" onclick="closeM('tm-mo')">Cancel</button><button class="btn" onclick="mkTeam()">Create</button></div>
+</div></div>
+<div class="mo" id="mb-mo"><div class="modal"><h3>Invite Member</h3>
+  <div class="field"><label>Name</label><input id="mf-n" placeholder="Jane Doe"/></div>
+  <div class="field"><label>Email</label><input id="mf-e" type="email" placeholder="jane@company.com"/></div>
+  <div class="field"><label>Password</label><input id="mf-p" type="password" placeholder="Temporary password"/></div>
+  <div class="field"><label>Role</label><select id="mf-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
+  <div class="mact"><button class="btn btn-ghost" onclick="closeM('mb-mo')">Cancel</button><button class="btn" onclick="mkMember()">Invite</button></div>
+</div></div>
+<script>
+(function(){
+var OID='{{ORG_ID}}',SLG='{{ORG_SLUG}}',tok=localStorage.getItem('astra_token');
+if(!tok){location.href='/'+SLG;return}
+function authFetch(u,o){o=o||{};o.headers=Object.assign({'Authorization':'Bearer '+tok,'Content-Type':'application/json'},o.headers||{});
+  return fetch(u,o).then(function(r){if(r.status===401){localStorage.clear();location.href='/'+SLG;throw new Error('unauthorized')}return r.json()})}
+function $(id){return document.getElementById(id)}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+document.getElementById('nav').onclick=function(e){if(e.target.tagName!=='BUTTON')return;
+  document.querySelectorAll('.nav button').forEach(function(b){b.classList.remove('active')});
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});
+  e.target.classList.add('active');var t=$('tab-'+e.target.dataset.tab);if(t)t.classList.add('active');
+  var d=e.target.dataset.tab;if(d==='agents')ldAg();if(d==='teams')ldTm();if(d==='members')ldMb()};
+window.openM=function(id){$(id).classList.add('open')};
+window.closeM=function(id){$(id).classList.remove('open')};
+function ldOv(){
+  authFetch('/agents').then(function(d){$('s-ag').textContent=(d.agents||[]).length}).catch(function(){$('s-ag').textContent='?'});
+  authFetch('/org/api/teams?org_id='+OID).then(function(d){$('s-tm').textContent=(d.teams||[]).length}).catch(function(){$('s-tm').textContent='?'});
+  authFetch('/org/api/members?org_id='+OID).then(function(d){$('s-mb').textContent=(d.members||[]).length}).catch(function(){$('s-mb').textContent='?'});
+  $('s-gl').textContent='\u2014';
+}ldOv();
+var agPg=0,agSz=20;
+window.ldAg=function(){authFetch('/agents').then(function(d){
+  var rw=d.agents||[],tb=$('ag-tb'),em=$('ag-e');tb.innerHTML='';
+  if(!rw.length){em.style.display='block';return}em.style.display='none';
+  var st=agPg*agSz,pg=rw.slice(st,st+agSz);
+  pg.forEach(function(a){var tr=document.createElement('tr');
+    tr.innerHTML='<td>'+esc(a.name||'\u2014')+'</td><td>'+esc(a.actor_type||'\u2014')+'</td><td><span class="st st-'+(a.status||'unknown')+'">'+esc(a.status||'unknown')+'</span></td><td>'+esc(a.visibility||'\u2014')+'</td><td style="font-family:monospace;font-size:.75rem;color:var(--text2)">'+esc((a.id||'').substring(0,8))+'</td>';
+    tb.appendChild(tr)});
+  var p=$('ag-pg'),pages=Math.ceil(rw.length/agSz);p.innerHTML='';
+  for(var i=0;i<pages;i++){var b=document.createElement('button');b.className='btn btn-sm'+(i===agPg?'':' btn-ghost');b.textContent=i+1;b.dataset.p=i;
+    b.onclick=function(){agPg=+this.dataset.p;ldAg()};p.appendChild(b)}
+}).catch(function(){})};
+window.ldTm=function(){authFetch('/org/api/teams?org_id='+OID).then(function(d){
+  var rw=d.teams||[],tb=$('tm-tb'),em=$('tm-e');tb.innerHTML='';
+  if(!rw.length){em.style.display='block';return}em.style.display='none';
+  rw.forEach(function(t){var tr=document.createElement('tr');
+    tr.innerHTML='<td>'+esc(t.name)+'</td><td><code>'+esc(t.slug)+'</code></td><td>'+esc(t.description||'\u2014')+'</td><td>'+new Date(t.created_at).toLocaleDateString()+'</td>';
+    tb.appendChild(tr)});
+}).catch(function(){})};
+window.mkTeam=function(){var n=$('tf-n').value,s=$('tf-s').value;
+  if(!n||!s)return alert('Name and slug required');
+  authFetch('/org/api/teams?org_id='+OID,{method:'POST',body:JSON.stringify({name:n,slug:s})}).then(function(){
+    closeM('tm-mo');$('tf-n').value='';$('tf-s').value='';ldTm();ldOv()}).catch(function(e){alert('Error: '+e.message)})};
+window.ldMb=function(){authFetch('/org/api/members?org_id='+OID).then(function(d){
+  var rw=d.members||[],tb=$('mb-tb'),em=$('mb-e');tb.innerHTML='';
+  if(!rw.length){em.style.display='block';return}em.style.display='none';
+  rw.forEach(function(m){var tr=document.createElement('tr');
+    tr.innerHTML='<td>'+esc(m.name)+'</td><td>'+esc(m.email)+'</td><td><span class="badge">'+esc(m.role)+'</span></td><td>'+new Date(m.created_at).toLocaleDateString()+'</td>';
+    tb.appendChild(tr)});
+}).catch(function(){})};
+window.mkMember=function(){var n=$('mf-n').value,e=$('mf-e').value,p=$('mf-p').value,r=$('mf-r').value;
+  if(!n||!e||!p)return alert('All fields required');
+  authFetch('/org/api/members?org_id='+OID,{method:'POST',body:JSON.stringify({name:n,email:e,password:p,role:r})}).then(function(){
+    closeM('mb-mo');$('mf-n').value='';$('mf-e').value='';$('mf-p').value='';ldMb();ldOv()}).catch(function(er){alert('Error: '+er.message)})};
+})();
+</script>
+</body>
+</html>`
+
+const orgLoginPageHTML = `<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{{ORG_NAME}} — Astra</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#242736;--border:#2e3348;
+  --text:#e4e6f0;--text2:#9399b2;--primary:#6c8aff;--primary-hover:#8ba3ff;
+  --error:#f87171;--success:#34d399;
+}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  padding:48px 40px;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.logo{font-size:1.75rem;font-weight:700;text-align:center;margin-bottom:4px;letter-spacing:-.02em}
+.logo span{color:var(--primary)}
+.org-name{text-align:center;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:4px}
+.subtitle{text-align:center;color:var(--text2);font-size:.875rem;margin-bottom:32px}
+.field{margin-bottom:20px}
+.field label{display:block;font-size:.8125rem;font-weight:500;color:var(--text2);margin-bottom:6px}
+.field input{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:.9375rem;outline:none;transition:border .15s}
+.field input:focus{border-color:var(--primary)}
+.field input::placeholder{color:var(--text2);opacity:.6}
+.btn{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:8px;
+  font-size:.9375rem;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
+.btn:hover{background:var(--primary-hover)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.msg{margin-top:16px;padding:10px 14px;border-radius:8px;font-size:.8125rem;display:none}
+.msg.error{display:block;background:rgba(248,113,113,.1);border:1px solid var(--error);color:var(--error)}
+.msg.success{display:block;background:rgba(52,211,153,.1);border:1px solid var(--success);color:var(--success)}
+.links{margin-top:24px;text-align:center;font-size:.8125rem;color:var(--text2)}
+.links a{color:var(--primary);text-decoration:none}
+.links a:hover{text-decoration:underline}
+.org-badge-top{display:inline-block;background:rgba(108,138,255,.15);border:1px solid rgba(108,138,255,.3);
+  border-radius:6px;padding:2px 10px;font-size:.75rem;color:var(--primary);margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="logo"><span>Astra</span></div>
+  <div class="org-name">{{ORG_NAME}}</div>
+  <div class="subtitle">Sign in to your organization</div>
+  <form id="login-form" autocomplete="on">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" placeholder="you@company.com" required autofocus/>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" placeholder="Password" required/>
+    </div>
+    <button class="btn" type="submit" id="btn-login">Sign in</button>
+  </form>
+  <div id="msg" class="msg"></div>
+  <div class="links">
+    <a href="/login">Platform login</a>
+  </div>
+</div>
+<script>
+(function(){
+  var form=document.getElementById('login-form');
+  var msg=document.getElementById('msg');
+  var btn=document.getElementById('btn-login');
+  var orgSlug='{{ORG_SLUG}}';
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    btn.disabled=true;btn.textContent='Signing in...';
+    msg.className='msg';msg.style.display='none';
+    var body=JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value});
+    fetch('/'+orgSlug+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:body})
+      .then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})})
+      .then(function(res){
+        if(!res.ok){
+          msg.className='msg error';msg.textContent=res.data.error||'Login failed';msg.style.display='block';
+          btn.disabled=false;btn.textContent='Sign in';return;
+        }
+        var d=res.data;
+        localStorage.setItem('astra_token',d.token||'');
+        localStorage.setItem('astra_user',JSON.stringify(d.user||{}));
+        if(d.org) localStorage.setItem('astra_org',JSON.stringify(d.org));
+        msg.className='msg success';msg.textContent='Welcome, '+(d.user&&d.user.name||'User')+'!';msg.style.display='block';
+        setTimeout(function(){ window.location.href='/'+orgSlug+'/dashboard'; },600);
+      })
+      .catch(function(err){
+        msg.className='msg error';msg.textContent='Network error: '+err.message;msg.style.display='block';
+        btn.disabled=false;btn.textContent='Sign in';
+      });
+  });
+})();
+</script>
+</body>
+</html>`
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -432,7 +797,7 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 	mux.Handle("GET /superadmin/dashboard", http.RedirectHandler("/superadmin/dashboard/", http.StatusMovedPermanently))
 	mux.Handle("GET /dashboard/", http.RedirectHandler("/superadmin/dashboard/", http.StatusMovedPermanently))
 	mux.Handle("GET /dashboard", http.RedirectHandler("/superadmin/dashboard/", http.StatusMovedPermanently))
-	mux.HandleFunc("GET /superadmin/api/dashboard/snapshot", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/dashboard/snapshot", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		defer cancel()
 		snap := collector.Collect(ctx)
@@ -458,26 +823,26 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(snap)
-	})
-	mux.HandleFunc("GET /superadmin/api/dashboard/approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /superadmin/api/dashboard/approvals/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleGetApprovalProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"))
-	})
-	mux.HandleFunc("POST /superadmin/api/dashboard/approvals/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /superadmin/api/dashboard/approvals/{id}/approve", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "approve")
-	})
-	mux.HandleFunc("POST /superadmin/api/dashboard/approvals/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /superadmin/api/dashboard/approvals/{id}/reject", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "deny")
-	})
-	mux.HandleFunc("GET /superadmin/api/dashboard/settings", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /superadmin/api/dashboard/settings", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		autoApprove := os.Getenv("AUTO_APPROVE_PLANS") == "true"
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]bool{"auto_approve_plans": autoApprove})
-	})
+	})))
 	goalServiceBase := fmt.Sprintf("http://localhost:%d", cfg.GoalServicePort)
 	if cfg.GoalServicePort == 0 {
 		goalServiceBase = "http://localhost:8088"
 	}
-	mux.HandleFunc("GET /superadmin/api/dashboard/goals/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/dashboard/goals/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if strings.TrimSpace(id) == "" {
 			http.Error(w, "goal id required", http.StatusBadRequest)
@@ -503,8 +868,8 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 			return
 		}
 		io.Copy(w, resp.Body)
-	})
-	mux.HandleFunc("POST /superadmin/api/dashboard/goals/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /superadmin/api/dashboard/goals/{id}/cancel", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if strings.TrimSpace(id) == "" {
 			http.Error(w, "goal id required", http.StatusBadRequest)
@@ -513,12 +878,10 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		// Cancel all non-terminal tasks for this goal
 		_, _ = database.ExecContext(ctx,
 			`UPDATE tasks SET status = 'failed', result = '{"cancelled":true}'::jsonb, updated_at = now()
 			 WHERE goal_id = $1::uuid AND status NOT IN ('completed', 'failed')`, id)
 
-		// Cancel the goal itself
 		result, err := database.ExecContext(ctx,
 			`UPDATE goals SET status = 'failed' WHERE id = $1::uuid AND status NOT IN ('completed', 'failed')`, id)
 		if err != nil {
@@ -531,14 +894,13 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 			http.Error(w, "goal not found or already terminal", http.StatusConflict)
 			return
 		}
-		// Event for audit
 		_, _ = database.ExecContext(ctx,
 			`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ('GoalCancelled', $1::uuid, jsonb_build_object('goal_id', $1::uuid, 'cancelled', true), now())`, id)
 
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
-	})
-	mux.HandleFunc("POST /superadmin/api/dashboard/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /superadmin/api/dashboard/tasks/{id}/cancel", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
 			http.Error(w, "task id required", http.StatusBadRequest)
@@ -563,23 +925,23 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 			`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ('TaskCancelled', $1::uuid, '{"cancelled":true}'::jsonb, now())`, id)
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
-	})
+	})))
 	if store != nil {
-		mux.HandleFunc("PATCH /superadmin/api/dashboard/agents/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("PATCH /superadmin/api/dashboard/agents/{id}/status", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			handleDashboardAgentStatus(w, r, store)
-		})
-		mux.HandleFunc("DELETE /superadmin/api/dashboard/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
+		})))
+		mux.Handle("DELETE /superadmin/api/dashboard/agents/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			handleDashboardAgentDelete(w, r, store)
-		})
+		})))
 	}
 	if chatStore != nil {
-		mux.HandleFunc("GET /superadmin/api/dashboard/chat/agents", handleDashboardChatAgents(chatStore))
-		mux.HandleFunc("GET /superadmin/api/dashboard/chat/sessions", handleDashboardChatListSessions(chatStore))
-		mux.HandleFunc("POST /superadmin/api/dashboard/chat/sessions", handleDashboardChatCreateSession(chatStore))
-		mux.HandleFunc("GET /superadmin/api/dashboard/chat/sessions/{id}", handleDashboardChatGetSession(chatStore))
-		mux.HandleFunc("GET /superadmin/api/dashboard/chat/sessions/{id}/messages", handleDashboardChatGetMessages(chatStore))
+		mux.Handle("GET /superadmin/api/dashboard/chat/agents", auth.protect(handleDashboardChatAgents(chatStore)))
+		mux.Handle("GET /superadmin/api/dashboard/chat/sessions", auth.protect(handleDashboardChatListSessions(chatStore)))
+		mux.Handle("POST /superadmin/api/dashboard/chat/sessions", auth.protect(handleDashboardChatCreateSession(chatStore)))
+		mux.Handle("GET /superadmin/api/dashboard/chat/sessions/{id}", auth.protect(handleDashboardChatGetSession(chatStore)))
+		mux.Handle("GET /superadmin/api/dashboard/chat/sessions/{id}/messages", auth.protect(handleDashboardChatGetMessages(chatStore)))
 		goalServiceAddr := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
-		mux.HandleFunc("POST /superadmin/api/dashboard/chat/sessions/{id}/messages", handleDashboardChatAppendMessage(chatStore, goalServiceAddr, database, llmBackend, memStore))
+		mux.Handle("POST /superadmin/api/dashboard/chat/sessions/{id}/messages", auth.protect(handleDashboardChatAppendMessage(chatStore, goalServiceAddr, database, llmBackend, memStore)))
 	}
 }
 
@@ -1373,12 +1735,12 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 // Multi-Tenant Routes
 // ---------------------------------------------------------------------------
 
-func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore *orgs.Store, identityStore *identity.Store, client *http.Client, database *sql.DB) {
+func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore *orgs.Store, identityStore *identity.Store, client *http.Client, database *sql.DB, auth *authMiddleware) {
 	identityAddr := strings.TrimSuffix(cfg.IdentityAddr, "/")
 
 	// --- Super-Admin Org Routes ---
 
-	mux.HandleFunc("GET /superadmin/api/orgs", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit, offset := parsePagination(r)
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -1398,9 +1760,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]any{"orgs": items, "total": total})
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/orgs", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name string `json:"name"`
 			Slug string `json:"slug"`
@@ -1423,9 +1785,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 			"id": org.ID.String(), "name": org.Name, "slug": org.Slug,
 			"status": org.Status, "created_at": org.CreatedAt, "updated_at": org.UpdatedAt,
 		})
-	})
+	})))
 
-	mux.HandleFunc("GET /superadmin/api/orgs/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/orgs/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid org id", http.StatusBadRequest)
@@ -1449,9 +1811,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 			"status": org.Status, "config": json.RawMessage(org.Config),
 			"created_at": org.CreatedAt, "updated_at": org.UpdatedAt,
 		})
-	})
+	})))
 
-	mux.HandleFunc("PATCH /superadmin/api/orgs/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PATCH /superadmin/api/orgs/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid org id", http.StatusBadRequest)
@@ -1475,9 +1837,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /superadmin/api/orgs/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /superadmin/api/orgs/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid org id", http.StatusBadRequest)
@@ -1492,9 +1854,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/orgs/{id}/admins", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/orgs/{id}/admins", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid org id", http.StatusBadRequest)
@@ -1522,9 +1884,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /superadmin/api/orgs/{id}/admins/{uid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /superadmin/api/orgs/{id}/admins/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid org id", http.StatusBadRequest)
@@ -1544,33 +1906,33 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
 	// --- Super-Admin User Routes (proxy to identity service) ---
 
-	mux.HandleFunc("GET /superadmin/api/users", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/users", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyToIdentity(w, r, client, identityAddr, http.MethodGet, "/users")
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/users", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/users", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyToIdentity(w, r, client, identityAddr, http.MethodPost, "/users")
-	})
+	})))
 
-	mux.HandleFunc("GET /superadmin/api/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/users/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyToIdentity(w, r, client, identityAddr, http.MethodGet, "/users/"+r.PathValue("id"))
-	})
+	})))
 
-	mux.HandleFunc("PATCH /superadmin/api/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PATCH /superadmin/api/users/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyToIdentity(w, r, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"))
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/users/{id}/reset-password", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/users/{id}/reset-password", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyToIdentity(w, r, client, identityAddr, http.MethodPost, "/users/"+r.PathValue("id")+"/reset-password")
-	})
+	})))
 
 	// --- Super-Admin User-Org Management ---
 
-	mux.HandleFunc("GET /superadmin/api/users/{id}/orgs", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/api/users/{id}/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid user id", http.StatusBadRequest)
@@ -1593,9 +1955,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]any{"memberships": items})
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/users/{id}/orgs", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/users/{id}/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid user id", http.StatusBadRequest)
@@ -1624,9 +1986,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("PATCH /superadmin/api/users/{id}/orgs/{oid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PATCH /superadmin/api/users/{id}/orgs/{oid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid user id", http.StatusBadRequest)
@@ -1653,9 +2015,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /superadmin/api/users/{id}/orgs/{oid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /superadmin/api/users/{id}/orgs/{oid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid user id", http.StatusBadRequest)
@@ -1675,21 +2037,21 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/users/{id}/suspend", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/users/{id}/suspend", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := json.Marshal(map[string]string{"status": "suspended"})
 		proxyToIdentityWithBody(w, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"), body, r.Context())
-	})
+	})))
 
-	mux.HandleFunc("POST /superadmin/api/users/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /superadmin/api/users/{id}/activate", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := json.Marshal(map[string]string{"status": "active"})
 		proxyToIdentityWithBody(w, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"), body, r.Context())
-	})
+	})))
 
 	// --- Org-Level Routes ---
 
-	mux.HandleFunc("GET /org/api/teams", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /org/api/teams", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1713,9 +2075,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]any{"teams": items})
-	})
+	})))
 
-	mux.HandleFunc("POST /org/api/teams", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /org/api/teams", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1744,9 +2106,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 			"name": team.Name, "slug": team.Slug,
 			"description": team.Description, "created_at": team.CreatedAt,
 		})
-	})
+	})))
 
-	mux.HandleFunc("PATCH /org/api/teams/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PATCH /org/api/teams/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid team id", http.StatusBadRequest)
@@ -1770,9 +2132,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /org/api/teams/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /org/api/teams/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid team id", http.StatusBadRequest)
@@ -1787,9 +2149,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("POST /org/api/teams/{id}/members", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /org/api/teams/{id}/members", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		teamID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid team id", http.StatusBadRequest)
@@ -1821,9 +2183,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /org/api/teams/{id}/members/{uid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /org/api/teams/{id}/members/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		teamID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid team id", http.StatusBadRequest)
@@ -1843,9 +2205,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("GET /org/api/members", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /org/api/members", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1869,9 +2231,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]any{"members": items})
-	})
+	})))
 
-	mux.HandleFunc("POST /org/api/members", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /org/api/members", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1909,9 +2271,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 			"user_id": user.ID.String(), "email": user.Email,
 			"name": user.Name, "role": req.Role,
 		})
-	})
+	})))
 
-	mux.HandleFunc("PATCH /org/api/members/{uid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PATCH /org/api/members/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1938,9 +2300,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /org/api/members/{uid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /org/api/members/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1960,11 +2322,11 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
 	// --- Org-Level Agent Creation ---
 
-	mux.HandleFunc("POST /org/api/agents", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /org/api/agents", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := extractOrgID(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2055,11 +2417,11 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 			"owner_id":   ownerUUID.String(),
 			"visibility": visibility,
 		})
-	})
+	})))
 
 	// --- Agent Collaborator Routes ---
 
-	mux.HandleFunc("POST /org/api/agents/{id}/collaborators", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /org/api/agents/{id}/collaborators", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid agent id", http.StatusBadRequest)
@@ -2110,9 +2472,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 			"collaborator_type": req.CollaboratorType, "collaborator_id": collabID.String(),
 			"permission": perm,
 		})
-	})
+	})))
 
-	mux.HandleFunc("GET /org/api/agents/{id}/collaborators", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /org/api/agents/{id}/collaborators", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid agent id", http.StatusBadRequest)
@@ -2153,9 +2515,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]any{"collaborators": items})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /org/api/agents/{id}/collaborators/{cid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /org/api/agents/{id}/collaborators/{cid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid agent id", http.StatusBadRequest)
@@ -2183,11 +2545,11 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 
 	// --- Agent Admin Routes ---
 
-	mux.HandleFunc("POST /org/api/agents/{id}/admins", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /org/api/agents/{id}/admins", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid agent id", http.StatusBadRequest)
@@ -2221,9 +2583,9 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		json.NewEncoder(w).Encode(map[string]any{
 			"id": newID.String(), "agent_id": agentID.String(), "user_id": adminUserID.String(),
 		})
-	})
+	})))
 
-	mux.HandleFunc("DELETE /org/api/agents/{id}/admins/{uid}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("DELETE /org/api/agents/{id}/admins/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentID, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			http.Error(w, "invalid agent id", http.StatusBadRequest)
@@ -2251,7 +2613,7 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	})))
 }
 
 func proxyToIdentity(w http.ResponseWriter, r *http.Request, client *http.Client, identityAddr, method, path string) {

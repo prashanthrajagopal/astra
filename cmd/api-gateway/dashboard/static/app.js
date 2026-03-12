@@ -30,6 +30,14 @@ function setText(id, val) {
   if (el) el.textContent = val;
 }
 
+function authFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  var token = localStorage.getItem('astra_token');
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  return fetch(url, opts);
+}
+
 // ─── Summary cards ──────────────────────────────────────────────────
 
 function renderSummary(data) {
@@ -493,7 +501,7 @@ function submitApprovalAction(id, action) {
   if (!id || approvalActionInFlight) return;
   approvalActionInFlight = true;
   setStatus('Submitting ' + action + ' for ' + id, false);
-  fetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(id) + '/' + action, {
+  authFetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(id) + '/' + action, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decided_by: 'dashboard-ui' })
@@ -511,7 +519,7 @@ function fetchSnapshot() {
   if (inFlight) return;
   inFlight = true;
   setStatus('Refreshing', false);
-  return fetch('/superadmin/api/dashboard/snapshot', { cache: 'no-store' })
+  return authFetch('/superadmin/api/dashboard/snapshot', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -563,7 +571,7 @@ function openGoalModal(goalId) {
   modal.dataset.goalId = goalId;
   modal.hidden = false;
   body.innerHTML = '<p class="goal-modal-loading">Loading…</p>';
-  fetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -661,7 +669,7 @@ function openApprovalModal(approvalId) {
   currentApprovalId = approvalId;
   modal.hidden = false;
   body.innerHTML = '<p class="approval-modal-loading">Loading…</p>';
-  fetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(approvalId), { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(approvalId), { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -728,7 +736,7 @@ var currentChatSessionId = null;
 var chatSessionsList = [];
 
 function loadSettings() {
-  fetch('/superadmin/api/dashboard/settings', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/settings', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) return;
       return res.json();
@@ -753,7 +761,7 @@ var currentChatSessionId = null;
 var chatSessionsList = [];
 
 function fetchChatSessions() {
-  fetch('/superadmin/api/dashboard/chat/sessions', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/sessions', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -797,7 +805,7 @@ function openChatNewModal() {
   if (loadingEl) loadingEl.hidden = false;
   if (listEl) { listEl.hidden = true; listEl.innerHTML = ''; }
   if (emptyEl) emptyEl.hidden = true;
-  fetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -834,7 +842,7 @@ function closeChatNewModal() {
 
 function createChatSession(agentId, agentName) {
   closeChatNewModal();
-  fetch('/superadmin/api/dashboard/chat/sessions', {
+  authFetch('/superadmin/api/dashboard/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId, title: agentName || 'Chat' })
@@ -865,7 +873,7 @@ function selectChatSession(sessionId, agentId) {
 function fetchChatMessages(sessionId) {
   var container = document.getElementById('chat-messages');
   if (!container) return;
-  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -899,7 +907,7 @@ function sendChatMessage() {
   if (!content) return;
   input.value = '';
   input.disabled = true;
-  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: content })
@@ -923,7 +931,7 @@ var widgetAgentId = null;
 var widgetOpen = false;
 
 function initChatWidget() {
-  fetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('no agents'); })
     .then(function (d) {
       var agents = d.agents || [];
@@ -939,7 +947,7 @@ function initChatWidget() {
 
       var savedSessionId = localStorage.getItem('astra_chat_widget_session');
       if (savedSessionId) {
-        fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
+        authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
           .then(function (res) { return res.ok ? res.json() : null; })
           .then(function (session) {
             if (session && session.id) {
@@ -963,7 +971,7 @@ function initChatWidget() {
 
 function widgetCreateSession() {
   if (!widgetAgentId) return;
-  fetch('/superadmin/api/dashboard/chat/sessions', {
+  authFetch('/superadmin/api/dashboard/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: widgetAgentId, title: 'Dashboard Chat' })
@@ -999,7 +1007,7 @@ function widgetLoadMessages() {
   if (!widgetSessionId) return;
   var container = document.getElementById('chat-widget-messages');
   if (!container) return;
-  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('load failed'); })
     .then(function (d) {
       widgetRenderMessages(d.messages || []);
@@ -1053,7 +1061,7 @@ function widgetSend() {
   var sendBtn = document.getElementById('chat-widget-send');
   if (sendBtn) sendBtn.disabled = true;
 
-  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: content })
@@ -1109,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (cancelGoalBtn && cancelGoalBtn.dataset && cancelGoalBtn.dataset.goalId) {
         e.stopPropagation();
         if (!confirm('Cancel this goal and all its tasks?')) return;
-        fetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
+        authFetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
           .then(function (r) {
             if (r.ok) {
               fetchSnapshot();
@@ -1132,7 +1140,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (cancelBtn && cancelBtn.dataset && cancelBtn.dataset.taskId) {
         e.stopPropagation();
         if (!confirm('Cancel this task?')) return;
-        fetch('/superadmin/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
+        authFetch('/superadmin/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
           .then(function (r) {
             if (r.ok) {
               cancelBtn.disabled = true;
@@ -1209,14 +1217,14 @@ document.addEventListener('DOMContentLoaded', function () {
       var agentId = btn.dataset.agentId;
       var action = (btn.dataset.action || '').toLowerCase();
       if (action === 'enable') {
-        fetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent enable failed: ' + t, true); }); });
       } else if (action === 'disable') {
-        fetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent disable failed: ' + t, true); }); });
       } else if (action === 'delete') {
         if (!confirm('Delete this agent and all its goals and tasks?')) return;
-        fetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent delete failed: ' + t, true); }); });
       }
     });
@@ -1282,7 +1290,7 @@ document.addEventListener('DOMContentLoaded', function () {
       return;
     }
     orgSaveBtn.disabled = true; orgSaveBtn.textContent = 'Creating...';
-    fetch('/superadmin/api/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,slug:slug}) })
+    authFetch('/superadmin/api/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,slug:slug}) })
       .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
       .then(function(res) {
         if (!res.ok) { showOrgError(res.data.error || 'Failed to create org'); orgSaveBtn.disabled = false; orgSaveBtn.textContent = 'Create Organization'; return; }
@@ -1290,7 +1298,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (existingUserId) {
           return addOrgAdmin(orgId, existingUserId);
         } else {
-          return fetch('/superadmin/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email:adminEmail.trim(),name:adminName.trim(),password:adminPass}) })
+          return authFetch('/superadmin/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email:adminEmail.trim(),name:adminName.trim(),password:adminPass}) })
             .then(function(r2) { return r2.json().then(function(d2) { return {ok:r2.ok,data:d2}; }); })
             .then(function(res2) {
               if (!res2.ok) { showOrgError('Org created but admin user failed: ' + (res2.data.error || '')); orgSaveBtn.disabled = false; orgSaveBtn.textContent = 'Create Organization'; return; }
@@ -1301,7 +1309,7 @@ document.addEventListener('DOMContentLoaded', function () {
       .catch(function(e) { showOrgError(e.message); orgSaveBtn.disabled = false; orgSaveBtn.textContent = 'Create Organization'; });
   });
   function addOrgAdmin(orgId, userId) {
-    return fetch('/superadmin/api/orgs/' + orgId + '/admins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId}) })
+    return authFetch('/superadmin/api/orgs/' + orgId + '/admins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId}) })
       .then(function() {
         orgModal.hidden = true;
         var btn = document.getElementById('org-modal-save');
@@ -1312,7 +1320,7 @@ document.addEventListener('DOMContentLoaded', function () {
   function populateOrgAdminDropdown() {
     if (!orgAdminSelect) return;
     while (orgAdminSelect.options.length > 1) orgAdminSelect.remove(1);
-    fetch('/superadmin/api/users?per_page=200')
+    authFetch('/superadmin/api/users?per_page=200')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         (d.users || []).forEach(function(u) {
@@ -1357,13 +1365,13 @@ document.addEventListener('DOMContentLoaded', function () {
     var selectedOrg = userOrgSelect ? userOrgSelect.value : '';
     var orgRole = (document.getElementById('user-org-role') || {}).value || 'member';
     userSaveBtn.disabled = true; userSaveBtn.textContent = 'Creating...';
-    fetch('/superadmin/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email:email,name:name,password:password,is_super_admin:isSuperAdmin}) })
+    authFetch('/superadmin/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email:email,name:name,password:password,is_super_admin:isSuperAdmin}) })
       .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
       .then(function(res) {
         if (!res.ok) { showUserError(res.data.error || 'Failed'); userSaveBtn.disabled = false; userSaveBtn.textContent = 'Create User'; return; }
         var userId = res.data.id;
         if (selectedOrg) {
-          return fetch('/superadmin/api/users/' + userId + '/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({org_id:selectedOrg,role:orgRole}) })
+          return authFetch('/superadmin/api/users/' + userId + '/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({org_id:selectedOrg,role:orgRole}) })
             .then(function() {
               userModal.hidden = true; userSaveBtn.disabled = false; userSaveBtn.textContent = 'Create User';
               loadUsers();
@@ -1377,7 +1385,7 @@ document.addEventListener('DOMContentLoaded', function () {
   function populateUserOrgDropdown() {
     if (!userOrgSelect) return;
     while (userOrgSelect.options.length > 1) userOrgSelect.remove(1);
-    fetch('/superadmin/api/orgs?limit=200&offset=0')
+    authFetch('/superadmin/api/orgs?limit=200&offset=0')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         (d.orgs || d || []).forEach(function(o) {
@@ -1413,7 +1421,7 @@ function debounce(fn, ms) {
 }
 
 function loadOrgs() {
-  fetch('/superadmin/api/orgs?limit=100&offset=0')
+  authFetch('/superadmin/api/orgs?limit=100&offset=0')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var list = d.orgs || d || [];
@@ -1454,7 +1462,7 @@ function loadOrgs() {
     if (btn) {
       e.stopPropagation();
       if (!confirm('Delete this organization and all its data?')) return;
-      fetch('/superadmin/api/orgs/' + btn.dataset.id, { method: 'DELETE' })
+      authFetch('/superadmin/api/orgs/' + btn.dataset.id, { method: 'DELETE' })
         .then(function() { loadOrgs(); });
       return;
     }
@@ -1470,7 +1478,7 @@ function openOrgDetail(orgId) {
   document.getElementById('org-detail-error').hidden = true;
   document.getElementById('org-detail-id').value = orgId;
   document.getElementById('org-detail-title').textContent = 'Loading...';
-  fetch('/superadmin/api/orgs/' + orgId)
+  authFetch('/superadmin/api/orgs/' + orgId)
     .then(function(r) { return r.json(); })
     .then(function(o) {
       document.getElementById('org-detail-title').textContent = o.name || 'Organization';
@@ -1488,7 +1496,7 @@ function loadOrgMembers(orgId) {
   var empty = document.getElementById('org-detail-members-empty');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="4" style="color:var(--md-sys-color-on-surface-variant)">Loading...</td></tr>';
-  fetch('/org/api/members?org_id=' + orgId)
+  authFetch('/org/api/members?org_id=' + orgId)
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var members = d.members || d || [];
@@ -1511,7 +1519,7 @@ function loadOrgAddUserDropdown(orgId) {
   var sel = document.getElementById('org-detail-add-user');
   if (!sel) return;
   while (sel.options.length > 1) sel.remove(1);
-  fetch('/superadmin/api/users?per_page=200')
+  authFetch('/superadmin/api/users?per_page=200')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       (d.users || []).forEach(function(u) {
@@ -1534,7 +1542,7 @@ function loadOrgAddUserDropdown(orgId) {
     var slug = document.getElementById('org-detail-slug').value.trim();
     var status = document.getElementById('org-detail-status').value;
     if (!name || !slug) { var e = document.getElementById('org-detail-error'); e.textContent = 'Name and slug required'; e.hidden = false; return; }
-    fetch('/superadmin/api/orgs/' + orgId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,slug:slug,status:status}) })
+    authFetch('/superadmin/api/orgs/' + orgId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,slug:slug,status:status}) })
       .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
       .then(function(res) {
         if (!res.ok) { var e = document.getElementById('org-detail-error'); e.textContent = res.data.error || 'Update failed'; e.hidden = false; return; }
@@ -1549,10 +1557,10 @@ function loadOrgAddUserDropdown(orgId) {
     var userId = document.getElementById('org-detail-add-user').value;
     var role = document.getElementById('org-detail-add-role').value;
     if (!userId) return;
-    fetch('/superadmin/api/orgs/' + orgId + '/admins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId,role:role}) })
+    authFetch('/superadmin/api/orgs/' + orgId + '/admins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId,role:role}) })
       .then(function() {
         if (role === 'member') {
-          return fetch('/org/api/members?org_id=' + orgId, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId,role:role}) });
+          return authFetch('/org/api/members?org_id=' + orgId, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId,role:role}) });
         }
       })
       .then(function() { loadOrgMembers(orgId); document.getElementById('org-detail-add-user').value = ''; });
@@ -1564,7 +1572,7 @@ function loadOrgAddUserDropdown(orgId) {
     var orgId = btn.dataset.oid;
     var userId = btn.dataset.uid;
     if (!confirm('Remove this member from the organization?')) return;
-    fetch('/superadmin/api/users/' + userId + '/orgs/' + orgId, { method: 'DELETE' })
+    authFetch('/superadmin/api/users/' + userId + '/orgs/' + orgId, { method: 'DELETE' })
       .then(function() { loadOrgMembers(orgId); });
   });
 })();
@@ -1579,7 +1587,7 @@ function loadUsers() {
   if (q) params += '&q=' + encodeURIComponent(q);
   if (orgId) params += '&org_id=' + encodeURIComponent(orgId);
   if (status) params += '&status=' + encodeURIComponent(status);
-  fetch('/superadmin/api/users' + params)
+  authFetch('/superadmin/api/users' + params)
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var users = d.users || [];
@@ -1625,7 +1633,7 @@ function loadUsers() {
     if (btn) {
       e.stopPropagation();
       var action = btn.dataset.action;
-      fetch('/superadmin/api/users/' + btn.dataset.id + '/' + action, { method: 'POST' })
+      authFetch('/superadmin/api/users/' + btn.dataset.id + '/' + action, { method: 'POST' })
         .then(function() { loadUsers(); });
       return;
     }
@@ -1642,7 +1650,7 @@ function openUserDetail(userId) {
   document.getElementById('user-detail-pw-row').hidden = true;
   document.getElementById('user-detail-id').value = userId;
   document.getElementById('user-detail-title').textContent = 'Loading...';
-  fetch('/superadmin/api/users/' + userId)
+  authFetch('/superadmin/api/users/' + userId)
     .then(function(r) { return r.json(); })
     .then(function(u) {
       document.getElementById('user-detail-title').textContent = u.name || 'User';
@@ -1661,7 +1669,7 @@ function loadUserOrgs(userId) {
   var empty = document.getElementById('user-detail-orgs-empty');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="3" style="color:var(--md-sys-color-on-surface-variant)">Loading...</td></tr>';
-  fetch('/superadmin/api/users/' + userId + '/orgs')
+  authFetch('/superadmin/api/users/' + userId + '/orgs')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var orgs = d.memberships || d.orgs || d || [];
@@ -1684,7 +1692,7 @@ function loadUserAddOrgDropdown() {
   var sel = document.getElementById('user-detail-add-org');
   if (!sel) return;
   while (sel.options.length > 1) sel.remove(1);
-  fetch('/superadmin/api/orgs?limit=200&offset=0')
+  authFetch('/superadmin/api/orgs?limit=200&offset=0')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       (d.orgs || d || []).forEach(function(o) {
@@ -1708,7 +1716,7 @@ function loadUserAddOrgDropdown() {
     var status = document.getElementById('user-detail-status').value;
     var isSuperAdmin = document.getElementById('user-detail-superadmin').checked;
     if (!name || !email) { var e = document.getElementById('user-detail-error'); e.textContent = 'Name and email required'; e.hidden = false; return; }
-    fetch('/superadmin/api/users/' + userId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,email:email,status:status,is_super_admin:isSuperAdmin}) })
+    authFetch('/superadmin/api/users/' + userId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,email:email,status:status,is_super_admin:isSuperAdmin}) })
       .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
       .then(function(res) {
         if (!res.ok) { var e = document.getElementById('user-detail-error'); e.textContent = res.data.error || 'Update failed'; e.hidden = false; return; }
@@ -1729,7 +1737,7 @@ function loadUserAddOrgDropdown() {
     var userId = document.getElementById('user-detail-id').value;
     var pw = document.getElementById('user-detail-new-pw').value;
     if (!pw) return;
-    fetch('/superadmin/api/users/' + userId + '/reset-password', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({new_password:pw}) })
+    authFetch('/superadmin/api/users/' + userId + '/reset-password', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({new_password:pw}) })
       .then(function(r) {
         if (r.ok) { document.getElementById('user-detail-pw-row').hidden = true; alert('Password reset successfully.'); }
         else { alert('Password reset failed.'); }
@@ -1741,7 +1749,7 @@ function loadUserAddOrgDropdown() {
     var orgId = document.getElementById('user-detail-add-org').value;
     var role = document.getElementById('user-detail-add-org-role').value;
     if (!orgId) return;
-    fetch('/superadmin/api/users/' + userId + '/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({org_id:orgId,role:role}) })
+    authFetch('/superadmin/api/users/' + userId + '/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({org_id:orgId,role:role}) })
       .then(function() { loadUserOrgs(userId); document.getElementById('user-detail-add-org').value = ''; });
   });
 
@@ -1749,7 +1757,7 @@ function loadUserAddOrgDropdown() {
     var btn = e.target && e.target.closest && e.target.closest('.user-org-remove-btn');
     if (!btn) return;
     if (!confirm('Remove this user from the organization?')) return;
-    fetch('/superadmin/api/users/' + btn.dataset.uid + '/orgs/' + btn.dataset.oid, { method: 'DELETE' })
+    authFetch('/superadmin/api/users/' + btn.dataset.uid + '/orgs/' + btn.dataset.oid, { method: 'DELETE' })
       .then(function() { loadUserOrgs(btn.dataset.uid); });
   });
 })();
@@ -1757,7 +1765,7 @@ function loadUserAddOrgDropdown() {
 function fetchUserOrgsForCell(userId) {
   var cell = document.getElementById('user-orgs-' + userId);
   if (!cell) return;
-  fetch('/superadmin/api/users/' + userId + '/orgs')
+  authFetch('/superadmin/api/users/' + userId + '/orgs')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var orgs = d.memberships || d.orgs || d || [];
