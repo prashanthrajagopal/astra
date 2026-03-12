@@ -84,6 +84,21 @@ func (s *Store) GetOrg(ctx context.Context, id uuid.UUID) (*Organization, error)
 	return o, nil
 }
 
+func (s *Store) GetOrgBySlug(ctx context.Context, slug string) (*Organization, error) {
+	o := &Organization{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, slug, status, config, created_at, updated_at
+		 FROM organizations WHERE slug = $1`, slug,
+	).Scan(&o.ID, &o.Name, &o.Slug, &o.Status, &o.Config, &o.CreatedAt, &o.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("orgs.GetOrgBySlug: %w", err)
+	}
+	return o, nil
+}
+
 func (s *Store) ListOrgs(ctx context.Context, limit, offset int) ([]*Organization, int, error) {
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM organizations`).Scan(&total); err != nil {
