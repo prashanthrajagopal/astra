@@ -48,9 +48,9 @@ func (s *KernelGRPCServer) SpawnActor(ctx context.Context, req *kernel_pb.SpawnA
 	actorID := a.ID.String()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (id, name, status) VALUES ($1, $2, 'active')
+		`INSERT INTO agents (id, name, actor_type, status) VALUES ($1, $2, $3, 'active')
 		 ON CONFLICT (id) DO UPDATE SET status = 'active', updated_at = now()`,
-		actorID, name)
+		actorID, name, name)
 	if err != nil {
 		slog.Error("SpawnActor: insert agent failed", "actor_id", actorID, "err", err)
 		return nil, status.Errorf(codes.Internal, "insert agent: %v", err)
@@ -82,17 +82,17 @@ func (s *KernelGRPCServer) QueryState(ctx context.Context, req *kernel_pb.QueryS
 
 	switch entityType {
 	case "agents":
-		rows, err := s.db.QueryContext(ctx, `SELECT id, name, status FROM agents LIMIT 100`)
+		rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(actor_type, name) as actor_type, status FROM agents LIMIT 100`)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "query agents: %v", err)
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id, name, statusVal string
-			if err := rows.Scan(&id, &name, &statusVal); err != nil {
+			var id, name, actorType, statusVal string
+			if err := rows.Scan(&id, &name, &actorType, &statusVal); err != nil {
 				continue
 			}
-			b, _ := json.Marshal(map[string]string{"id": id, "name": name, "status": statusVal})
+			b, _ := json.Marshal(map[string]string{"id": id, "name": name, "actor_type": actorType, "status": statusVal})
 			results = append(results, b)
 		}
 	case "tasks":

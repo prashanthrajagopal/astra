@@ -102,7 +102,7 @@
     <h2 class="section-title">Recent Goals</h2>
     <div class="table-scroll">
     <table id="table-goals" class="data-table">
-      <thead><tr><th>ID</th><th>Agent</th><th>Goal</th><th>Status</th><th>Created</th></tr></thead>
+      <thead><tr><th>ID</th><th>Agent</th><th>Goal</th><th>Status</th><th>Created</th><th class="th-actions">Actions</th></tr></thead>
       <tbody id="tbody-goals"></tbody>
     </table>
     </div>
@@ -277,6 +277,26 @@
         <p id="chat-new-loading" class="goal-modal-loading">Loading chat-capable agents…</p>
         <div id="chat-new-agent-list" class="chat-agent-list" hidden></div>
         <p id="chat-new-empty" class="chat-empty-hint" hidden>No chat-capable agents. Set <code>chat_capable = true</code> on an agent in the database.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating chat widget -->
+  <div id="chat-widget" class="chat-widget">
+    <button id="chat-widget-toggle" class="chat-widget-toggle" aria-label="Chat">
+      <span class="chat-widget-icon">💬</span>
+      <span id="chat-widget-badge" class="chat-widget-badge" hidden>0</span>
+    </button>
+    <div id="chat-widget-panel" class="chat-widget-panel" hidden>
+      <div class="chat-widget-header">
+        <span class="chat-widget-title">Chat Assistant</span>
+        <span id="chat-widget-status" class="chat-widget-header-status"></span>
+        <button id="chat-widget-minimize" class="chat-widget-minimize" aria-label="Minimize">&minus;</button>
+      </div>
+      <div id="chat-widget-messages" class="chat-widget-messages"></div>
+      <div class="chat-widget-input-row">
+        <textarea id="chat-widget-input" class="chat-widget-input" rows="2" placeholder="Ask anything..." maxlength="65536"></textarea>
+        <button id="chat-widget-send" class="chat-widget-send" aria-label="Send">&#9654;</button>
       </div>
     </div>
   </div>
