@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	profileKeyPrefix = "agent:profile:"
-	docsKeyPrefix    = "agent:docs:"
+	profileKeyPrefix     = "agent:profile:"
+	docsKeyPrefix        = "agent:docs:"
+	chatCapableKeyPrefix = "agent:chat_capable:"
 )
 
 type DocType string

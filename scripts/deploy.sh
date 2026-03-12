@@ -268,6 +268,8 @@ sleep 1
 ./bin/api-gateway        > logs/api-gateway.log 2>&1 &
 echo $! > logs/api-gateway.pid
 
+echo "Chat WebSocket: ${CHAT_ENABLED:-false} (set CHAT_ENABLED=true to enable)"
+
 echo ""
 echo "Seeding default agents (idempotent; skips existing)..."
 # Wait for api-gateway to be ready so seed can call GET /agents (avoids duplicate agents)

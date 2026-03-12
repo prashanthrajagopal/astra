@@ -51,6 +51,10 @@ type Config struct {
 	VaultAddr             string
 	VaultToken            string
 	VaultPath             string
+	ChatEnabled           bool
+	ChatMaxMsgLength      int
+	ChatRateLimit         int
+	ChatTokenCap          int
 }
 
 func Load() (*Config, error) {
@@ -108,6 +112,10 @@ func Load() (*Config, error) {
 		VaultAddr:             getEnv("ASTRA_VAULT_ADDR", ""),
 		VaultToken:            getEnv("ASTRA_VAULT_TOKEN", ""),
 		VaultPath:             getEnv("ASTRA_VAULT_PATH", "secret/data/astra"),
+		ChatEnabled:           getEnvBool("CHAT_ENABLED", false),
+		ChatMaxMsgLength:      getEnvInt("CHAT_MAX_MSG_LENGTH", 65536),
+		ChatRateLimit:         getEnvInt("CHAT_RATE_LIMIT", 30),
+		ChatTokenCap:         getEnvInt("CHAT_TOKEN_CAP", 100000),
 	}
 
 	if cfg.VaultAddr != "" && cfg.VaultToken != "" {
@@ -142,6 +150,18 @@ func getEnvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
 	if err != nil {
 		return fallback
 	}

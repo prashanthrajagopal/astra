@@ -167,6 +167,30 @@
     </div>
   </section>
 
+  <section id="section-chat" class="dashboard-card card-chat">
+    <h2 class="section-title">Chat</h2>
+    <div class="chat-toolbar">
+      <button type="button" id="chat-new-btn" class="action-btn">New chat</button>
+      <span id="chat-status" class="chat-status"></span>
+    </div>
+    <div class="chat-layout">
+      <div class="chat-sessions-panel">
+        <h3 class="chat-panel-title">Sessions</h3>
+        <div id="chat-sessions-list" class="chat-sessions-list"></div>
+      </div>
+      <div class="chat-main-panel">
+        <div id="chat-placeholder" class="chat-placeholder">Select or create a session to chat.</div>
+        <div id="chat-view" class="chat-view" hidden>
+          <div id="chat-messages" class="chat-messages"></div>
+          <div class="chat-input-row">
+            <textarea id="chat-input" class="chat-input" rows="2" placeholder="Type a message..." maxlength="65536"></textarea>
+            <button type="button" id="chat-send-btn" class="action-btn chat-send-btn">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
     </div>
     <aside class="dashboard-sidebar">
       <section class="dashboard-card sidebar-card" id="sidebar-health">
@@ -238,6 +262,22 @@
         <button type="button" class="goal-modal-close" id="code-modal-close" aria-label="Close">&times;</button>
       </header>
       <div id="code-modal-body" class="goal-modal-body code-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- New chat modal (pick chat-capable agent) -->
+  <div id="chat-new-modal" class="goal-modal" role="dialog" aria-labelledby="chat-new-modal-title" aria-modal="true" hidden>
+    <div class="goal-modal-backdrop" id="chat-new-modal-backdrop"></div>
+    <div class="goal-modal-content">
+      <header class="goal-modal-header">
+        <h2 id="chat-new-modal-title" class="goal-modal-title">New chat</h2>
+        <button type="button" class="goal-modal-close" id="chat-new-modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div id="chat-new-modal-body" class="goal-modal-body">
+        <p id="chat-new-loading" class="goal-modal-loading">Loading chat-capable agents…</p>
+        <div id="chat-new-agent-list" class="chat-agent-list" hidden></div>
+        <p id="chat-new-empty" class="chat-empty-hint" hidden>No chat-capable agents. Set <code>chat_capable = true</code> on an agent in the database.</p>
+      </div>
     </div>
   </div>
 

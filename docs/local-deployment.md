@@ -88,6 +88,20 @@ MLX_MODEL=mlx-community/Mistral-7B-Instruct-v0.3-4bit
 
 The model name is passed directly to the MLX-LM server.
 
+## Chat (chat agents)
+
+When `CHAT_ENABLED=true`, the api-gateway exposes:
+
+- **REST** `POST /api/dashboard/chat/sessions` — create chat sessions
+- **WebSocket** `/chat/ws` — connect with `?session_id=<uuid>&token=<jwt>`
+
+Set in `.env`:
+
+- `CHAT_ENABLED` — enable chat WebSocket and sessions API (default `false`)
+- `CHAT_MAX_MSG_LENGTH` — max message length in bytes (default `65536`)
+- `CHAT_RATE_LIMIT` — messages per minute per session (default `30`)
+- `CHAT_TOKEN_CAP` — max tokens per session (default `100000`)
+
 ## Workspace and code generation
 
 Execution workers can generate code via LLM and write files to disk. Configure in `.env`:

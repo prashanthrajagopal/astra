@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -15,7 +16,10 @@ import (
 	"time"
 
 	"astra/internal/agentdocs"
+	"astra/internal/chat"
 	"astra/internal/dashboard"
+	"astra/internal/llm"
+	"astra/internal/memory"
 	"astra/pkg/config"
 	"astra/pkg/db"
 	astraGrpc "astra/pkg/grpc"
@@ -87,6 +91,8 @@ func main() {
 	defer rdb.Close()
 
 	docStore = agentdocs.NewStore(database, rdb)
+	chatStore := chat.NewStore(database)
+	llmBackend := llm.NewEndpointBackendFromEnv()
 
 	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr)
 	if err != nil {
@@ -106,7 +112,22 @@ func main() {
 		slog.Error("failed to initialize dashboard action client", "err", err)
 		os.Exit(1)
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore)
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore)
+	if cfg.ChatEnabled {
+		var memoryStore *memory.Store
+		memoryStore, err = initMemoryStore(database)
+		if err != nil {
+			slog.Warn("memory store init failed, chat will run without memory context", "err", err)
+			memoryStore = nil
+		}
+		wsHandler := chat.NewWebSocketHandler(chatStore, database, llmBackend, &chat.HandlerConfig{
+			MaxMsgLength: cfg.ChatMaxMsgLength,
+			RateLimit:    cfg.ChatRateLimit,
+			TokenCap:    cfg.ChatTokenCap,
+			MemoryStore: memoryStore,
+		})
+		mux.HandleFunc("GET /chat/ws", wsHandler)
+	}
 	mux.Handle("GET /agents", auth.protect(http.HandlerFunc(handleListAgents)))
 	mux.Handle("POST /agents", auth.protect(http.HandlerFunc(handleAgents)))
 	mux.Handle("PATCH /agents/{id}", auth.protect(http.HandlerFunc(handleUpdateAgent)))
@@ -128,7 +149,16 @@ func main() {
 	}
 }
 
+func initMemoryStore(db *sql.DB) (*memory.Store, error) {
+	// Use nil embedder: Search with nil returns recent memories by created_at.
+	// For semantic search, memory-service with embedder would be needed.
+	store := memory.NewStore(db, nil)
+	slog.Info("chat memory store initialized (no embedder, using recent memories for context)")
+	return store, nil
+}
+
 type authMiddleware struct {
+
 	identityAddr      string
 	accessControlAddr string
 	client            *http.Client
@@ -233,7 +263,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -322,6 +352,14 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 			handleDashboardAgentDelete(w, r, store)
 		})
 	}
+	if chatStore != nil {
+		mux.HandleFunc("GET /api/dashboard/chat/agents", handleDashboardChatAgents(chatStore))
+		mux.HandleFunc("GET /api/dashboard/chat/sessions", handleDashboardChatListSessions(chatStore))
+		mux.HandleFunc("POST /api/dashboard/chat/sessions", handleDashboardChatCreateSession(chatStore))
+		mux.HandleFunc("GET /api/dashboard/chat/sessions/{id}", handleDashboardChatGetSession(chatStore))
+		mux.HandleFunc("GET /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatGetMessages(chatStore))
+		mux.HandleFunc("POST /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatAppendMessage(chatStore))
+	}
 }
 
 func handleDashboardAgentStatus(w http.ResponseWriter, r *http.Request, store *agentdocs.Store) {
@@ -373,6 +411,214 @@ func handleDashboardAgentDelete(w http.ResponseWriter, r *http.Request, store *a
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleDashboardChatAgents(chatStore *chat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		agents, err := chatStore.ListChatCapableAgents(ctx)
+		if err != nil {
+			slog.Error("chat ListChatCapableAgents failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items := make([]map[string]any, len(agents))
+		for i, a := range agents {
+			items[i] = map[string]any{"id": a.ID.String(), "name": a.Name}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"agents": items})
+	}
+}
+
+func handleDashboardChatListSessions(chatStore *chat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		agentIDStr := r.URL.Query().Get("agent_id")
+		var agentID *uuid.UUID
+		if agentIDStr != "" {
+			id, err := uuid.Parse(agentIDStr)
+			if err != nil {
+				http.Error(w, "invalid agent_id", http.StatusBadRequest)
+				return
+			}
+			agentID = &id
+		}
+		sessions, err := chatStore.ListSessions(ctx, chat.DashboardUserID, agentID)
+		if err != nil {
+			slog.Error("chat ListSessions failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items := make([]map[string]any, len(sessions))
+		for i, s := range sessions {
+			items[i] = map[string]any{
+				"id": s.ID.String(), "user_id": s.UserID, "agent_id": s.AgentID.String(),
+				"title": s.Title, "status": s.Status, "created_at": s.CreatedAt, "updated_at": s.UpdatedAt,
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"sessions": items})
+	}
+}
+
+func handleDashboardChatCreateSession(chatStore *chat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentID string `json:"agent_id"`
+			Title   string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		agentID, err := uuid.Parse(req.AgentID)
+		if err != nil {
+			http.Error(w, "invalid agent_id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		se, err := chatStore.CreateSession(ctx, chat.DashboardUserID, agentID, req.Title)
+		if err != nil {
+			slog.Error("chat CreateSession failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Info("chat session created", "session_id", se.ID, "agent_id", se.AgentID, "user_id", chat.DashboardUserID)
+		proto := "ws"
+		if r.TLS != nil {
+			proto = "wss"
+		}
+		wsPath := fmt.Sprintf("%s://%s/chat/ws?session_id=%s", proto, r.Host, se.ID.String())
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": se.ID.String(), "agent_id": se.AgentID.String(), "title": se.Title, "status": se.Status,
+			"created_at": se.CreatedAt, "updated_at": se.UpdatedAt,
+			"websocket_url": wsPath,
+		})
+	}
+}
+
+func handleDashboardChatGetSession(chatStore *chat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "session id required", http.StatusBadRequest)
+			return
+		}
+		sessionID, err := uuid.Parse(id)
+		if err != nil {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		se, err := chatStore.GetSession(ctx, sessionID, chat.DashboardUserID)
+		if err != nil {
+			slog.Error("chat GetSession failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if se == nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		proto := "ws"
+		if r.TLS != nil {
+			proto = "wss"
+		}
+		wsPath := fmt.Sprintf("%s://%s/chat/ws?session_id=%s", proto, r.Host, se.ID.String())
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": se.ID.String(), "agent_id": se.AgentID.String(), "title": se.Title, "status": se.Status,
+			"created_at": se.CreatedAt, "updated_at": se.UpdatedAt,
+			"websocket_url": wsPath,
+		})
+	}
+}
+
+func handleDashboardChatGetMessages(chatStore *chat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "session id required", http.StatusBadRequest)
+			return
+		}
+		sessionID, err := uuid.Parse(id)
+		if err != nil {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		msgs, err := chatStore.GetMessages(ctx, sessionID, chat.DashboardUserID)
+		if err != nil {
+			slog.Error("chat GetMessages failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if msgs == nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		items := make([]map[string]any, len(msgs))
+		for i, m := range msgs {
+			items[i] = map[string]any{
+				"id": m.ID.String(), "session_id": m.SessionID.String(), "role": m.Role, "content": m.Content,
+				"tokens_in": m.TokensIn, "tokens_out": m.TokensOut, "created_at": m.CreatedAt,
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"messages": items})
+	}
+}
+
+func handleDashboardChatAppendMessage(chatStore *chat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "session id required", http.StatusBadRequest)
+			return
+		}
+		sessionID, err := uuid.Parse(id)
+		if err != nil {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if req.Content == "" {
+			http.Error(w, "content required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		m, err := chatStore.AppendMessage(ctx, sessionID, chat.DashboardUserID, "user", req.Content, nil, nil, 0, 0)
+		if err != nil {
+			slog.Error("chat AppendMessage failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if m == nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": m.ID.String(), "session_id": m.SessionID.String(), "role": m.Role, "content": m.Content,
+			"created_at": m.CreatedAt,
+		})
+	}
 }
 
 func handleGetApprovalProxy(w http.ResponseWriter, r *http.Request, client *http.Client, accessControlAddr string) {
