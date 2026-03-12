@@ -184,6 +184,10 @@ button#btn-refresh:focus-visible {
 .card-accent-orange .summary-value { color: var(--color-orange); }
 .card-accent-cyan { border-top-color: #22d3ee; }
 .card-accent-cyan .summary-value { color: #22d3ee; }
+.card-accent-teal { border-top-color: #14b8a6; }
+.card-accent-teal .summary-value { color: #14b8a6; }
+.card-accent-slate { border-top-color: #64748b; }
+.card-accent-slate .summary-value { color: #64748b; }
 
 .charts-grid {
   display: grid;
