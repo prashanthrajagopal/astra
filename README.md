@@ -99,7 +99,7 @@ In short: **Entry** (api-gateway, goals) → **Kernel** (actors, task graph, sch
 **Worker-side:** execution-worker, browser-worker, worker-manager, tool-runtime, llm-router.  
 **Data stores:** Postgres (source of truth), Redis (streams, state, locks), Memcached (LLM/embedding/tool caches).
 
-**Dashboard** (api-gateway `/dashboard/`): Summary stats include **Tokens In** and **Tokens Out** (from cost data). Goal detail modal shows actions; clicking a completed **code_generate** action opens a **Generated code** modal with path and content per file. Pending approvals show **Type** (plan / risky_task) and a type-specific detail modal.
+**Dashboard** (api-gateway `/superadmin/dashboard/`): Summary stats include **Tokens In** and **Tokens Out** (from cost data). Goal detail modal shows actions; clicking a completed **code_generate** action opens a **Generated code** modal with path and content per file. Pending approvals show **Type** (plan / risky_task) and a type-specific detail modal.
 
 ### 3. Lifecycle
 

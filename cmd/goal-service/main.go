@@ -248,6 +248,8 @@ func main() {
 			Priority    int    `json:"priority"`
 			Workspace   string `json:"workspace"`
 			AutoApprove bool   `json:"auto_approve"`
+			OrgID       string `json:"org_id"`
+			UserID      string `json:"user_id"`
 			Documents   []struct {
 				DocType  string          `json:"doc_type"`
 				Name     string          `json:"name"`
@@ -275,12 +277,34 @@ func main() {
 			priority = 100
 		}
 
+		var orgID uuid.NullUUID
+		if req.OrgID != "" {
+			parsed, err := uuid.Parse(req.OrgID)
+			if err != nil {
+				http.Error(w, `{"error":"invalid org_id"}`, http.StatusBadRequest)
+				return
+			}
+			orgID = uuid.NullUUID{UUID: parsed, Valid: true}
+		}
+		var userID uuid.NullUUID
+		if req.UserID != "" {
+			parsed, err := uuid.Parse(req.UserID)
+			if err != nil {
+				http.Error(w, `{"error":"invalid user_id"}`, http.StatusBadRequest)
+				return
+			}
+			userID = uuid.NullUUID{UUID: parsed, Valid: true}
+		}
+
 		ctx := r.Context()
 		goalID := uuid.New()
 
+		orgVal := sql.NullString{String: orgID.UUID.String(), Valid: orgID.Valid}
+		userVal := sql.NullString{String: userID.UUID.String(), Valid: userID.Valid}
 		_, err = database.ExecContext(ctx,
-			`INSERT INTO goals (id, agent_id, goal_text, priority, status) VALUES ($1, $2, $3, $4, 'pending')`,
-			goalID, agentID, req.GoalText, priority)
+			`INSERT INTO goals (id, agent_id, goal_text, priority, status, org_id, user_id)
+			 VALUES ($1, $2, $3, $4, 'pending', $5, $6)`,
+			goalID, agentID, req.GoalText, priority, orgVal, userVal)
 		if err != nil {
 			slog.Error("insert goal failed", "err", err)
 			http.Error(w, `{"error":"insert goal failed"}`, http.StatusInternalServerError)
@@ -380,6 +404,15 @@ func main() {
 			slog.Error("CreateGraph failed", "err", err)
 			http.Error(w, `{"error":"create graph failed"}`, http.StatusInternalServerError)
 			return
+		}
+
+		if orgID.Valid {
+			_, err = database.ExecContext(ctx,
+				`UPDATE tasks SET org_id = $1 WHERE goal_id = $2 AND org_id IS NULL`,
+				orgID.UUID, goalID)
+			if err != nil {
+				slog.Warn("propagate org_id to tasks failed", "goal_id", goalID, "err", err)
+			}
 		}
 
 		_, err = database.ExecContext(ctx,
@@ -613,18 +646,43 @@ func main() {
 		ctx := r.Context()
 		stats := map[string]any{}
 
+		orgFilter := r.URL.Query().Get("org_id")
+		var orgScoped bool
+		var orgUUID uuid.UUID
+		if orgFilter != "" {
+			parsed, err := uuid.Parse(orgFilter)
+			if err != nil {
+				http.Error(w, `{"error":"invalid org_id"}`, http.StatusBadRequest)
+				return
+			}
+			orgUUID = parsed
+			orgScoped = true
+		}
+
 		var totalGoals, activeGoals, completedGoals, failedGoals int
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals`).Scan(&totalGoals)
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'active'`).Scan(&activeGoals)
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'completed'`).Scan(&completedGoals)
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'failed'`).Scan(&failedGoals)
+		if orgScoped {
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE org_id = $1`, orgUUID).Scan(&totalGoals)
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE org_id = $1 AND status = 'active'`, orgUUID).Scan(&activeGoals)
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE org_id = $1 AND status = 'completed'`, orgUUID).Scan(&completedGoals)
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE org_id = $1 AND status = 'failed'`, orgUUID).Scan(&failedGoals)
+		} else {
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals`).Scan(&totalGoals)
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'active'`).Scan(&activeGoals)
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'completed'`).Scan(&completedGoals)
+			database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'failed'`).Scan(&failedGoals)
+		}
 		stats["goals"] = map[string]int{
 			"total": totalGoals, "active": activeGoals,
 			"completed": completedGoals, "failed": failedGoals,
 			"pending": totalGoals - activeGoals - completedGoals - failedGoals,
 		}
 
-		taskRows, _ := database.QueryContext(ctx, `SELECT status, count(*) FROM tasks GROUP BY status`)
+		var taskRows *sql.Rows
+		if orgScoped {
+			taskRows, _ = database.QueryContext(ctx, `SELECT status, count(*) FROM tasks WHERE org_id = $1 GROUP BY status`, orgUUID)
+		} else {
+			taskRows, _ = database.QueryContext(ctx, `SELECT status, count(*) FROM tasks GROUP BY status`)
+		}
 		taskCounts := map[string]int{}
 		if taskRows != nil {
 			defer taskRows.Close()
@@ -639,8 +697,14 @@ func main() {
 		stats["tasks"] = taskCounts
 
 		var recentGoals []map[string]any
-		recentRows, _ := database.QueryContext(ctx,
-			`SELECT id, agent_id, goal_text, status, created_at::text FROM goals ORDER BY created_at DESC LIMIT 10`)
+		var recentRows *sql.Rows
+		if orgScoped {
+			recentRows, _ = database.QueryContext(ctx,
+				`SELECT id, agent_id, goal_text, status, created_at::text FROM goals WHERE org_id = $1 ORDER BY created_at DESC LIMIT 10`, orgUUID)
+		} else {
+			recentRows, _ = database.QueryContext(ctx,
+				`SELECT id, agent_id, goal_text, status, created_at::text FROM goals ORDER BY created_at DESC LIMIT 10`)
+		}
 		if recentRows != nil {
 			defer recentRows.Close()
 			for recentRows.Next() {

@@ -177,6 +177,25 @@ for f in migrations/*.sql; do
 done
 echo "Migrations done."
 
+# Seed super-admin user (idempotent — skips if email already exists)
+SA_EMAIL="${ASTRA_SUPER_ADMIN_EMAIL:-admin@astra.local}"
+SA_PASS="${ASTRA_SUPER_ADMIN_PASSWORD:-changeme-admin}"
+SA_EXISTS=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM users WHERE email = '$SA_EMAIL'" 2>/dev/null || echo "0")
+if [[ "$SA_EXISTS" == "0" ]]; then
+  echo "Seeding super-admin user ($SA_EMAIL)..."
+  SA_HASH=$(python3 -c "import bcrypt; print(bcrypt.hashpw(b'$SA_PASS', bcrypt.gensalt(12)).decode())" 2>/dev/null || true)
+  if [[ -z "$SA_HASH" ]]; then
+    echo "  (bcrypt via python3 not available; super-admin will be created via identity service after startup)"
+  else
+    psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+      "INSERT INTO users (email, name, password_hash, is_super_admin) VALUES ('$SA_EMAIL', 'Super Admin', '$SA_HASH', true) ON CONFLICT (email) DO NOTHING;" 2>/dev/null
+    echo "  Super-admin seeded: $SA_EMAIL"
+  fi
+else
+  echo "Super-admin user already exists ($SA_EMAIL)."
+fi
+
 echo ""
 if ! command -v go &>/dev/null; then
   echo "Error: go not in PATH. Install Go and re-run."

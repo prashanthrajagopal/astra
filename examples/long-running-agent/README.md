@@ -26,6 +26,6 @@ go run ./examples/long-running-agent --cycles 3 --stage-pause 5s --poll-interval
 
 ## Observe while it runs
 
-- Dashboard: `http://localhost:8080/dashboard/`
+- Dashboard: `http://localhost:8080/superadmin/dashboard/`
 - Pending approvals section for risky tool actions
 - Logs in `logs/*.log`
