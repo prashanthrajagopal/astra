@@ -13,7 +13,12 @@
 <body>
   <header id="dashboard-header" class="dashboard-header">
     <div class="header-row">
-      <h1 id="dashboard-title">Astra Platform Dashboard</h1>
+      <h1 id="dashboard-title">Astra Super-Admin Dashboard</h1>
+      <nav class="header-nav">
+        <button class="nav-tab active" data-tab="overview">Overview</button>
+        <button class="nav-tab" data-tab="orgs">Organizations</button>
+        <button class="nav-tab" data-tab="users">Users</button>
+      </nav>
       <a href="/superadmin/dashboard/swagger.html" class="swagger-link">API Docs</a>
     </div>
     <div id="dashboard-meta" class="dashboard-meta">
@@ -25,6 +30,7 @@
 
   <div class="dashboard-wrapper">
     <div class="dashboard-main">
+  <div id="tab-overview" class="tab-panel">
   <section id="section-summary" class="summary-grid">
     <div class="summary-card card-accent-blue">
       <div class="summary-value" id="sum-active-goals">0</div>
@@ -167,29 +173,197 @@
     </div>
   </section>
 
-  <section id="section-chat" class="dashboard-card card-chat">
-    <h2 class="section-title">Chat</h2>
-    <div class="chat-toolbar">
-      <button type="button" id="chat-new-btn" class="action-btn">New chat</button>
-      <span id="chat-status" class="chat-status"></span>
-    </div>
-    <div class="chat-layout">
-      <div class="chat-sessions-panel">
-        <h3 class="chat-panel-title">Sessions</h3>
-        <div id="chat-sessions-list" class="chat-sessions-list"></div>
+  </div><!-- end tab-overview -->
+
+  <div id="tab-orgs" class="tab-panel" hidden>
+    <section class="dashboard-card">
+      <div class="section-header-row">
+        <h2 class="section-title">Organizations</h2>
+        <button type="button" id="btn-create-org" class="action-btn approve">Create Organization</button>
       </div>
-      <div class="chat-main-panel">
-        <div id="chat-placeholder" class="chat-placeholder">Select or create a session to chat.</div>
-        <div id="chat-view" class="chat-view" hidden>
-          <div id="chat-messages" class="chat-messages"></div>
-          <div class="chat-input-row">
-            <textarea id="chat-input" class="chat-input" rows="2" placeholder="Type a message..." maxlength="65536"></textarea>
-            <button type="button" id="chat-send-btn" class="action-btn chat-send-btn">Send</button>
-          </div>
+      <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody id="tbody-orgs"></tbody>
+      </table>
+      </div>
+      <div id="orgs-empty" class="empty-message" hidden>No organizations yet.</div>
+    </section>
+  </div>
+
+  <div id="tab-users" class="tab-panel" hidden>
+    <section class="dashboard-card">
+      <div class="section-header-row">
+        <h2 class="section-title">Platform Users</h2>
+        <button type="button" id="btn-create-user" class="action-btn approve">Create User</button>
+      </div>
+      <div class="search-row">
+        <input type="text" id="users-search" class="search-input" placeholder="Search by name or email..." />
+        <select id="users-org-filter" class="search-select"><option value="">All orgs</option></select>
+        <select id="users-status-filter" class="search-select">
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="suspended">Suspended</option>
+          <option value="deactivated">Deactivated</option>
+        </select>
+      </div>
+      <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Org(s)</th><th>Status</th><th>Super Admin</th><th>Last Login</th><th>Actions</th></tr></thead>
+        <tbody id="tbody-users"></tbody>
+      </table>
+      </div>
+      <div class="pagination-row">
+        <button type="button" id="users-prev" class="pagination-btn" disabled>Previous</button>
+        <span id="users-page-info" class="pagination-info">Page 1</span>
+        <button type="button" id="users-next" class="pagination-btn">Next</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Org Detail/Edit Modal -->
+  <div id="org-detail-modal" class="goal-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content" style="max-width:560px">
+      <header class="goal-modal-header">
+        <h2 class="goal-modal-title" id="org-detail-title">Organization</h2>
+        <button type="button" class="goal-modal-close" id="org-detail-close">&times;</button>
+      </header>
+      <div class="goal-modal-body" id="org-detail-body">
+        <input type="hidden" id="org-detail-id"/>
+        <div class="field"><label>Name</label><input type="text" id="org-detail-name" class="modal-input"/></div>
+        <div class="field"><label>Slug</label><input type="text" id="org-detail-slug" class="modal-input"/></div>
+        <div class="field"><label>Status</label>
+          <select id="org-detail-status" class="modal-input">
+            <option value="active">Active</option>
+            <option value="suspended">Suspended</option>
+            <option value="archived">Archived</option>
+          </select>
+        </div>
+        <div id="org-detail-error" class="modal-error" hidden></div>
+        <button type="button" id="org-detail-save" class="action-btn approve" style="margin-top:8px;width:100%">Save Changes</button>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:20px 0 12px"/>
+        <div style="font-size:.875rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:8px">Members</div>
+        <div class="table-scroll" style="max-height:200px">
+          <table class="data-table" style="font-size:.8125rem">
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
+            <tbody id="org-detail-members"></tbody>
+          </table>
+        </div>
+        <div id="org-detail-members-empty" class="empty-message" style="font-size:.8125rem;margin-top:4px" hidden>No members yet.</div>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 10px"/>
+        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:6px">Add Member</div>
+        <div style="display:flex;gap:6px;align-items:end">
+          <select id="org-detail-add-user" class="modal-input" style="flex:1;margin-bottom:0"><option value="">Select user...</option></select>
+          <select id="org-detail-add-role" class="modal-input" style="width:100px;margin-bottom:0"><option value="member">Member</option><option value="admin">Admin</option></select>
+          <button type="button" id="org-detail-add-btn" class="action-btn approve" style="white-space:nowrap">Add</button>
         </div>
       </div>
     </div>
-  </section>
+  </div>
+
+  <!-- User Detail/Edit Modal -->
+  <div id="user-detail-modal" class="goal-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content" style="max-width:560px">
+      <header class="goal-modal-header">
+        <h2 class="goal-modal-title" id="user-detail-title">User</h2>
+        <button type="button" class="goal-modal-close" id="user-detail-close">&times;</button>
+      </header>
+      <div class="goal-modal-body">
+        <input type="hidden" id="user-detail-id"/>
+        <div class="field"><label>Name</label><input type="text" id="user-detail-name" class="modal-input"/></div>
+        <div class="field"><label>Email</label><input type="email" id="user-detail-email" class="modal-input"/></div>
+        <div class="field"><label>Status</label>
+          <select id="user-detail-status" class="modal-input">
+            <option value="active">Active</option>
+            <option value="suspended">Suspended</option>
+            <option value="deactivated">Deactivated</option>
+          </select>
+        </div>
+        <div class="field"><label><input type="checkbox" id="user-detail-superadmin"/> Super Admin</label></div>
+        <div id="user-detail-error" class="modal-error" hidden></div>
+        <button type="button" id="user-detail-save" class="action-btn approve" style="margin-top:8px;width:100%">Save Changes</button>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 10px"/>
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <button type="button" id="user-detail-reset-pw" class="action-btn" style="flex:1">Reset Password</button>
+        </div>
+        <div id="user-detail-pw-row" hidden style="display:flex;gap:6px;margin-bottom:16px">
+          <input type="password" id="user-detail-new-pw" class="modal-input" placeholder="New password" style="flex:1;margin-bottom:0"/>
+          <button type="button" id="user-detail-pw-confirm" class="action-btn approve">Set</button>
+          <button type="button" id="user-detail-pw-cancel" class="action-btn reject">Cancel</button>
+        </div>
+        <div style="font-size:.875rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:8px">Organization Memberships</div>
+        <div class="table-scroll" style="max-height:180px">
+          <table class="data-table" style="font-size:.8125rem">
+            <thead><tr><th>Organization</th><th>Role</th><th>Actions</th></tr></thead>
+            <tbody id="user-detail-orgs"></tbody>
+          </table>
+        </div>
+        <div id="user-detail-orgs-empty" class="empty-message" style="font-size:.8125rem;margin-top:4px" hidden>Not a member of any org.</div>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:12px 0 8px"/>
+        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:6px">Add to Organization</div>
+        <div style="display:flex;gap:6px;align-items:end">
+          <select id="user-detail-add-org" class="modal-input" style="flex:1;margin-bottom:0"><option value="">Select org...</option></select>
+          <select id="user-detail-add-org-role" class="modal-input" style="width:100px;margin-bottom:0"><option value="member">Member</option><option value="admin">Admin</option></select>
+          <button type="button" id="user-detail-add-org-btn" class="action-btn approve" style="white-space:nowrap">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Org Modal -->
+  <div id="org-modal" class="goal-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content">
+      <header class="goal-modal-header">
+        <h2 class="goal-modal-title" id="org-modal-title">Create Organization</h2>
+        <button type="button" class="goal-modal-close" id="org-modal-close">&times;</button>
+      </header>
+      <div class="goal-modal-body">
+        <div class="field"><label>Name</label><input type="text" id="org-name" class="modal-input" placeholder="Acme Corp"/></div>
+        <div class="field"><label>Slug</label><input type="text" id="org-slug" class="modal-input" placeholder="acme-corp"/></div>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 12px"/>
+        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:10px">Org Admin (required)</div>
+        <div class="field"><label>Admin — select existing user or create new</label>
+          <select id="org-admin-select" class="modal-input" style="margin-bottom:8px"><option value="">-- Create new user --</option></select>
+        </div>
+        <div id="org-admin-new-fields">
+          <div class="field"><label>Admin Name</label><input type="text" id="org-admin-name" class="modal-input" placeholder="Jane Doe"/></div>
+          <div class="field"><label>Admin Email</label><input type="email" id="org-admin-email" class="modal-input" placeholder="jane@acme.com"/></div>
+          <div class="field"><label>Admin Password</label><input type="password" id="org-admin-password" class="modal-input" placeholder="Password"/></div>
+        </div>
+        <div id="org-modal-error" class="modal-error" hidden></div>
+        <button type="button" id="org-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create Organization</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create User Modal -->
+  <div id="user-modal" class="goal-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content">
+      <header class="goal-modal-header">
+        <h2 class="goal-modal-title" id="user-modal-title">Create User</h2>
+        <button type="button" class="goal-modal-close" id="user-modal-close">&times;</button>
+      </header>
+      <div class="goal-modal-body">
+        <div class="field"><label>Name</label><input type="text" id="user-name" class="modal-input" placeholder="Jane Doe"/></div>
+        <div class="field"><label>Email</label><input type="email" id="user-email" class="modal-input" placeholder="jane@acme.com"/></div>
+        <div class="field"><label>Password</label><input type="password" id="user-password" class="modal-input" placeholder="Password"/></div>
+        <div class="field"><label><input type="checkbox" id="user-superadmin"/> Super Admin</label></div>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:12px 0 8px"/>
+        <div class="field"><label>Add to Organization (optional)</label>
+          <select id="user-org-select" class="modal-input"><option value="">-- None --</option></select>
+        </div>
+        <div class="field" id="user-org-role-field" hidden><label>Role in Org</label>
+          <select id="user-org-role" class="modal-input"><option value="member">Member</option><option value="admin">Admin</option></select>
+        </div>
+        <div id="user-modal-error" class="modal-error" hidden></div>
+        <button type="button" id="user-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create User</button>
+      </div>
+    </div>
+  </div>
 
     </div>
     <aside class="dashboard-sidebar">
