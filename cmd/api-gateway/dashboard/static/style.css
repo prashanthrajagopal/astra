@@ -593,6 +593,31 @@ button#btn-refresh:focus-visible {
   color: var(--md-sys-color-outline);
 }
 .td-type { font-weight: 500; }
+.th-actions { width: 1%; white-space: nowrap; text-align: center; }
+.td-actions { white-space: nowrap; text-align: center; vertical-align: middle; }
+.agent-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0 2px;
+  border: none;
+  border-radius: 6px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.9rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.agent-action-btn:hover {
+  background: var(--md-sys-color-surface-container-highest, rgba(255,255,255,0.08));
+  color: var(--md-sys-color-on-surface);
+}
+.agent-action-enable:hover { color: var(--md-ref-success); }
+.agent-action-disable:hover { color: var(--md-ref-warning); }
+.agent-action-delete:hover { color: var(--md-sys-color-error); }
 .tool-summary-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-btn.view {
   background: var(--md-sys-color-surface-container-high);

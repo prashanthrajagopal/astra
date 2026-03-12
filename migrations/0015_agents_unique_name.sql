@@ -2,7 +2,7 @@
 -- Keeps one row per name (oldest by created_at, then id); reassigns FKs from duplicates to the kept row.
 
 -- Step 1: Build mapping of duplicate agent ids -> keeper id (one per name, oldest by created_at then id)
-CREATE TEMP TABLE IF NOT EXISTS _agent_dedup (keeper_id UUID, dupe_id UUID) ON COMMIT DROP;
+CREATE TEMP TABLE IF NOT EXISTS _agent_dedup (keeper_id UUID, dupe_id UUID);
 
 INSERT INTO _agent_dedup (keeper_id, dupe_id)
 WITH ranked AS (
