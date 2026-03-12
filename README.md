@@ -46,6 +46,22 @@ User → POST /goals → goal-service → planner (LLM) → DAG → CreateGraph
 
 See [docs/PRD.md](docs/PRD.md) for full detail.
 
+### How agents, planner, and workers work together
+
+**What the agent actually does.** Agents do not execute tasks; workers do. The agent’s role is **identity, context, and ownership**:
+
+- **Own the goal** — The goal is tied to an agent; the agent is who “asked for this work” and who the result belongs to.
+- **Supply context** — The agent’s profile (system prompt, config, attached documents) is used when planning and when executing. The planner and workers act *on behalf of* that agent using this context.
+- **Define “who”** — So the agent’s job is to be the identity and policy (persona, rules, constraints) that shapes what gets planned and how it is executed; workers perform the steps.
+
+**How a specialist agent (e.g. “Python expert”) is applied.** The worker is generic; it does not “become” the expert. The agent’s expertise is **carried in the task payload**:
+
+1. When a goal is created, **goal-service** assembles the agent’s context (system prompt, rules, skills) via `AssembleContext(agentID, goalID)` and passes it to the planner.
+2. The **planner** embeds that context in **every task** it creates (e.g. `code_generate`, `shell_exec`) as `agent_context` in the task payload.
+3. When the **execution-worker** runs a task, it reads `agent_context` from the payload, builds the prompt (system prompt + rules + task instructions), and sends it to the LLM. The LLM therefore behaves as the “Python expert” because that text is in the prompt. The worker is a generic executor; the expert is the context that travels with the task.
+
+**Pending approvals (dashboard).** The dashboard’s “Pending Approvals” are **not** the implementation plan. They are **approval requests for dangerous tool runs**. When a worker tries to run a tool that policy marks as dangerous (e.g. `terraform apply`, certain `shell_exec`), the tool-runtime does not run it immediately; it creates an approval request and returns `pending_approval` with an `approval_request_id`. The dashboard lists these; an operator can **Approve** or **Reject** to allow or deny that specific tool execution. So approvals are human-in-the-loop for **risky tool runs**, not for approving the task graph or plan.
+
 ### Creating agents via API
 
 After deployment, create specialized agents via the API Gateway and Identity service:

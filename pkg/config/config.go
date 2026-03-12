@@ -33,6 +33,7 @@ type Config struct {
 	CostTrackerPort       int
 	IdentityAddr          string
 	AccessControlAddr     string
+	GoalServiceAddr       string
 	WorkerManagerAddr     string
 	CostTrackerAddr       string
 	WorkspaceRoot         string
@@ -89,6 +90,7 @@ func Load() (*Config, error) {
 		CostTrackerPort:       costTrackerPort,
 		IdentityAddr:          getEnv("IDENTITY_ADDR", "http://localhost:8085"),
 		AccessControlAddr:     getEnv("ACCESS_CONTROL_ADDR", "http://localhost:8086"),
+		GoalServiceAddr:       getEnv("GOAL_SERVICE_ADDR", "http://localhost:8088"),
 		WorkerManagerAddr:     getEnv("WORKER_MANAGER_ADDR", "http://localhost:8082"),
 		CostTrackerAddr:       getEnv("COST_TRACKER_ADDR", "http://localhost:8090"),
 		WorkspaceRoot:         getEnv("WORKSPACE_ROOT", "workspace"),

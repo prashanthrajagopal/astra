@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,176 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
+
+// planPayloadSpec matches docs/approval-system-extension-spec.md §3.2.
+type planPayloadSpec struct {
+	GoalID       string              `json:"goal_id"`
+	GraphID      string              `json:"graph_id"`
+	AgentID      string              `json:"agent_id"`
+	GoalText     string              `json:"goal_text"`
+	Tasks        []planPayloadTask   `json:"tasks"`
+	Dependencies []planPayloadDep    `json:"dependencies"`
+}
+
+type planPayloadTask struct {
+	ID         string          `json:"id"`
+	Type       string          `json:"type"`
+	Payload    json.RawMessage `json:"payload"`
+	Priority   int             `json:"priority"`
+	MaxRetries int             `json:"max_retries"`
+}
+
+type planPayloadDep struct {
+	TaskID    string `json:"task_id"`
+	DependsOn string `json:"depends_on"`
+}
+
+func buildPlanPayload(graph *tasks.Graph, goalID, agentID uuid.UUID, goalText string) *planPayloadSpec {
+	taskList := make([]planPayloadTask, len(graph.Tasks))
+	for i := range graph.Tasks {
+		t := &graph.Tasks[i]
+		payload := t.Payload
+		if payload == nil {
+			payload = []byte("{}")
+		}
+		taskList[i] = planPayloadTask{
+			ID:         t.ID.String(),
+			Type:       t.Type,
+			Payload:    payload,
+			Priority:   t.Priority,
+			MaxRetries: t.MaxRetries,
+		}
+	}
+	deps := make([]planPayloadDep, len(graph.Dependencies))
+	for i := range graph.Dependencies {
+		deps[i] = planPayloadDep{
+			TaskID:    graph.Dependencies[i].TaskID.String(),
+			DependsOn: graph.Dependencies[i].DependsOn.String(),
+		}
+	}
+	return &planPayloadSpec{
+		GoalID:       goalID.String(),
+		GraphID:      graph.ID.String(),
+		AgentID:      agentID.String(),
+		GoalText:     goalText,
+		Tasks:        taskList,
+		Dependencies: deps,
+	}
+}
+
+func handleApplyPlan(w http.ResponseWriter, r *http.Request, db *sql.DB, taskStore *tasks.Store) {
+	var req struct {
+		ApprovalID string `json:"approval_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ApprovalID == "" {
+		http.Error(w, `{"error":"approval_id required"}`, http.StatusBadRequest)
+		return
+	}
+	approvalUUID, err := uuid.Parse(req.ApprovalID)
+	if err != nil {
+		http.Error(w, `{"error":"invalid approval_id"}`, http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	var requestType, status string
+	var planPayload []byte
+	var goalID uuid.UUID
+	err = db.QueryRowContext(ctx,
+		`SELECT request_type, status, plan_payload, goal_id FROM approval_requests WHERE id = $1`,
+		approvalUUID).Scan(&requestType, &status, &planPayload, &goalID)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error":"approval not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("apply-plan: load approval failed", "err", err)
+		http.Error(w, `{"error":"load approval failed"}`, http.StatusInternalServerError)
+		return
+	}
+	if requestType != "plan" {
+		http.Error(w, `{"error":"not a plan approval"}`, http.StatusBadRequest)
+		return
+	}
+	if status != "approved" {
+		http.Error(w, `{"error":"approval not approved"}`, http.StatusBadRequest)
+		return
+	}
+	if len(planPayload) == 0 {
+		http.Error(w, `{"error":"missing plan_payload"}`, http.StatusBadRequest)
+		return
+	}
+	var spec planPayloadSpec
+	if err := json.Unmarshal(planPayload, &spec); err != nil {
+		slog.Error("apply-plan: unmarshal plan_payload failed", "err", err)
+		http.Error(w, `{"error":"invalid plan_payload"}`, http.StatusBadRequest)
+		return
+	}
+	graphID, err := uuid.Parse(spec.GraphID)
+	if err != nil {
+		http.Error(w, `{"error":"invalid graph_id in payload"}`, http.StatusBadRequest)
+		return
+	}
+	goalIDParsed, err := uuid.Parse(spec.GoalID)
+	if err != nil {
+		http.Error(w, `{"error":"invalid goal_id in payload"}`, http.StatusBadRequest)
+		return
+	}
+	agentID, err := uuid.Parse(spec.AgentID)
+	if err != nil {
+		http.Error(w, `{"error":"invalid agent_id in payload"}`, http.StatusBadRequest)
+		return
+	}
+	taskList := make([]tasks.Task, len(spec.Tasks))
+	for i := range spec.Tasks {
+		pt := &spec.Tasks[i]
+		taskID, err := uuid.Parse(pt.ID)
+		if err != nil {
+			http.Error(w, `{"error":"invalid task id in payload"}`, http.StatusBadRequest)
+			return
+		}
+		payload := pt.Payload
+		if payload == nil {
+			payload = []byte("{}")
+		}
+		taskList[i] = tasks.Task{
+			ID:         taskID,
+			GraphID:    graphID,
+			GoalID:     goalIDParsed,
+			AgentID:    agentID,
+			Type:       pt.Type,
+			Status:     tasks.StatusCreated,
+			Payload:    payload,
+			Priority:   pt.Priority,
+			MaxRetries: pt.MaxRetries,
+		}
+	}
+	var deps []tasks.Dependency
+	for _, d := range spec.Dependencies {
+		taskID, err1 := uuid.Parse(d.TaskID)
+		dependsOn, err2 := uuid.Parse(d.DependsOn)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		deps = append(deps, tasks.Dependency{TaskID: taskID, DependsOn: dependsOn})
+	}
+	graph := tasks.Graph{ID: graphID, Tasks: taskList, Dependencies: deps}
+	if err := taskStore.CreateGraph(ctx, &graph); err != nil {
+		slog.Error("apply-plan: CreateGraph failed", "err", err)
+		http.Error(w, `{"error":"create graph failed"}`, http.StatusInternalServerError)
+		return
+	}
+	_, err = db.ExecContext(ctx, `UPDATE goals SET status = 'active' WHERE id = $1`, goalIDParsed)
+	if err != nil {
+		slog.Error("apply-plan: update goal status failed", "err", err)
+		http.Error(w, `{"error":"update goal failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -59,9 +230,15 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	autoApprovePlans := os.Getenv("AUTO_APPROVE_PLANS") == "true"
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("POST /internal/apply-plan", func(w http.ResponseWriter, r *http.Request) {
+		handleApplyPlan(w, r, database, taskStore)
 	})
 
 	mux.HandleFunc("POST /goals", func(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +346,35 @@ func main() {
 			return
 		}
 
+		if !autoApprovePlans {
+			planPayload := buildPlanPayload(&graph, goalID, agentID, req.GoalText)
+			planPayloadJSON, err := json.Marshal(planPayload)
+			if err != nil {
+				slog.Error("marshal plan_payload failed", "err", err)
+				http.Error(w, `{"error":"serialize plan failed"}`, http.StatusInternalServerError)
+				return
+			}
+			approvalID := uuid.New()
+			_, err = database.ExecContext(ctx,
+				`INSERT INTO approval_requests (id, request_type, goal_id, graph_id, plan_payload, status)
+				 VALUES ($1, 'plan', $2, $3, $4, 'pending')`,
+				approvalID, goalID, graph.ID, planPayloadJSON)
+			if err != nil {
+				slog.Error("insert plan approval failed", "err", err)
+				http.Error(w, `{"error":"create approval request failed"}`, http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"goal_id":             goalID.String(),
+				"approval_request_id": approvalID.String(),
+				"message":             "Plan pending approval",
+				"graph_id":            graph.ID.String(),
+			})
+			return
+		}
+
 		if err := taskStore.CreateGraph(ctx, &graph); err != nil {
 			slog.Error("CreateGraph failed", "err", err)
 			http.Error(w, `{"error":"create graph failed"}`, http.StatusInternalServerError)
@@ -188,6 +394,7 @@ func main() {
 			"graph_id":     graph.ID.String(),
 		}
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(resp)
 	})
 
@@ -216,6 +423,62 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(goal)
+	})
+
+	// GET /goals/{id}/details — full goal + tasks for dashboard modal (actions + failure logs).
+	mux.HandleFunc("GET /goals/{id}/details", func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+			return
+		}
+		ctx := r.Context()
+		var goal struct {
+			ID        string `json:"id"`
+			AgentID   string `json:"agent_id"`
+			GoalText  string `json:"goal_text"`
+			Priority  int    `json:"priority"`
+			Status    string `json:"status"`
+			CreatedAt string `json:"created_at"`
+		}
+		err = database.QueryRowContext(ctx,
+			`SELECT id, agent_id, goal_text, priority, status, created_at::text FROM goals WHERE id = $1`,
+			id).Scan(&goal.ID, &goal.AgentID, &goal.GoalText, &goal.Priority, &goal.Status, &goal.CreatedAt)
+		if err != nil {
+			slog.Error("get goal details failed", "id", idStr, "err", err)
+			http.Error(w, `{"error":"goal not found"}`, http.StatusNotFound)
+			return
+		}
+		taskList, err := taskStore.ListTasksByGoalID(ctx, idStr)
+		if err != nil {
+			slog.Error("list tasks for goal failed", "goal_id", idStr, "err", err)
+			http.Error(w, `{"error":"failed to load tasks"}`, http.StatusInternalServerError)
+			return
+		}
+		tasksPayload := make([]map[string]interface{}, 0, len(taskList))
+		for _, t := range taskList {
+			payload := map[string]interface{}{
+				"id":         t.ID.String(),
+				"type":       string(t.Type),
+				"status":     string(t.Status),
+				"priority":   t.Priority,
+				"created_at": t.CreatedAt.Format(time.RFC3339),
+				"updated_at": t.UpdatedAt.Format(time.RFC3339),
+			}
+			if len(t.Payload) > 0 {
+				payload["payload"] = json.RawMessage(t.Payload)
+			}
+			if len(t.Result) > 0 {
+				payload["result"] = json.RawMessage(t.Result)
+			}
+			tasksPayload = append(tasksPayload, payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"goal":  goal,
+			"tasks": tasksPayload,
+		})
 	})
 
 	mux.HandleFunc("GET /goals", func(w http.ResponseWriter, r *http.Request) {

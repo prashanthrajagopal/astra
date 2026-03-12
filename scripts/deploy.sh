@@ -270,7 +270,9 @@ echo $! > logs/api-gateway.pid
 
 echo ""
 echo "Seeding default agents (idempotent; skips existing)..."
-sleep 3
+# Wait for api-gateway to be ready so seed can call GET /agents (avoids duplicate agents)
+echo "Waiting for api-gateway before seeding agents..."
+sleep 5
 if [[ -f "$REPO_ROOT/scripts/seed-agents.sh" ]]; then
   "$REPO_ROOT/scripts/seed-agents.sh" || true
 else

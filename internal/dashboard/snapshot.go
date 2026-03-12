@@ -36,6 +36,8 @@ type Snapshot struct {
 	Cost        map[string]any      `json:"cost"`
 	Logs        map[string][]string `json:"logs"`
 	PIDs        map[string]int      `json:"pids"`
+	Agents      []map[string]any    `json:"agents,omitempty"`
+	AgentCount  int                 `json:"agent_count"`
 	Errors      map[string]string   `json:"errors,omitempty"`
 }
 
@@ -55,14 +57,15 @@ func NewCollector(cfg *config.Config) (*Collector, error) {
 func (c *Collector) Collect(ctx context.Context) Snapshot {
 	snap := Snapshot{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Services:    probeServices(ctx),
-		Workers:     []map[string]any{},
-		Approvals:   []map[string]any{},
-		Jobs:        map[string]any{},
-		Cost:        map[string]any{"rows": []any{}},
-		Logs:        map[string][]string{},
-		PIDs:        map[string]int{},
-		Errors:      map[string]string{},
+		Services:     probeServices(ctx),
+		Workers:      []map[string]any{},
+		Approvals:    []map[string]any{},
+		Jobs:         map[string]any{},
+		Cost:         map[string]any{"rows": []any{}},
+		Logs:         map[string][]string{},
+		PIDs:         map[string]int{},
+		Agents:       []map[string]any{},
+		Errors:       map[string]string{},
 	}
 
 	c.collectJobs(ctx, &snap)
