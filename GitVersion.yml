@@ -1,0 +1,35 @@
+workflow: GitHubFlow/v1
+strategies:
+  - ConfiguredNextVersion
+  - Mainline
+tag-prefix: 'v'
+major-version-bump-message: '\+semver:\s?(breaking|major)'
+minor-version-bump-message: '\+semver:\s?(feature|minor)'
+patch-version-bump-message: '\+semver:\s?(fix|patch)'
+no-bump-message: '\+semver:\s?(none|skip)'
+branches:
+  main:
+    label: ''
+    increment: Patch
+    is-main-branch: true
+    regex: ^master$|^main$
+  feature:
+    label: '{BranchName}'
+    increment: Inherit
+    regex: ^features?[\/-](?<BranchName>.+)
+    source-branches:
+    - main
+  pull-request:
+    is-main-branch: false
+    label: PullRequest{Number}
+    increment: Inherit
+    regex: ^(pull-requests?|pull|pr)[\/-](?<Number>\d*)
+    source-branches:
+    - main
+    - feature
+  hotfix:
+    label: beta
+    increment: Patch
+    regex: ^hotfix(es)?[\/-](?<BranchName>.+)
+    source-branches:
+    - main
