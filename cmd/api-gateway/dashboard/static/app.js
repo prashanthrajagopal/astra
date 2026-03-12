@@ -326,14 +326,20 @@ function renderAgentsPage() {
 
   tbody.innerHTML = '';
   if (slice.length === 0) {
-    tbody.appendChild(emptyRow(3, total === 0 ? 'No agents' : 'No agents on this page'));
+    tbody.appendChild(emptyRow(4, total === 0 ? 'No agents' : 'No agents on this page'));
   } else {
     slice.forEach(function (a) {
       var tr = document.createElement('tr');
       var id = pick(a, ['id', 'ID'], '');
       var name = pick(a, ['name', 'actor_type', 'Name'], '');
-      var status = pick(a, ['status', 'Status'], '');
-      tr.innerHTML = '<td>' + (id ? id.substring(0, 8) : '') + '</td><td>' + (name || '—') + '</td><td class="td-status">' + (status || '—') + '</td>';
+      var status = (pick(a, ['status', 'Status'], '') || '').toLowerCase();
+      var isActive = status === 'active';
+      var actionsHtml = '<td class="td-actions">' +
+        '<button type="button" class="agent-action-btn agent-action-enable" data-agent-id="' + escapeHtml(id || '') + '" data-action="enable" aria-label="Enable" title="Enable">▶</button>' +
+        '<button type="button" class="agent-action-btn agent-action-disable" data-agent-id="' + escapeHtml(id || '') + '" data-action="disable" aria-label="Disable" title="Disable">⏸</button>' +
+        '<button type="button" class="agent-action-btn agent-action-delete" data-agent-id="' + escapeHtml(id || '') + '" data-action="delete" aria-label="Delete" title="Delete">🗑</button>' +
+        '</td>';
+      tr.innerHTML = '<td>' + (id ? id.substring(0, 8) : '') + '</td><td>' + (name || '—') + '</td><td class="td-status">' + (status || '—') + '</td>' + actionsHtml;
       tbody.appendChild(tr);
     });
   }
@@ -785,6 +791,26 @@ document.addEventListener('DOMContentLoaded', function () {
   var agentsNext = document.getElementById('agents-next');
   if (agentsPrev) agentsPrev.addEventListener('click', function () { agentsPage = Math.max(1, agentsPage - 1); renderAgentsPage(); });
   if (agentsNext) agentsNext.addEventListener('click', function () { agentsPage = Math.min(Math.ceil(agentsList.length / AGENTS_PAGE_SIZE) || 1, agentsPage + 1); renderAgentsPage(); });
+  var tableAgents = document.getElementById('table-agents');
+  if (tableAgents) {
+    tableAgents.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest && e.target.closest('.agent-action-btn');
+      if (!btn || !btn.dataset || !btn.dataset.agentId) return;
+      var agentId = btn.dataset.agentId;
+      var action = (btn.dataset.action || '').toLowerCase();
+      if (action === 'enable') {
+        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
+          .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent enable failed: ' + t, true); }); });
+      } else if (action === 'disable') {
+        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
+          .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent disable failed: ' + t, true); }); });
+      } else if (action === 'delete') {
+        if (!confirm('Delete this agent and all its goals and tasks?')) return;
+        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
+          .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent delete failed: ' + t, true); }); });
+      }
+    });
+  }
   fetchSnapshot();
   setInterval(fetchSnapshot, 5000);
 });
