@@ -30,6 +30,61 @@ const (
 // toolCallPattern matches [TOOL:name(args)] in LLM response.
 var toolCallPattern = regexp.MustCompile(`\[TOOL:([^\s\]]+)\s*\(([^)]*)\)\]`)
 
+// NeedsGoalWorkflow returns true if the message requires the full goal/agent/worker pipeline
+// (code generation, project creation, complex multi-step tasks). Simple questions get direct LLM answers.
+func NeedsGoalWorkflow(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+
+	// Short messages are almost always simple conversation
+	if len(lower) < 15 {
+		return false
+	}
+
+	// Action verbs that imply producing artifacts
+	actionKeywords := []string{
+		"write ", "create ", "build ", "implement ", "generate ", "develop ",
+		"scaffold ", "set up ", "setup ", "refactor ", "make a ", "make me ",
+		"code a ", "code for ", "write me ", "create me ", "build me ",
+		"give me a ", "produce ", "design ", "architect ",
+	}
+	for _, kw := range actionKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+
+	// Technology + creation patterns
+	techKeywords := []string{
+		"function that", "class that", "script that", "program that",
+		"api endpoint", "rest api", "grpc service", "web app",
+		"website", "landing page", "dashboard", "component that",
+		"docker", "dockerfile", "makefile", "terraform",
+		"migration", "database schema",
+		"python script", "go program", "node.js", "react app",
+		"html page", "css file", "yaml file", "json schema",
+	}
+	for _, kw := range techKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+
+	// File output indicators
+	fileKeywords := []string{
+		".py", ".go", ".js", ".ts", ".html", ".css", ".yaml", ".yml",
+		".json", ".sql", ".sh", ".dockerfile", ".tf",
+		"save to file", "write to file", "output file",
+		"in a file", "as a file", "new file",
+	}
+	for _, kw := range fileKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // TODO(metrics): When Prometheus client is wired in, add metrics:
 // - chat_sessions_active (gauge)
 // - chat_messages_total (counter)
@@ -394,3 +449,217 @@ func processMessage(ctx context.Context, conn *websocket.Conn, chatStore *Store,
 
 	_ = clientMsgID // reserved for request correlation
 }
+
+// ProcessRESTMessage handles a user message via REST (no WebSocket).
+// It loads history, builds the prompt, calls the LLM, persists the assistant response,
+// and returns the assistant's response message.
+// The user message must already be persisted before calling this function.
+func ProcessRESTMessage(ctx context.Context, chatStore *Store, db *sql.DB, llmBackend *llm.EndpointBackend, sessionID uuid.UUID, userID string, memStore *memory.Store) (*Message, error) {
+	se, err := chatStore.GetSession(ctx, sessionID, userID)
+	if err != nil || se == nil {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	var systemPrompt string
+	_ = db.QueryRowContext(ctx, `SELECT COALESCE(system_prompt,'') FROM agents WHERE id = $1`, se.AgentID).Scan(&systemPrompt)
+
+	msgs, err := chatStore.GetMessages(ctx, sessionID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load context: %w", err)
+	}
+	lastN := 20
+	if len(msgs) > lastN {
+		msgs = msgs[len(msgs)-lastN:]
+	}
+
+	if memStore != nil && len(msgs) > 0 {
+		lastMsg := msgs[len(msgs)-1].Content
+		if len(lastMsg) > 10 {
+			memories, mErr := memStore.Search(ctx, se.AgentID, nil, 3)
+			if mErr == nil && len(memories) > 0 {
+				var memB strings.Builder
+				memB.WriteString("[Relevant context from memory]\n")
+				for _, m := range memories {
+					memB.WriteString("- ")
+					memB.WriteString(m.Content)
+					memB.WriteString("\n")
+				}
+				memB.WriteString("\n")
+				systemPrompt = memB.String() + systemPrompt
+			}
+		}
+	}
+
+	var b strings.Builder
+	if systemPrompt != "" {
+		b.WriteString("System: ")
+		b.WriteString(systemPrompt)
+		b.WriteString("\n\n")
+	}
+	for _, m := range msgs {
+		b.WriteString(m.Role)
+		b.WriteString(": ")
+		b.WriteString(m.Content)
+		b.WriteString("\n")
+	}
+	prompt := b.String()
+
+	contentResp, tokensIn, tokensOut, err := llmBackend.Complete(ctx, "", prompt)
+	if err != nil {
+		return nil, fmt.Errorf("LLM request failed: %w", err)
+	}
+
+	assistantMsg, err := chatStore.AppendMessage(ctx, sessionID, userID, "assistant", contentResp, nil, nil, tokensIn, tokensOut)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save assistant response: %w", err)
+	}
+
+	return assistantMsg, nil
+}
+
+// ProcessGoalMessage submits a goal for the user's message and waits for completion.
+// Returns the assistant response message with task results (including generated files).
+func ProcessGoalMessage(ctx context.Context, chatStore *Store, goalServiceAddr string, agentID uuid.UUID, sessionID uuid.UUID, userID string, userMessage string) (*Message, error) {
+	workspace := fmt.Sprintf("%s_chat-assistant", userID)
+
+	goalReq := map[string]interface{}{
+		"agent_id":     agentID.String(),
+		"goal_text":    userMessage,
+		"workspace":    workspace,
+		"auto_approve": true,
+	}
+	body, _ := json.Marshal(goalReq)
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(goalServiceAddr, "/")+"/goals", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create goal request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("submit goal failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var goalResp struct {
+		GoalID            string `json:"goal_id"`
+		ApprovalRequestID string `json:"approval_request_id,omitempty"`
+		Message           string `json:"message,omitempty"`
+		TaskCount         int    `json:"task_count,omitempty"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&goalResp)
+
+	if goalResp.GoalID == "" {
+		return nil, fmt.Errorf("goal creation returned no goal_id")
+	}
+
+	if resp.StatusCode == http.StatusAccepted {
+		content := "Your request has been submitted and is pending approval. Goal ID: " + goalResp.GoalID
+		msg, _ := chatStore.AppendMessage(ctx, sessionID, userID, "assistant", content, nil, nil, 0, 0)
+		return msg, nil
+	}
+
+	goalID := goalResp.GoalID
+	pollClient := &http.Client{Timeout: 5 * time.Second}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(120 * time.Second)
+	}
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		time.Sleep(2 * time.Second)
+
+		statusReq, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(goalServiceAddr, "/")+"/goals/"+goalID, nil)
+		if err != nil {
+			continue
+		}
+		statusResp, err := pollClient.Do(statusReq)
+		if err != nil {
+			continue
+		}
+		var goal struct {
+			Status string `json:"status"`
+		}
+		_ = json.NewDecoder(statusResp.Body).Decode(&goal)
+		statusResp.Body.Close()
+
+		if goal.Status == "completed" || goal.Status == "failed" {
+			break
+		}
+	}
+
+	detailsReq, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(goalServiceAddr, "/")+"/goals/"+goalID+"/details", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create details request: %w", err)
+	}
+	detailsResp, err := pollClient.Do(detailsReq)
+	if err != nil {
+		return nil, fmt.Errorf("fetch goal details failed: %w", err)
+	}
+	defer detailsResp.Body.Close()
+
+	var details struct {
+		Goal struct {
+			Status string `json:"status"`
+		} `json:"goal"`
+		Tasks []struct {
+			Type   string          `json:"type"`
+			Status string          `json:"status"`
+			Result json.RawMessage `json:"result,omitempty"`
+		} `json:"tasks"`
+	}
+	_ = json.NewDecoder(detailsResp.Body).Decode(&details)
+
+	var responseBuilder strings.Builder
+	for _, t := range details.Tasks {
+		if len(t.Result) == 0 {
+			continue
+		}
+		var result struct {
+			Summary        string `json:"summary"`
+			GeneratedFiles []struct {
+				Path    string `json:"path"`
+				Content string `json:"content"`
+			} `json:"generated_files"`
+		}
+		if json.Unmarshal(t.Result, &result) == nil {
+			if result.Summary != "" {
+				responseBuilder.WriteString(result.Summary)
+				responseBuilder.WriteString("\n\n")
+			}
+			if len(result.GeneratedFiles) > 0 {
+				for _, f := range result.GeneratedFiles {
+					responseBuilder.WriteString(f.Content)
+					responseBuilder.WriteString("\n\n")
+				}
+			}
+		} else {
+			responseBuilder.Write(t.Result)
+			responseBuilder.WriteString("\n")
+		}
+	}
+
+	content := strings.TrimSpace(responseBuilder.String())
+	if content == "" {
+		if details.Goal.Status == "failed" {
+			content = "The task failed. Please try a different request."
+		} else {
+			content = "Goal completed but no output was generated."
+		}
+	}
+
+	msg, err := chatStore.AppendMessage(ctx, sessionID, userID, "assistant", content, nil, nil, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("save assistant message failed: %w", err)
+	}
+
+	return msg, nil
+}
+
