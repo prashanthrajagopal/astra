@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -46,14 +47,19 @@ type approveReq struct {
 
 type approvalRequest struct {
 	ID            string     `json:"id"`
+	RequestType   string     `json:"request_type"`
 	TaskID        *string    `json:"task_id,omitempty"`
 	WorkerID      *string    `json:"worker_id,omitempty"`
 	ToolName      string     `json:"tool_name"`
 	ActionSummary string     `json:"action_summary"`
+	GoalID        *string    `json:"goal_id,omitempty"`
+	GraphID       *string    `json:"graph_id,omitempty"`
+	Summary       string     `json:"summary,omitempty"` // plan goal_text truncated for list
 	Status        string     `json:"status"`
 	RequestedAt   time.Time  `json:"requested_at"`
 	DecidedAt     *time.Time `json:"decided_at,omitempty"`
 	DecidedBy     string     `json:"decided_by,omitempty"`
+	PlanPayload   []byte     `json:"plan_payload,omitempty"` // only in GET by id
 }
 
 func main() {
@@ -71,14 +77,22 @@ func main() {
 	}
 	defer dbConn.Close()
 
+	httpClient, err := httpx.NewClient(cfg, 5*time.Second)
+	if err != nil {
+		slog.Error("failed to create http client", "err", err)
+		os.Exit(1)
+	}
+
+	goalServiceAddr := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
 	mux := http.NewServeMux()
-	srv := &server{db: dbConn}
+	srv := &server{db: dbConn, goalServiceAddr: goalServiceAddr, client: httpClient}
 
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("POST /check", srv.handleCheck)
 	mux.HandleFunc("POST /approvals/{id}/approve", srv.handleApprove)
 	mux.HandleFunc("POST /approvals/{id}/deny", srv.handleDeny)
 	mux.HandleFunc("GET /approvals/pending", srv.handlePending)
+	mux.HandleFunc("GET /approvals/{id}", srv.handleGetByID)
 
 	addr := fmt.Sprintf(":%d", cfg.AccessControlPort)
 	slog.Info("access control service started", "addr", addr)
@@ -90,7 +104,9 @@ func main() {
 }
 
 type server struct {
-	db *sql.DB
+	db                *sql.DB
+	goalServiceAddr   string
+	client            *http.Client
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +182,26 @@ func (s *server) handleApprovalAction(w http.ResponseWriter, r *http.Request, st
 		http.Error(w, "approval not found or not pending", http.StatusNotFound)
 		return
 	}
+	if status == "approved" && s.goalServiceAddr != "" {
+		var requestType string
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(request_type, 'risky_task') FROM approval_requests WHERE id::text = $1`, idStr).Scan(&requestType)
+		if err == nil && requestType == "plan" {
+			applyBody, _ := json.Marshal(map[string]string{"approval_id": idStr})
+			applyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.goalServiceAddr+"/internal/apply-plan", bytes.NewReader(applyBody))
+			if err == nil {
+				applyReq.Header.Set("Content-Type", "application/json")
+				applyResp, err := s.client.Do(applyReq)
+				if err != nil {
+					slog.Error("apply-plan call failed", "err", err)
+				} else {
+					applyResp.Body.Close()
+					if applyResp.StatusCode >= 400 {
+						slog.Error("apply-plan returned error", "status", applyResp.StatusCode)
+					}
+				}
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -175,7 +211,8 @@ func (s *server) handlePending(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, task_id, worker_id, tool_name, action_summary, status, requested_at, decided_at, decided_by
+		`SELECT id, COALESCE(request_type, 'risky_task'), task_id, worker_id, tool_name, action_summary,
+		 goal_id, graph_id, LEFT(COALESCE(plan_payload->>'goal_text',''), 200), status, requested_at, decided_at, decided_by
 		 FROM approval_requests WHERE status='pending' ORDER BY requested_at ASC`)
 	if err != nil {
 		slog.Error("list pending approvals failed", "err", err)
@@ -187,10 +224,12 @@ func (s *server) handlePending(w http.ResponseWriter, r *http.Request) {
 	var list []approvalRequest
 	for rows.Next() {
 		var ar approvalRequest
-		var taskID, workerID sql.NullString
+		var taskID, workerID, goalID, graphID sql.NullString
 		var decidedAt sql.NullTime
 		var decidedBy sql.NullString
-		err := rows.Scan(&ar.ID, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary, &ar.Status, &ar.RequestedAt, &decidedAt, &decidedBy)
+		var summary sql.NullString
+		err := rows.Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary,
+			&goalID, &graphID, &summary, &ar.Status, &ar.RequestedAt, &decidedAt, &decidedBy)
 		if err != nil {
 			slog.Error("scan approval row failed", "err", err)
 			continue
@@ -200,6 +239,15 @@ func (s *server) handlePending(w http.ResponseWriter, r *http.Request) {
 		}
 		if workerID.Valid {
 			ar.WorkerID = &workerID.String
+		}
+		if goalID.Valid {
+			ar.GoalID = &goalID.String
+		}
+		if graphID.Valid {
+			ar.GraphID = &graphID.String
+		}
+		if summary.Valid {
+			ar.Summary = summary.String
 		}
 		if decidedAt.Valid {
 			ar.DecidedAt = &decidedAt.Time
@@ -217,4 +265,75 @@ func (s *server) handlePending(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
+}
+
+func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	if _, err := uuid.Parse(idStr); err != nil {
+		http.Error(w, "invalid approval id", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var ar approvalRequest
+	var taskID, workerID, goalID, graphID sql.NullString
+	var decidedAt sql.NullTime
+	var decidedBy sql.NullString
+	var planPayload []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, COALESCE(request_type, 'risky_task'), task_id, worker_id, tool_name, action_summary,
+		 goal_id, graph_id, status, requested_at, decided_at, decided_by, plan_payload
+		 FROM approval_requests WHERE id::text = $1`,
+		idStr).Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary,
+		&goalID, &graphID, &ar.Status, &ar.RequestedAt, &decidedAt, &decidedBy, &planPayload)
+	if err == sql.ErrNoRows {
+		http.Error(w, "approval not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("get approval by id failed", "id", idStr, "err", err)
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	if taskID.Valid {
+		ar.TaskID = &taskID.String
+	}
+	if workerID.Valid {
+		ar.WorkerID = &workerID.String
+	}
+	if goalID.Valid {
+		ar.GoalID = &goalID.String
+	}
+	if graphID.Valid {
+		ar.GraphID = &graphID.String
+	}
+	if decidedAt.Valid {
+		ar.DecidedAt = &decidedAt.Time
+	}
+	if decidedBy.Valid {
+		ar.DecidedBy = decidedBy.String
+	}
+	out := map[string]interface{}{
+		"id":              ar.ID,
+		"request_type":    ar.RequestType,
+		"task_id":         ar.TaskID,
+		"worker_id":       ar.WorkerID,
+		"tool_name":       ar.ToolName,
+		"action_summary":  ar.ActionSummary,
+		"goal_id":         ar.GoalID,
+		"graph_id":        ar.GraphID,
+		"status":          ar.Status,
+		"requested_at":    ar.RequestedAt,
+		"decided_at":      ar.DecidedAt,
+		"decided_by":      ar.DecidedBy,
+	}
+	if len(planPayload) > 0 {
+		var payload interface{}
+		if json.Unmarshal(planPayload, &payload) == nil {
+			out["plan_payload"] = payload
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }

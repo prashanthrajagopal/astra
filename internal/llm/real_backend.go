@@ -251,7 +251,12 @@ func (b *EndpointBackend) mlxComplete(ctx context.Context, model string, prompt 
 			CompletionTokens int `json:"completion_tokens"`
 		} `json:"usage"`
 	}
-	err := b.postJSON(ctx, b.mlxHost+"/v1/chat/completions", reqBody, nil, &resp)
+	// Try OpenAI-style path first; some mlx_lm.server versions only expose /chat/completions
+	base := strings.TrimSuffix(b.mlxHost, "/")
+	err := b.postJSON(ctx, base+"/v1/chat/completions", reqBody, nil, &resp)
+	if err != nil && isNotFound(err) {
+		err = b.postJSON(ctx, base+"/chat/completions", reqBody, nil, &resp)
+	}
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -259,6 +264,11 @@ func (b *EndpointBackend) mlxComplete(ctx context.Context, model string, prompt 
 		return "", 0, 0, fmt.Errorf("mlx returned no choices")
 	}
 	return resp.Choices[0].Message.Content, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, nil
+}
+
+// isNotFound reports whether err is an HTTP 404 from postJSON.
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "status 404")
 }
 
 func (b *EndpointBackend) postJSON(ctx context.Context, url string, reqBody any, headers map[string]string, out any) error {

@@ -1398,6 +1398,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 | Dashboard | Content |
 |---|---|
+| **Operations Dashboard** (api-gateway `/dashboard/`) | Service health, workers, **agents** (count, status chart, paginated table with Prev/Next), goals (recent list; clickable rows open **goal detail modal** with full goal text, task list, and failure logs), pending approvals, cost trends, logs, PIDs. Snapshot includes `agents`, `agent_count`; goal details via `GET /api/dashboard/goals/{id}`. |
 | Cluster Overview | Capacity, active agents, task throughput, error rate |
 | Agent Health | Per-agent throughput, avg latency, failure rate |
 | Cost | LLM token usage & cost per agent, per model |
@@ -1639,6 +1640,8 @@ func (r *Router) Route(taskType string, priority int) ModelTier {
 
 With every request that uses an LLM, the user sees **token/LLM usage** (model, tokens in/out, latency, cost) in the response. Usage is captured in the LLM router (or caller), returned in the response envelope, and persisted **asynchronously** via the `astra:usage` stream to the `llm_usage` table and to `events` (type `LLMUsage`) for audit and metrics. No synchronous DB write on the hot path. See **docs/phase-history-usage-audit-design.md** and §18 Audit & Compliance.
 
+**Token counts:** Backends (OpenAI, Anthropic, Gemini, Ollama, MLX) parse provider responses and return real `tokens_in`/`tokens_out`; the router builds `Usage` and the gRPC response and usage stream carry these values. The router cache stores and restores token usage on cache hit so cached responses still show non-zero counts. For MLX, the client tries `/v1/chat/completions` first and falls back to `/chat/completions` on 404 for compatibility with older mlx_lm.server versions.
+
 ---
 
 # 23. Operational Playbooks
@@ -1845,10 +1848,15 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 - [x] Embedded dashboard UI served by api-gateway at `/dashboard/` ✅
 - [x] Snapshot API at `/api/dashboard/snapshot` with services/workers/approvals/cost/logs/pids ✅
+- [x] Snapshot enriched with agents (agent_count, agents list) from agent-service QueryState ✅
+- [x] Summary stats include Agents count; Agents doughnut chart (by status) next to Service Health ✅
+- [x] Agents table with Previous/Next pagination to scroll through all agents ✅
+- [x] Recent Goals rows clickable; goal detail modal shows full goal text, actions (tasks), and failure logs for failed tasks ✅
+- [x] Goal-service `GET /goals/{id}/details` returns goal + tasks (task store `ListTasksByGoalID`); gateway `GET /api/dashboard/goals/{id}` proxies for dashboard ✅
 - [x] Auto-refreshing frontend with status and latency indicators ✅
 - [x] Dashboard validation coverage in `scripts/validate.sh` ✅
 
-**Acceptance:** Operators can open one dashboard and inspect service health, workers, pending approvals, cost trends, process state, and recent logs without shell access.
+**Acceptance:** Operators can open one dashboard and inspect service health, workers, **agents** (count, chart, paginated list), pending approvals, cost trends, process state, and recent logs without shell access. Clicking a goal opens a modal with full goal description, task list (actions), and failure logs for failed tasks.
 
 ## Phase 9 — Agent Profile & Context Management (3-4 weeks)
 
