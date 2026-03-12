@@ -70,7 +70,7 @@ info:
     ```
 
     ### Step 5 — Monitor via dashboard
-    Open `http://localhost:8080/dashboard/` to see task progress, worker activity,
+    Open `http://localhost:8080/superadmin/dashboard/` to see task progress, worker activity,
     and pending approvals in real time.
 
     ### Step 6 — Auto-approve or manually approve dangerous operations
@@ -520,7 +520,7 @@ paths:
   # API GATEWAY — DASHBOARD
   # ═══════════════════════════════════════════════════════════════════
 
-  /api/dashboard/snapshot:
+  /superadmin/api/dashboard/snapshot:
     get:
       tags: [Gateway — Dashboard]
       summary: Get full platform snapshot
@@ -572,7 +572,7 @@ paths:
                       tokens_out: 3200
                       cost_dollars: 0.02
 
-  /api/dashboard/approvals/{id}/approve:
+  /superadmin/api/dashboard/approvals/{id}/approve:
     post:
       tags: [Gateway — Dashboard]
       summary: Approve a pending request (from dashboard)
@@ -592,7 +592,7 @@ paths:
         '200':
           description: Approved
 
-  /api/dashboard/approvals/{id}/reject:
+  /superadmin/api/dashboard/approvals/{id}/reject:
     post:
       tags: [Gateway — Dashboard]
       summary: Reject a pending request (from dashboard)

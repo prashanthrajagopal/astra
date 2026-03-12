@@ -21,6 +21,7 @@ type TaskPayload struct {
 	Instructions string          `json:"instructions"`
 	OutputFiles  []string        `json:"output_files"`
 	Workspace    string          `json:"workspace"`
+	OrgID        string          `json:"org_id,omitempty"`
 	AgentContext json.RawMessage `json:"agent_context,omitempty"`
 }
 
@@ -58,7 +59,7 @@ var fileBlockRe = regexp.MustCompile("(?m)^```(?:(?:typescript|tsx|ts|javascript
 
 // Process handles a code_generate task: reads workspace context, calls LLM, writes files.
 func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceRuntime, llmClient llmpb.LLMRouterClient) (*Result, error) {
-	wsRuntime := scopedRuntime(runtime, payload.Workspace)
+	wsRuntime := orgScopedRuntime(runtime, payload.OrgID, payload.Workspace)
 	workspace := wsRuntime.Root
 
 	existingContext := gatherContext(workspace, payload.OutputFiles)
@@ -122,7 +123,7 @@ func ProcessShellExec(ctx context.Context, payload TaskPayload, runtime *tools.W
 	}
 	cmd = cleanShellCommand(cmd)
 
-	wsRuntime := scopedRuntime(runtime, payload.Workspace)
+	wsRuntime := orgScopedRuntime(runtime, payload.OrgID, payload.Workspace)
 	input, _ := json.Marshal(map[string]string{"command": cmd})
 	result, err := wsRuntime.Execute(ctx, tools.ToolRequest{
 		Name:    "shell_exec",
@@ -330,17 +331,23 @@ func parseLooseContent(content string, outputFiles []string) map[string]string {
 	return map[string]string{outputFiles[0]: cleaned}
 }
 
-// scopedRuntime returns a WorkspaceRuntime scoped to the payload's workspace path.
-// If the payload workspace is an absolute path, use it directly. If relative, join with runtime root.
-// If empty, use the runtime as-is.
-func scopedRuntime(runtime *tools.WorkspaceRuntime, workspace string) *tools.WorkspaceRuntime {
+// orgScopedRuntime returns a WorkspaceRuntime scoped to the org's isolated
+// directory under the base runtime root. Org-owned tasks use
+// {root}/{org_id}/{workspace}; tasks without an org use {root}/_global/{workspace}.
+func orgScopedRuntime(runtime *tools.WorkspaceRuntime, orgID, workspace string) *tools.WorkspaceRuntime {
+	prefix := "_global"
+	if orgID != "" {
+		prefix = orgID
+	}
+	scopedRoot := filepath.Join(runtime.Root, prefix)
+
 	if workspace == "" {
-		return runtime
+		return tools.NewWorkspaceRuntime(scopedRoot)
 	}
 	if filepath.IsAbs(workspace) {
 		return tools.NewWorkspaceRuntime(workspace)
 	}
-	return tools.NewWorkspaceRuntime(filepath.Join(runtime.Root, workspace))
+	return tools.NewWorkspaceRuntime(filepath.Join(scopedRoot, workspace))
 }
 
 // cleanShellCommand strips common LLM formatting from shell commands.

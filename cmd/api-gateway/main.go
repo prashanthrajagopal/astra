@@ -12,14 +12,17 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"astra/internal/agentdocs"
 	"astra/internal/chat"
 	"astra/internal/dashboard"
+	"astra/internal/identity"
 	"astra/internal/llm"
 	"astra/internal/memory"
+	"astra/internal/orgs"
 	"astra/pkg/config"
 	"astra/pkg/db"
 	astraGrpc "astra/pkg/grpc"
@@ -121,6 +124,11 @@ func main() {
 		}
 	}
 	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore)
+	orgStore := orgs.NewStore(database)
+	identityStore := identity.NewStore(database)
+	registerMultiTenantRoutes(mux, cfg, orgStore, identityStore, dashboardClient, database)
+	mux.HandleFunc("GET /login", handleLoginPage)
+	mux.HandleFunc("POST /login", makeLoginProxyHandler(dashboardClient, cfg.IdentityAddr))
 	if cfg.ChatEnabled {
 		wsHandler := chat.NewWebSocketHandler(chatStore, database, llmBackend, &chat.HandlerConfig{
 			MaxMsgLength: cfg.ChatMaxMsgLength,
@@ -141,6 +149,9 @@ func main() {
 	mux.Handle("POST /agents/{id}/goals", auth.protect(http.HandlerFunc(handleAgentGoals)))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
 	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
 
 	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	slog.Info("api gateway started", "addr", addr)
@@ -209,9 +220,15 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			return
 		}
 		var valRes struct {
-			Valid   bool     `json:"valid"`
-			Subject string   `json:"subject"`
-			Scopes  []string `json:"scopes"`
+			Valid        bool     `json:"valid"`
+			Subject      string   `json:"subject"`
+			Scopes       []string `json:"scopes"`
+			UserID       string   `json:"user_id"`
+			Email        string   `json:"email"`
+			OrgID        string   `json:"org_id"`
+			OrgRole      string   `json:"org_role"`
+			TeamIDs      []string `json:"team_ids"`
+			IsSuperAdmin bool     `json:"is_super_admin"`
 		}
 		if err := json.NewDecoder(valResp.Body).Decode(&valRes); err != nil || !valRes.Valid {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -245,6 +262,17 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			return
 		}
 
+		r.Header.Set("X-User-Id", valRes.UserID)
+		r.Header.Set("X-Org-Id", valRes.OrgID)
+		r.Header.Set("X-Org-Role", valRes.OrgRole)
+		r.Header.Set("X-Email", valRes.Email)
+		if valRes.IsSuperAdmin {
+			r.Header.Set("X-Is-Super-Admin", "true")
+		}
+		if len(valRes.TeamIDs) > 0 {
+			r.Header.Set("X-Team-Ids", strings.Join(valRes.TeamIDs, ","))
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -261,6 +289,134 @@ func extractBearer(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(ah, prefix))
 }
 
+func handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(loginPageHTML))
+}
+
+func makeLoginProxyHandler(client *http.Client, identityAddr string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(identityAddr, "/")+"/users/login", bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, `{"error":"request build failed"}`, http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, `{"error":"identity service unavailable"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}
+}
+
+const loginPageHTML = `<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Astra — Sign In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#242736;--border:#2e3348;
+  --text:#e4e6f0;--text2:#9399b2;--primary:#6c8aff;--primary-hover:#8ba3ff;
+  --error:#f87171;--success:#34d399;
+}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  padding:48px 40px;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.logo{font-size:1.75rem;font-weight:700;text-align:center;margin-bottom:8px;letter-spacing:-.02em}
+.logo span{color:var(--primary)}
+.subtitle{text-align:center;color:var(--text2);font-size:.875rem;margin-bottom:32px}
+.field{margin-bottom:20px}
+.field label{display:block;font-size:.8125rem;font-weight:500;color:var(--text2);margin-bottom:6px}
+.field input{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:.9375rem;outline:none;transition:border .15s}
+.field input:focus{border-color:var(--primary)}
+.field input::placeholder{color:var(--text2);opacity:.6}
+.btn{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:8px;
+  font-size:.9375rem;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
+.btn:hover{background:var(--primary-hover)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.msg{margin-top:16px;padding:10px 14px;border-radius:8px;font-size:.8125rem;display:none}
+.msg.error{display:block;background:rgba(248,113,113,.1);border:1px solid var(--error);color:var(--error)}
+.msg.success{display:block;background:rgba(52,211,153,.1);border:1px solid var(--success);color:var(--success)}
+.links{margin-top:24px;text-align:center;font-size:.8125rem;color:var(--text2)}
+.links a{color:var(--primary);text-decoration:none}
+.links a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="logo"><span>Astra</span></div>
+  <div class="subtitle">Sign in to the Autonomous Agent Platform</div>
+  <form id="login-form" autocomplete="on">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" placeholder="you@company.com" required autofocus/>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" placeholder="Password" required/>
+    </div>
+    <button class="btn" type="submit" id="btn-login">Sign in</button>
+  </form>
+  <div id="msg" class="msg"></div>
+  <div class="links">
+    <a href="/superadmin/dashboard/">Super-Admin Dashboard</a>
+  </div>
+</div>
+<script>
+(function(){
+  var form=document.getElementById('login-form');
+  var msg=document.getElementById('msg');
+  var btn=document.getElementById('btn-login');
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    btn.disabled=true;
+    btn.textContent='Signing in...';
+    msg.className='msg';msg.style.display='none';
+    var body=JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value});
+    fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:body})
+      .then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})})
+      .then(function(res){
+        if(!res.ok){
+          msg.className='msg error';msg.textContent=res.data.error||'Login failed';msg.style.display='block';
+          btn.disabled=false;btn.textContent='Sign in';
+          return;
+        }
+        var d=res.data;
+        localStorage.setItem('astra_token',d.token||'');
+        localStorage.setItem('astra_user',JSON.stringify(d.user||{}));
+        if(d.org) localStorage.setItem('astra_org',JSON.stringify(d.org));
+        msg.className='msg success';msg.textContent='Welcome, '+(d.user&&d.user.name||'User')+'!';msg.style.display='block';
+        var u=d.user||{};
+        setTimeout(function(){
+          if(u.is_super_admin) window.location.href='/superadmin/dashboard/';
+          else window.location.href='/superadmin/dashboard/';
+        },600);
+      })
+      .catch(function(err){
+        msg.className='msg error';msg.textContent='Network error: '+err.message;msg.style.display='block';
+        btn.disabled=false;btn.textContent='Sign in';
+      });
+  });
+})();
+</script>
+</body>
+</html>`
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
@@ -272,9 +428,11 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		return
 	}
 	fileServer := http.FileServer(http.FS(sub))
-	mux.Handle("GET /dashboard/", http.StripPrefix("/dashboard/", fileServer))
-	mux.Handle("GET /dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
-	mux.HandleFunc("GET /api/dashboard/snapshot", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /superadmin/dashboard/", http.StripPrefix("/superadmin/dashboard/", fileServer))
+	mux.Handle("GET /superadmin/dashboard", http.RedirectHandler("/superadmin/dashboard/", http.StatusMovedPermanently))
+	mux.Handle("GET /dashboard/", http.RedirectHandler("/superadmin/dashboard/", http.StatusMovedPermanently))
+	mux.Handle("GET /dashboard", http.RedirectHandler("/superadmin/dashboard/", http.StatusMovedPermanently))
+	mux.HandleFunc("GET /superadmin/api/dashboard/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		defer cancel()
 		snap := collector.Collect(ctx)
@@ -301,16 +459,16 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(snap)
 	})
-	mux.HandleFunc("GET /api/dashboard/approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /superadmin/api/dashboard/approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
 		handleGetApprovalProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"))
 	})
-	mux.HandleFunc("POST /api/dashboard/approvals/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /superadmin/api/dashboard/approvals/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
 		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "approve")
 	})
-	mux.HandleFunc("POST /api/dashboard/approvals/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /superadmin/api/dashboard/approvals/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
 		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "deny")
 	})
-	mux.HandleFunc("GET /api/dashboard/settings", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /superadmin/api/dashboard/settings", func(w http.ResponseWriter, r *http.Request) {
 		autoApprove := os.Getenv("AUTO_APPROVE_PLANS") == "true"
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]bool{"auto_approve_plans": autoApprove})
@@ -319,7 +477,7 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 	if cfg.GoalServicePort == 0 {
 		goalServiceBase = "http://localhost:8088"
 	}
-	mux.HandleFunc("GET /api/dashboard/goals/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /superadmin/api/dashboard/goals/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if strings.TrimSpace(id) == "" {
 			http.Error(w, "goal id required", http.StatusBadRequest)
@@ -346,7 +504,7 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		}
 		io.Copy(w, resp.Body)
 	})
-	mux.HandleFunc("POST /api/dashboard/goals/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /superadmin/api/dashboard/goals/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if strings.TrimSpace(id) == "" {
 			http.Error(w, "goal id required", http.StatusBadRequest)
@@ -380,7 +538,7 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 	})
-	mux.HandleFunc("POST /api/dashboard/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /superadmin/api/dashboard/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
 			http.Error(w, "task id required", http.StatusBadRequest)
@@ -407,21 +565,21 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 	})
 	if store != nil {
-		mux.HandleFunc("PATCH /api/dashboard/agents/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("PATCH /superadmin/api/dashboard/agents/{id}/status", func(w http.ResponseWriter, r *http.Request) {
 			handleDashboardAgentStatus(w, r, store)
 		})
-		mux.HandleFunc("DELETE /api/dashboard/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("DELETE /superadmin/api/dashboard/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
 			handleDashboardAgentDelete(w, r, store)
 		})
 	}
 	if chatStore != nil {
-		mux.HandleFunc("GET /api/dashboard/chat/agents", handleDashboardChatAgents(chatStore))
-		mux.HandleFunc("GET /api/dashboard/chat/sessions", handleDashboardChatListSessions(chatStore))
-		mux.HandleFunc("POST /api/dashboard/chat/sessions", handleDashboardChatCreateSession(chatStore))
-		mux.HandleFunc("GET /api/dashboard/chat/sessions/{id}", handleDashboardChatGetSession(chatStore))
-		mux.HandleFunc("GET /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatGetMessages(chatStore))
+		mux.HandleFunc("GET /superadmin/api/dashboard/chat/agents", handleDashboardChatAgents(chatStore))
+		mux.HandleFunc("GET /superadmin/api/dashboard/chat/sessions", handleDashboardChatListSessions(chatStore))
+		mux.HandleFunc("POST /superadmin/api/dashboard/chat/sessions", handleDashboardChatCreateSession(chatStore))
+		mux.HandleFunc("GET /superadmin/api/dashboard/chat/sessions/{id}", handleDashboardChatGetSession(chatStore))
+		mux.HandleFunc("GET /superadmin/api/dashboard/chat/sessions/{id}/messages", handleDashboardChatGetMessages(chatStore))
 		goalServiceAddr := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
-		mux.HandleFunc("POST /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatAppendMessage(chatStore, goalServiceAddr, database, llmBackend, memStore))
+		mux.HandleFunc("POST /superadmin/api/dashboard/chat/sessions/{id}/messages", handleDashboardChatAppendMessage(chatStore, goalServiceAddr, database, llmBackend, memStore))
 	}
 }
 
@@ -1209,4 +1367,979 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 		"tasks":        resp.Tasks,
 		"dependencies": resp.Dependencies,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Multi-Tenant Routes
+// ---------------------------------------------------------------------------
+
+func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore *orgs.Store, identityStore *identity.Store, client *http.Client, database *sql.DB) {
+	identityAddr := strings.TrimSuffix(cfg.IdentityAddr, "/")
+
+	// --- Super-Admin Org Routes ---
+
+	mux.HandleFunc("GET /superadmin/api/orgs", func(w http.ResponseWriter, r *http.Request) {
+		limit, offset := parsePagination(r)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		list, total, err := orgStore.ListOrgs(ctx, limit, offset)
+		if err != nil {
+			slog.Error("ListOrgs failed", "err", err)
+			http.Error(w, "list orgs failed", http.StatusInternalServerError)
+			return
+		}
+		items := make([]map[string]any, len(list))
+		for i, o := range list {
+			items[i] = map[string]any{
+				"id": o.ID.String(), "name": o.Name, "slug": o.Slug,
+				"status": o.Status, "config": json.RawMessage(o.Config),
+				"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"orgs": items, "total": total})
+	})
+
+	mux.HandleFunc("POST /superadmin/api/orgs", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
+			http.Error(w, "name and slug required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		org, err := orgStore.CreateOrg(ctx, req.Name, req.Slug)
+		if err != nil {
+			slog.Error("CreateOrg failed", "err", err)
+			http.Error(w, "create org failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": org.ID.String(), "name": org.Name, "slug": org.Slug,
+			"status": org.Status, "created_at": org.CreatedAt, "updated_at": org.UpdatedAt,
+		})
+	})
+
+	mux.HandleFunc("GET /superadmin/api/orgs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		org, err := orgStore.GetOrg(ctx, id)
+		if err != nil {
+			slog.Error("GetOrg failed", "err", err)
+			http.Error(w, "get org failed", http.StatusInternalServerError)
+			return
+		}
+		if org == nil {
+			http.Error(w, "org not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": org.ID.String(), "name": org.Name, "slug": org.Slug,
+			"status": org.Status, "config": json.RawMessage(org.Config),
+			"created_at": org.CreatedAt, "updated_at": org.UpdatedAt,
+		})
+	})
+
+	mux.HandleFunc("PATCH /superadmin/api/orgs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Name   *string `json:"name"`
+			Slug   *string `json:"slug"`
+			Status *string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.UpdateOrg(ctx, id, req.Name, req.Slug, req.Status); err != nil {
+			slog.Error("UpdateOrg failed", "err", err)
+			http.Error(w, "update org failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /superadmin/api/orgs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.DeleteOrg(ctx, id); err != nil {
+			slog.Error("DeleteOrg failed", "err", err)
+			http.Error(w, "delete org failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("POST /superadmin/api/orgs/{id}/admins", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(req.UserID)
+		if err != nil {
+			http.Error(w, "invalid user_id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.AddOrgMember(ctx, orgID, userID, "admin"); err != nil {
+			slog.Error("AddOrgMember admin failed", "err", err)
+			http.Error(w, "add admin failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /superadmin/api/orgs/{id}/admins/{uid}", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(r.PathValue("uid"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.RemoveOrgMember(ctx, orgID, userID); err != nil {
+			slog.Error("RemoveOrgMember failed", "err", err)
+			http.Error(w, "remove admin failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	// --- Super-Admin User Routes (proxy to identity service) ---
+
+	mux.HandleFunc("GET /superadmin/api/users", func(w http.ResponseWriter, r *http.Request) {
+		proxyToIdentity(w, r, client, identityAddr, http.MethodGet, "/users")
+	})
+
+	mux.HandleFunc("POST /superadmin/api/users", func(w http.ResponseWriter, r *http.Request) {
+		proxyToIdentity(w, r, client, identityAddr, http.MethodPost, "/users")
+	})
+
+	mux.HandleFunc("GET /superadmin/api/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		proxyToIdentity(w, r, client, identityAddr, http.MethodGet, "/users/"+r.PathValue("id"))
+	})
+
+	mux.HandleFunc("PATCH /superadmin/api/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		proxyToIdentity(w, r, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"))
+	})
+
+	mux.HandleFunc("POST /superadmin/api/users/{id}/reset-password", func(w http.ResponseWriter, r *http.Request) {
+		proxyToIdentity(w, r, client, identityAddr, http.MethodPost, "/users/"+r.PathValue("id")+"/reset-password")
+	})
+
+	// --- Super-Admin User-Org Management ---
+
+	mux.HandleFunc("GET /superadmin/api/users/{id}/orgs", func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		memberships, err := identityStore.GetOrgMemberships(ctx, userID)
+		if err != nil {
+			slog.Error("GetOrgMemberships failed", "err", err)
+			http.Error(w, "get memberships failed", http.StatusInternalServerError)
+			return
+		}
+		items := make([]map[string]any, len(memberships))
+		for i, m := range memberships {
+			items[i] = map[string]any{
+				"org_id": m.OrgID.String(), "org_name": m.OrgName,
+				"org_slug": m.OrgSlug, "role": m.Role,
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"memberships": items})
+	})
+
+	mux.HandleFunc("POST /superadmin/api/users/{id}/orgs", func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			OrgID string `json:"org_id"`
+			Role  string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrgID == "" || req.Role == "" {
+			http.Error(w, "org_id and role required", http.StatusBadRequest)
+			return
+		}
+		orgID, err := uuid.Parse(req.OrgID)
+		if err != nil {
+			http.Error(w, "invalid org_id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.AddOrgMember(ctx, orgID, userID, req.Role); err != nil {
+			slog.Error("AddOrgMember failed", "err", err)
+			http.Error(w, "add membership failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("PATCH /superadmin/api/users/{id}/orgs/{oid}", func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		orgID, err := uuid.Parse(r.PathValue("oid"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Role string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Role == "" {
+			http.Error(w, "role required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.UpdateOrgMemberRole(ctx, orgID, userID, req.Role); err != nil {
+			slog.Error("UpdateOrgMemberRole failed", "err", err)
+			http.Error(w, "update role failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /superadmin/api/users/{id}/orgs/{oid}", func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		orgID, err := uuid.Parse(r.PathValue("oid"))
+		if err != nil {
+			http.Error(w, "invalid org id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.RemoveOrgMember(ctx, orgID, userID); err != nil {
+			slog.Error("RemoveOrgMember failed", "err", err)
+			http.Error(w, "remove membership failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("POST /superadmin/api/users/{id}/suspend", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := json.Marshal(map[string]string{"status": "suspended"})
+		proxyToIdentityWithBody(w, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"), body, r.Context())
+	})
+
+	mux.HandleFunc("POST /superadmin/api/users/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := json.Marshal(map[string]string{"status": "active"})
+		proxyToIdentityWithBody(w, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"), body, r.Context())
+	})
+
+	// --- Org-Level Routes ---
+
+	mux.HandleFunc("GET /org/api/teams", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		teams, err := orgStore.ListTeams(ctx, orgID)
+		if err != nil {
+			slog.Error("ListTeams failed", "err", err)
+			http.Error(w, "list teams failed", http.StatusInternalServerError)
+			return
+		}
+		items := make([]map[string]any, len(teams))
+		for i, t := range teams {
+			items[i] = map[string]any{
+				"id": t.ID.String(), "org_id": t.OrgID.String(),
+				"name": t.Name, "slug": t.Slug,
+				"description": t.Description, "created_at": t.CreatedAt,
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"teams": items})
+	})
+
+	mux.HandleFunc("POST /org/api/teams", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
+			http.Error(w, "name and slug required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		team, err := orgStore.CreateTeam(ctx, orgID, req.Name, req.Slug)
+		if err != nil {
+			slog.Error("CreateTeam failed", "err", err)
+			http.Error(w, "create team failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": team.ID.String(), "org_id": team.OrgID.String(),
+			"name": team.Name, "slug": team.Slug,
+			"description": team.Description, "created_at": team.CreatedAt,
+		})
+	})
+
+	mux.HandleFunc("PATCH /org/api/teams/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid team id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Name        *string `json:"name"`
+			Slug        *string `json:"slug"`
+			Description *string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.UpdateTeam(ctx, id, req.Name, req.Slug, req.Description); err != nil {
+			slog.Error("UpdateTeam failed", "err", err)
+			http.Error(w, "update team failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /org/api/teams/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid team id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.DeleteTeam(ctx, id); err != nil {
+			slog.Error("DeleteTeam failed", "err", err)
+			http.Error(w, "delete team failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("POST /org/api/teams/{id}/members", func(w http.ResponseWriter, r *http.Request) {
+		teamID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid team id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			UserID string `json:"user_id"`
+			Role   string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(req.UserID)
+		if err != nil {
+			http.Error(w, "invalid user_id", http.StatusBadRequest)
+			return
+		}
+		if req.Role == "" {
+			req.Role = "member"
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.AddTeamMember(ctx, teamID, userID, req.Role); err != nil {
+			slog.Error("AddTeamMember failed", "err", err)
+			http.Error(w, "add team member failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /org/api/teams/{id}/members/{uid}", func(w http.ResponseWriter, r *http.Request) {
+		teamID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid team id", http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(r.PathValue("uid"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.RemoveTeamMember(ctx, teamID, userID); err != nil {
+			slog.Error("RemoveTeamMember failed", "err", err)
+			http.Error(w, "remove team member failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("GET /org/api/members", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		members, err := orgStore.ListOrgMembers(ctx, orgID)
+		if err != nil {
+			slog.Error("ListOrgMembers failed", "err", err)
+			http.Error(w, "list members failed", http.StatusInternalServerError)
+			return
+		}
+		items := make([]map[string]any, len(members))
+		for i, m := range members {
+			items[i] = map[string]any{
+				"user_id": m.UserID.String(), "email": m.Email,
+				"name": m.Name, "role": m.Role,
+				"created_at": m.CreatedAt,
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"members": items})
+	})
+
+	mux.HandleFunc("POST /org/api/members", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Email    string `json:"email"`
+			Name     string `json:"name"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Name == "" || req.Password == "" {
+			http.Error(w, "email, name, and password required", http.StatusBadRequest)
+			return
+		}
+		if req.Role == "" {
+			req.Role = "member"
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		user, err := identityStore.CreateUser(ctx, req.Email, req.Name, req.Password, false)
+		if err != nil {
+			slog.Error("CreateUser for org member failed", "err", err)
+			http.Error(w, "create user failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := orgStore.AddOrgMember(ctx, orgID, user.ID, req.Role); err != nil {
+			slog.Error("AddOrgMember failed", "err", err)
+			http.Error(w, "add member failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"user_id": user.ID.String(), "email": user.Email,
+			"name": user.Name, "role": req.Role,
+		})
+	})
+
+	mux.HandleFunc("PATCH /org/api/members/{uid}", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(r.PathValue("uid"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Role string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Role == "" {
+			http.Error(w, "role required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.UpdateOrgMemberRole(ctx, orgID, userID, req.Role); err != nil {
+			slog.Error("UpdateOrgMemberRole failed", "err", err)
+			http.Error(w, "update role failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /org/api/members/{uid}", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(r.PathValue("uid"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := orgStore.RemoveOrgMember(ctx, orgID, userID); err != nil {
+			slog.Error("RemoveOrgMember failed", "err", err)
+			http.Error(w, "remove member failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	// --- Org-Level Agent Creation ---
+
+	mux.HandleFunc("POST /org/api/agents", func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		userID := r.Header.Get("X-User-Id")
+		if userID == "" {
+			userID = r.URL.Query().Get("user_id")
+		}
+		if userID == "" {
+			http.Error(w, "user_id required (X-User-Id header or user_id query param)", http.StatusBadRequest)
+			return
+		}
+		ownerUUID, err := uuid.Parse(userID)
+		if err != nil {
+			http.Error(w, "invalid user_id", http.StatusBadRequest)
+			return
+		}
+
+		var req struct {
+			Name         string `json:"name"`
+			Visibility   string `json:"visibility"`
+			TeamID       string `json:"team_id"`
+			SystemPrompt string `json:"system_prompt"`
+			Config       string `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		configBytes := []byte(req.Config)
+		resp, err := agentClient.SpawnActor(ctx, &kernel_pb.SpawnActorRequest{
+			ActorType: "agent",
+			Config:    configBytes,
+		})
+		if err != nil {
+			slog.Error("SpawnActor for org agent failed", "err", err)
+			http.Error(w, "spawn failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		agentUUID, err := uuid.Parse(resp.ActorId)
+		if err != nil {
+			http.Error(w, "invalid actor id from spawn", http.StatusInternalServerError)
+			return
+		}
+
+		if req.SystemPrompt != "" && docStore != nil {
+			_ = docStore.UpdateProfile(ctx, agentUUID, &req.SystemPrompt, nil)
+		}
+		if req.Name != "" && docStore != nil {
+			_ = docStore.UpdateAgentName(ctx, agentUUID, req.Name)
+		}
+
+		visibility := req.Visibility
+		if visibility == "" {
+			visibility = "private"
+		}
+
+		var teamID *uuid.UUID
+		if req.TeamID != "" {
+			t, err := uuid.Parse(req.TeamID)
+			if err != nil {
+				http.Error(w, "invalid team_id", http.StatusBadRequest)
+				return
+			}
+			teamID = &t
+		}
+
+		_, err = database.ExecContext(ctx,
+			`UPDATE agents SET org_id = $1, owner_id = $2, visibility = $3, team_id = $4 WHERE id = $5`,
+			orgID, ownerUUID, visibility, teamID, agentUUID)
+		if err != nil {
+			slog.Error("update agent org metadata failed", "err", err, "agent_id", agentUUID)
+			http.Error(w, "agent created but metadata update failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"actor_id":   resp.ActorId,
+			"org_id":     orgID.String(),
+			"owner_id":   ownerUUID.String(),
+			"visibility": visibility,
+		})
+	})
+
+	// --- Agent Collaborator Routes ---
+
+	mux.HandleFunc("POST /org/api/agents/{id}/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid agent id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			CollaboratorType string `json:"collaborator_type"`
+			CollaboratorID   string `json:"collaborator_id"`
+			Permission       string `json:"permission"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.CollaboratorType != "user" && req.CollaboratorType != "team" {
+			http.Error(w, "collaborator_type must be 'user' or 'team'", http.StatusBadRequest)
+			return
+		}
+		collabID, err := uuid.Parse(req.CollaboratorID)
+		if err != nil {
+			http.Error(w, "invalid collaborator_id", http.StatusBadRequest)
+			return
+		}
+		perm := req.Permission
+		if perm == "" {
+			perm = "use"
+		}
+		if perm != "use" && perm != "edit" && perm != "admin" {
+			http.Error(w, "permission must be 'use', 'edit', or 'admin'", http.StatusBadRequest)
+			return
+		}
+
+		newID := uuid.New()
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		_, err = database.ExecContext(ctx,
+			`INSERT INTO agent_collaborators (id, agent_id, collaborator_type, collaborator_id, permission) VALUES ($1, $2, $3, $4, $5)`,
+			newID, agentID, req.CollaboratorType, collabID, perm)
+		if err != nil {
+			slog.Error("insert agent_collaborator failed", "err", err)
+			http.Error(w, "add collaborator failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": newID.String(), "agent_id": agentID.String(),
+			"collaborator_type": req.CollaboratorType, "collaborator_id": collabID.String(),
+			"permission": perm,
+		})
+	})
+
+	mux.HandleFunc("GET /org/api/agents/{id}/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid agent id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		rows, err := database.QueryContext(ctx,
+			`SELECT ac.id, ac.collaborator_type, ac.collaborator_id, ac.permission, ac.created_at FROM agent_collaborators ac WHERE ac.agent_id = $1`,
+			agentID)
+		if err != nil {
+			slog.Error("query agent_collaborators failed", "err", err)
+			http.Error(w, "list collaborators failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var items []map[string]any
+		for rows.Next() {
+			var id, collabType, collabID, perm string
+			var createdAt time.Time
+			if err := rows.Scan(&id, &collabType, &collabID, &perm, &createdAt); err != nil {
+				slog.Error("scan agent_collaborator row failed", "err", err)
+				continue
+			}
+			items = append(items, map[string]any{
+				"id": id, "collaborator_type": collabType, "collaborator_id": collabID,
+				"permission": perm, "created_at": createdAt,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			slog.Error("iterate agent_collaborators failed", "err", err)
+			http.Error(w, "list collaborators failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if items == nil {
+			items = []map[string]any{}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{"collaborators": items})
+	})
+
+	mux.HandleFunc("DELETE /org/api/agents/{id}/collaborators/{cid}", func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid agent id", http.StatusBadRequest)
+			return
+		}
+		collabRowID, err := uuid.Parse(r.PathValue("cid"))
+		if err != nil {
+			http.Error(w, "invalid collaborator id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		result, err := database.ExecContext(ctx,
+			`DELETE FROM agent_collaborators WHERE id = $1 AND agent_id = $2`,
+			collabRowID, agentID)
+		if err != nil {
+			slog.Error("delete agent_collaborator failed", "err", err)
+			http.Error(w, "delete collaborator failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			http.Error(w, "collaborator not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	// --- Agent Admin Routes ---
+
+	mux.HandleFunc("POST /org/api/agents/{id}/admins", func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid agent id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		adminUserID, err := uuid.Parse(req.UserID)
+		if err != nil {
+			http.Error(w, "invalid user_id", http.StatusBadRequest)
+			return
+		}
+		newID := uuid.New()
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		_, err = database.ExecContext(ctx,
+			`INSERT INTO agent_admins (id, agent_id, user_id) VALUES ($1, $2, $3)`,
+			newID, agentID, adminUserID)
+		if err != nil {
+			slog.Error("insert agent_admin failed", "err", err)
+			http.Error(w, "add agent admin failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": newID.String(), "agent_id": agentID.String(), "user_id": adminUserID.String(),
+		})
+	})
+
+	mux.HandleFunc("DELETE /org/api/agents/{id}/admins/{uid}", func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid agent id", http.StatusBadRequest)
+			return
+		}
+		adminUserID, err := uuid.Parse(r.PathValue("uid"))
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		result, err := database.ExecContext(ctx,
+			`DELETE FROM agent_admins WHERE agent_id = $1 AND user_id = $2`,
+			agentID, adminUserID)
+		if err != nil {
+			slog.Error("delete agent_admin failed", "err", err)
+			http.Error(w, "delete agent admin failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			http.Error(w, "agent admin not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+}
+
+func proxyToIdentity(w http.ResponseWriter, r *http.Request, client *http.Client, identityAddr, method, path string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var bodyReader io.Reader
+	if r.Body != nil && method != http.MethodGet {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, identityAddr+path, bodyReader)
+	if err != nil {
+		http.Error(w, "request build failed", http.StatusInternalServerError)
+		return
+	}
+	if bodyReader != nil {
+		req.Header.Set(headerContentType, contentTypeJSON)
+	}
+	if method == http.MethodGet {
+		req.URL.RawQuery = r.URL.RawQuery
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Warn("identity proxy failed", "method", method, "path", path, "err", err)
+		http.Error(w, "identity service unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func proxyToIdentityWithBody(w http.ResponseWriter, client *http.Client, identityAddr, method, path string, body []byte, parentCtx context.Context) {
+	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, method, identityAddr+path, bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "request build failed", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set(headerContentType, contentTypeJSON)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Warn("identity proxy failed", "method", method, "path", path, "err", err)
+		http.Error(w, "identity service unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func extractOrgID(r *http.Request) (uuid.UUID, error) {
+	id := r.Header.Get("X-Org-Id")
+	if id == "" {
+		id = r.URL.Query().Get("org_id")
+	}
+	if id == "" {
+		return uuid.Nil, fmt.Errorf("org_id required (X-Org-Id header or org_id query param)")
+	}
+	return uuid.Parse(id)
+}
+
+func parsePagination(r *http.Request) (limit, offset int) {
+	limit = 50
+	offset = 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	return
 }

@@ -493,7 +493,7 @@ function submitApprovalAction(id, action) {
   if (!id || approvalActionInFlight) return;
   approvalActionInFlight = true;
   setStatus('Submitting ' + action + ' for ' + id, false);
-  fetch('/api/dashboard/approvals/' + encodeURIComponent(id) + '/' + action, {
+  fetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(id) + '/' + action, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decided_by: 'dashboard-ui' })
@@ -511,7 +511,7 @@ function fetchSnapshot() {
   if (inFlight) return;
   inFlight = true;
   setStatus('Refreshing', false);
-  return fetch('/api/dashboard/snapshot', { cache: 'no-store' })
+  return fetch('/superadmin/api/dashboard/snapshot', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -563,7 +563,7 @@ function openGoalModal(goalId) {
   modal.dataset.goalId = goalId;
   modal.hidden = false;
   body.innerHTML = '<p class="goal-modal-loading">Loading…</p>';
-  fetch('/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -661,7 +661,7 @@ function openApprovalModal(approvalId) {
   currentApprovalId = approvalId;
   modal.hidden = false;
   body.innerHTML = '<p class="approval-modal-loading">Loading…</p>';
-  fetch('/api/dashboard/approvals/' + encodeURIComponent(approvalId), { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(approvalId), { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -728,7 +728,7 @@ var currentChatSessionId = null;
 var chatSessionsList = [];
 
 function loadSettings() {
-  fetch('/api/dashboard/settings', { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/settings', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) return;
       return res.json();
@@ -753,7 +753,7 @@ var currentChatSessionId = null;
 var chatSessionsList = [];
 
 function fetchChatSessions() {
-  fetch('/api/dashboard/chat/sessions', { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/chat/sessions', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -797,7 +797,7 @@ function openChatNewModal() {
   if (loadingEl) loadingEl.hidden = false;
   if (listEl) { listEl.hidden = true; listEl.innerHTML = ''; }
   if (emptyEl) emptyEl.hidden = true;
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -834,7 +834,7 @@ function closeChatNewModal() {
 
 function createChatSession(agentId, agentName) {
   closeChatNewModal();
-  fetch('/api/dashboard/chat/sessions', {
+  fetch('/superadmin/api/dashboard/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId, title: agentName || 'Chat' })
@@ -865,7 +865,7 @@ function selectChatSession(sessionId, agentId) {
 function fetchChatMessages(sessionId) {
   var container = document.getElementById('chat-messages');
   if (!container) return;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -899,7 +899,7 @@ function sendChatMessage() {
   if (!content) return;
   input.value = '';
   input.disabled = true;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
+  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: content })
@@ -923,7 +923,7 @@ var widgetAgentId = null;
 var widgetOpen = false;
 
 function initChatWidget() {
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('no agents'); })
     .then(function (d) {
       var agents = d.agents || [];
@@ -939,7 +939,7 @@ function initChatWidget() {
 
       var savedSessionId = localStorage.getItem('astra_chat_widget_session');
       if (savedSessionId) {
-        fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
+        fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
           .then(function (res) { return res.ok ? res.json() : null; })
           .then(function (session) {
             if (session && session.id) {
@@ -963,7 +963,7 @@ function initChatWidget() {
 
 function widgetCreateSession() {
   if (!widgetAgentId) return;
-  fetch('/api/dashboard/chat/sessions', {
+  fetch('/superadmin/api/dashboard/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: widgetAgentId, title: 'Dashboard Chat' })
@@ -999,7 +999,7 @@ function widgetLoadMessages() {
   if (!widgetSessionId) return;
   var container = document.getElementById('chat-widget-messages');
   if (!container) return;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
+  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('load failed'); })
     .then(function (d) {
       widgetRenderMessages(d.messages || []);
@@ -1053,7 +1053,7 @@ function widgetSend() {
   var sendBtn = document.getElementById('chat-widget-send');
   if (sendBtn) sendBtn.disabled = true;
 
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
+  fetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: content })
@@ -1109,7 +1109,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (cancelGoalBtn && cancelGoalBtn.dataset && cancelGoalBtn.dataset.goalId) {
         e.stopPropagation();
         if (!confirm('Cancel this goal and all its tasks?')) return;
-        fetch('/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
+        fetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
           .then(function (r) {
             if (r.ok) {
               fetchSnapshot();
@@ -1132,7 +1132,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (cancelBtn && cancelBtn.dataset && cancelBtn.dataset.taskId) {
         e.stopPropagation();
         if (!confirm('Cancel this task?')) return;
-        fetch('/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
+        fetch('/superadmin/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
           .then(function (r) {
             if (r.ok) {
               cancelBtn.disabled = true;
@@ -1209,14 +1209,14 @@ document.addEventListener('DOMContentLoaded', function () {
       var agentId = btn.dataset.agentId;
       var action = (btn.dataset.action || '').toLowerCase();
       if (action === 'enable') {
-        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
+        fetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent enable failed: ' + t, true); }); });
       } else if (action === 'disable') {
-        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
+        fetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent disable failed: ' + t, true); }); });
       } else if (action === 'delete') {
         if (!confirm('Delete this agent and all its goals and tasks?')) return;
-        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
+        fetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent delete failed: ' + t, true); }); });
       }
     });

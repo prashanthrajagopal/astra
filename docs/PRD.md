@@ -1,6 +1,6 @@
 # ASTRA — The Autonomous Agent Operating System
 
-**Engineering Specification v2.1**
+**Engineering Specification v3.0 — Multi-Tenant**
 
 > A single, self-contained specification for building Astra — a production-grade, microkernel-style, planet-scale autonomous agent platform and SDK. Contains architecture, Go interfaces, gRPC contracts, database DDL, Redis stream schemas, deployment manifests, and phased implementation roadmap.
 
@@ -26,14 +26,15 @@
 16. [Agent Taxonomy & Workflows](#16-agent-taxonomy--workflows)
 17. [Observability, Tracing, Metrics](#17-observability-tracing-metrics)
 18. [Security, Policy, Governance](#18-security-policy-governance)
-19. [Deployment Architecture & Scaling](#19-deployment-architecture--scaling) (includes [Platform & Hardware Acceleration](#platform--hardware-acceleration))
-20. [Failure Modes, Recovery & Runbooks](#20-failure-modes-recovery--runbooks)
-21. [CI/CD, Testing & Release Plan](#21-cicd-testing--release-plan)
-22. [Cost Management & LLM Routing](#22-cost-management--llm-routing)
-23. [Operational Playbooks](#23-operational-playbooks)
-24. [Acceptance Criteria & SLAs](#24-acceptance-criteria--slas)
-25. [Implementation Roadmap](#25-implementation-roadmap)
-26. [Build Order & Dependency Graph](#26-build-order--dependency-graph)
+19. [Multi-Tenancy Architecture](#19-multi-tenancy-architecture)
+20. [Deployment Architecture & Scaling](#20-deployment-architecture--scaling) (includes [Platform & Hardware Acceleration](#platform--hardware-acceleration))
+21. [Failure Modes, Recovery & Runbooks](#21-failure-modes-recovery--runbooks)
+22. [CI/CD, Testing & Release Plan](#22-cicd-testing--release-plan)
+23. [Cost Management & LLM Routing](#23-cost-management--llm-routing)
+24. [Operational Playbooks](#24-operational-playbooks)
+25. [Acceptance Criteria & SLAs](#25-acceptance-criteria--slas)
+26. [Implementation Roadmap](#26-implementation-roadmap)
+27. [Build Order & Dependency Graph](#27-build-order--dependency-graph)
 
 ---
 
@@ -153,6 +154,9 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
     /events                    # event store, event replay, event sourcing
     /messaging                 # Redis Streams clients, consumer groups, backoff, ack
     /llm                       # LLM router logic, model selection, caching
+    /identity                  # user CRUD, login/auth, password hashing (multi-tenant)
+    /orgs                      # organization & team CRUD, membership management
+    /rbac                      # role-based access control, agent visibility, middleware
   /pkg                         # shared packages (stable, documented, importable)
     /db                        # DB connection pool, migration runner, helpers
     /config                    # config loader (env vars, Vault)
@@ -167,6 +171,10 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
   /migrations                  # SQL migration files (ordered, idempotent)
   /deployments                 # Helm charts, k8s manifests, infra scripts
     /helm/astra/
+  /cmd/api-gateway
+    /superadmin/               # super-admin dashboard (HTML/CSS/JS)
+    /org/                      # org home + org-admin dashboard (HTML/CSS/JS)
+    /login/                    # login page (HTML/CSS/JS)
   /web                         # frontend (future)
   /scripts                     # dev utilities
   /docs                        # this PRD, architecture docs, runbooks
@@ -195,6 +203,9 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 | `internal/evaluation` | Service | Evaluators, result validators, test harness integration |
 | `internal/agentdocs` | Service | Agent document store (rules, skills, context docs), profile/context assembly for planner and workers |
 | `internal/llm` | Service | LLM model routing, cost-based selection, response caching |
+| `internal/identity` | Service | User CRUD, login/authentication, password hashing (bcrypt), JWT enrichment |
+| `internal/orgs` | Service | Organization and team CRUD, membership management (org_memberships, team_memberships) |
+| `internal/rbac` | Service | Role-based authorization engine, agent visibility logic (`CanAccessAgent`), super-admin redaction, HTTP/gRPC middleware |
 | `pkg/db` | Shared | Postgres connection pool (`pgx`), migration runner |
 | `pkg/config` | Shared | Config loader (environment variables, Vault integration) |
 | `pkg/logger` | Shared | Structured logging setup (`slog` or `zerolog`) |
@@ -647,8 +658,8 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 | # | Service | Responsibility | Namespace |
 |---|---|---|---|
 | 1 | `api-gateway` | REST/gRPC gateway, auth middleware, rate limiting, versioning; chat sessions, WebSocket streaming | control-plane |
-| 2 | `identity` | User/service auth, JWT tokens, audit log | control-plane |
-| 3 | `access-control` | RBAC, OPA policy enforcement, per-agent permission scopes | control-plane |
+| 2 | `identity` | User management (CRUD, login, password reset), JWT tokens with multi-tenant claims (user_id, org_id, org_role, team_ids, is_super_admin), service-to-service tokens | control-plane |
+| 3 | `access-control` | RBAC policy engine (role-aware: super_admin/org_admin/org_member/team_admin/agent_admin), agent visibility enforcement, org isolation checks, approval workflows | control-plane |
 | 4 | `agent-service` | Agent lifecycle (spawn/stop/inspect), actor supervisor integration, agent profile & document management | kernel |
 | 5 | `goal-service` | Goal ingestion, validation, routing to planner, context assembly (system_prompt + documents) | kernel |
 | 6 | `planner-service` | Core planner: goals → TaskGraphs using LLM | kernel |
@@ -693,6 +704,80 @@ The following REST endpoints are added to the `api-gateway` for agent profile an
 3. `goal-service` passes assembled `agent_context` to `planner-service`
 4. `planner-service` embeds `agent_context` in each task payload
 5. `execution-worker` includes `agent_context` when building LLM prompts for task execution
+
+## Multi-Tenant API — Super-Admin Endpoints (Phase 11)
+
+Super-admin endpoints live under `/superadmin/api/` and require `is_super_admin` JWT claim.
+
+### Organization Management
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/superadmin/api/orgs` | Create organization |
+| `GET` | `/superadmin/api/orgs` | List all organizations |
+| `GET` | `/superadmin/api/orgs/{id}` | Get org details |
+| `PATCH` | `/superadmin/api/orgs/{id}` | Update org (name, status) |
+| `DELETE` | `/superadmin/api/orgs/{id}` | Archive/delete org |
+| `POST` | `/superadmin/api/orgs/{id}/admins` | Add org admin |
+| `DELETE` | `/superadmin/api/orgs/{id}/admins/{user_id}` | Remove org admin |
+
+### Platform-Wide User Management
+
+Super admins manage every user of every org from the super-admin dashboard.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/superadmin/api/users` | Create user (optionally assign to org) |
+| `GET` | `/superadmin/api/users` | List ALL users (`?org_id=`, `?status=`, `?q=`, `?page=`, `?per_page=`, `?sort=`) |
+| `GET` | `/superadmin/api/users/{id}` | Get user details (all org/team memberships, owned agents) |
+| `PATCH` | `/superadmin/api/users/{id}` | Update user (name, email, status, is_super_admin) |
+| `DELETE` | `/superadmin/api/users/{id}` | Deactivate/delete user |
+| `POST` | `/superadmin/api/users/{id}/reset-password` | Force-reset password |
+| `GET` | `/superadmin/api/users/{id}/orgs` | List all orgs for user |
+| `POST` | `/superadmin/api/users/{id}/orgs` | Add user to org with role |
+| `PATCH` | `/superadmin/api/users/{id}/orgs/{org_id}` | Change user role in org |
+| `DELETE` | `/superadmin/api/users/{id}/orgs/{org_id}` | Remove user from org |
+| `GET` | `/superadmin/api/users/{id}/teams` | List all teams for user |
+| `POST` | `/superadmin/api/users/{id}/teams/{team_id}` | Add user to team |
+| `DELETE` | `/superadmin/api/users/{id}/teams/{team_id}` | Remove user from team |
+| `POST` | `/superadmin/api/users/{id}/suspend` | Suspend user |
+| `POST` | `/superadmin/api/users/{id}/activate` | Reactivate user |
+
+### Global Agent Management
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/superadmin/api/agents` | Create global agent (visibility=global, org_id=NULL) |
+
+## Multi-Tenant API — Org-Level Endpoints (Phase 11)
+
+Org endpoints live under `/org/api/` and require valid org JWT.
+
+### Team & Member Management (org_admin)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/org/api/teams` | List teams |
+| `POST` | `/org/api/teams` | Create team |
+| `PATCH` | `/org/api/teams/{id}` | Update team |
+| `DELETE` | `/org/api/teams/{id}` | Delete team |
+| `POST` | `/org/api/teams/{id}/members` | Add member to team |
+| `DELETE` | `/org/api/teams/{id}/members/{user_id}` | Remove member from team |
+| `GET` | `/org/api/members` | List org members |
+| `POST` | `/org/api/members` | Invite/add member to org |
+| `PATCH` | `/org/api/members/{user_id}` | Change member role |
+| `DELETE` | `/org/api/members/{user_id}` | Remove member from org |
+
+### Agent Ownership & Collaboration (org context)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/org/api/agents` | Create agent (visibility: public/team/private; sets org_id, owner_id from JWT) |
+| `POST` | `/org/api/agents/{id}/collaborators` | Add collaborator (user or team) |
+| `GET` | `/org/api/agents/{id}/collaborators` | List collaborators |
+| `DELETE` | `/org/api/agents/{id}/collaborators/{cid}` | Remove collaborator |
+| `POST` | `/org/api/agents/{id}/admins` | Add agent admin (receives approve/reject requests) |
+| `DELETE` | `/org/api/agents/{id}/admins/{uid}` | Remove agent admin |
 
 ---
 
@@ -1088,6 +1173,164 @@ De-duplicates agents by `name` (keeps oldest per name), reassigns foreign keys t
 
 Adds `chat_sessions` (user_id, agent_id, title, status, expires_at), `chat_messages` (session_id, role, content, tool_calls, tool_results, token counts), and `agents.chat_capable` column. Sessions and messages support real-time WebSocket chat with streaming and optional tool invocation. Idempotent migration: **migrations/0016_chat.sql**.
 
+## Migration 0018: Multi-Tenancy
+
+Converts Astra from single-tenant to multi-tenant with organizations, teams, users, roles, and tiered agent visibility. Idempotent migration: `migrations/0018_multi_tenant.sql`.
+
+### New tables
+
+```sql
+-- Platform user accounts
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  is_super_admin BOOLEAN NOT NULL DEFAULT false,
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD CONSTRAINT users_valid_status
+  CHECK (status IN ('active', 'suspended', 'deactivated'));
+
+-- Organizations (tenants)
+CREATE TABLE IF NOT EXISTS organizations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL UNIQUE,
+  slug TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  config JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE organizations ADD CONSTRAINT orgs_valid_status
+  CHECK (status IN ('active', 'suspended', 'archived'));
+
+-- User-org membership with role
+CREATE TABLE IF NOT EXISTS org_memberships (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, org_id)
+);
+ALTER TABLE org_memberships ADD CONSTRAINT org_memberships_valid_role
+  CHECK (role IN ('admin', 'member'));
+
+-- Teams within orgs
+CREATE TABLE IF NOT EXISTS teams (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(org_id, slug)
+);
+
+-- User-team membership
+CREATE TABLE IF NOT EXISTS team_memberships (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(team_id, user_id)
+);
+ALTER TABLE team_memberships ADD CONSTRAINT team_memberships_valid_role
+  CHECK (role IN ('admin', 'member'));
+
+-- Agent collaborator grants (user or team)
+CREATE TABLE IF NOT EXISTS agent_collaborators (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  collaborator_type TEXT NOT NULL,
+  collaborator_id UUID NOT NULL,
+  permission TEXT NOT NULL DEFAULT 'use',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(agent_id, collaborator_type, collaborator_id)
+);
+ALTER TABLE agent_collaborators ADD CONSTRAINT ac_valid_type
+  CHECK (collaborator_type IN ('user', 'team'));
+ALTER TABLE agent_collaborators ADD CONSTRAINT ac_valid_perm
+  CHECK (permission IN ('use', 'edit', 'admin'));
+
+-- Agent admins (receive approve/reject requests)
+CREATE TABLE IF NOT EXISTS agent_admins (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(agent_id, user_id)
+);
+```
+
+### ALTER existing tables
+
+```sql
+-- agents: tenant columns
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
+ALTER TABLE agents ADD CONSTRAINT agents_valid_visibility
+  CHECK (visibility IN ('global', 'public', 'team', 'private'));
+UPDATE agents SET visibility = 'global' WHERE org_id IS NULL;
+
+-- goals
+ALTER TABLE goals ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+ALTER TABLE goals ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+-- tasks
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+
+-- workers
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+
+-- events, memories, llm_usage, approval_requests, chat_sessions
+ALTER TABLE events ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS requested_by UUID REFERENCES users(id);
+ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS org_id UUID;
+```
+
+### Multi-tenant indexes
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON org_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_org_memberships_org ON org_memberships(org_id);
+CREATE INDEX IF NOT EXISTS idx_teams_org ON teams(org_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_team ON team_memberships(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_agents_org ON agents(org_id);
+CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_id);
+CREATE INDEX IF NOT EXISTS idx_agents_visibility ON agents(visibility);
+CREATE INDEX IF NOT EXISTS idx_goals_org ON goals(org_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org_id);
+CREATE INDEX IF NOT EXISTS idx_workers_org ON workers(org_id);
+CREATE INDEX IF NOT EXISTS idx_events_org ON events(org_id);
+CREATE INDEX IF NOT EXISTS idx_agent_collaborators_agent ON agent_collaborators(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_admins_agent ON agent_admins(agent_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+```
+
+### Triggers
+
+```sql
+CREATE TRIGGER users_updated_at BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+```
+
 ---
 
 # 12. Message & Event Protocols
@@ -1152,7 +1395,10 @@ Fields: `worker_id`, `event_type`, `task_id`, `metadata`, `timestamp`
 Fields: `task_id`, `evaluator_id`, `result`, `metadata`, `timestamp`
 
 ### 6. `astra:usage` — LLM usage (async persistence for audit)
-Fields: `request_id`, `agent_id`, `task_id`, `model`, `tokens_in`, `tokens_out`, `latency_ms`, `cost_dollars`, `timestamp`. Consumer writes to `llm_usage` and appends to `events` with type `LLMUsage`. Keeps API under 10 ms (no synchronous DB write on LLM response path).
+Fields: `request_id`, `agent_id`, `task_id`, `org_id`, `user_id`, `model`, `tokens_in`, `tokens_out`, `latency_ms`, `cost_dollars`, `timestamp`. Consumer writes to `llm_usage` and appends to `events` with type `LLMUsage`. Keeps API under 10 ms (no synchronous DB write on LLM response path).
+
+### Multi-tenancy stream fields
+All streams carry `org_id` when available. `astra:tasks:shard:<n>` includes `org_id` from the task. `astra:usage` includes `org_id` and `user_id`. `astra:agent:events` includes `org_id`. This enables org-scoped consumers and audit filtering.
 
 All streams use consumer groups. Messages acknowledged after processing. Dead letter on 3 failed processing attempts.
 
@@ -1238,6 +1484,10 @@ func (b *Bus) Consume(ctx context.Context, stream, group, consumer string, handl
 | `worker:heartbeat:<worker_id>` | String | 30s | Worker liveness tracking |
 | `agent:profile:<agent_id>` | Hash | 5m | Cached agent profile (system_prompt, config) |
 | `agent:docs:<agent_id>` | String (JSON) | 5m | Cached agent documents list (rules, skills, context_docs) |
+| `user:<user_id>` | Hash | 5m | Cached user profile (email, name, is_super_admin) |
+| `user:orgs:<user_id>` | String (JSON) | 5m | Cached org memberships for user |
+| `org:members:<org_id>` | String (JSON) | 5m | Cached org member list |
+| `org:teams:<org_id>` | String (JSON) | 5m | Cached team list for org |
 
 ## Memcached Keys
 
@@ -1436,7 +1686,9 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 | Dashboard | Content |
 |---|---|
-| **Operations Dashboard** (api-gateway `/dashboard/`) | Service health, workers, **agents** (count, status chart, paginated table with Prev/Next), goals (recent list; clickable rows open **goal detail modal** with full goal text, **task list with actions** — clicking a completed `code_generate` action opens a **Generated code** modal showing path and content per file), **summary stats** including **Tokens In** and **Tokens Out** (from cost data), **pending approvals** (table with **Type** column: plan / risky_task; detail modal shows type-specific content), **Chat** section (session management, real-time messaging via dashboard REST), cost trends, logs, PIDs. Snapshot includes `agents`, `agent_count`, `cost`; goal details via `GET /api/dashboard/goals/{id}`. |
+| **Super-Admin Dashboard** (`/superadmin/dashboard/`) | Platform-wide **redacted** view: service health, workers (names/status), agents (names/status), goal/task counts, LLM cost totals. **Organizations** section (create/edit/delete, add org admins). **Users** section (paginated table of ALL users, search/filter, suspend/activate/reset-password/role-change/move-org actions, detail modal). Org filter dropdown. No execution details, code, or chat messages visible. |
+| **Org Dashboard** (`/org/dashboard`) | Org-admin only. Full 100% visibility: members, teams, agents (all visibilities), goals (full text, task payloads, execution results, code), workers, approvals, cost, logs. Manage collaborators and agent admins. |
+| **Org Home** (`/org/`) | All org members: agents they can access (filtered by visibility), recent goals, quick-submit goal form, chat. |
 | Cluster Overview | Capacity, active agents, task throughput, error rate |
 | Agent Health | Per-agent throughput, avg latency, failure rate |
 | Cost | LLM token usage & cost per agent, per model |
@@ -1455,15 +1707,26 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 ## Authentication & Identity
 
-- `identity` service handles users and service accounts
-- JWT tokens for external API authentication (short-lived, signed)
+- `identity` service handles user accounts (CRUD, login, password reset), service accounts, and multi-tenant JWT issuance
+- JWT tokens carry multi-tenant claims: `user_id`, `email`, `org_id`, `org_role`, `team_ids`, `is_super_admin`, `scopes`
+- Login: `POST /users/login` with email + password → JWT with org context
+- Multi-org users select which org to authenticate against
+- Password hashing: bcrypt (`golang.org/x/crypto/bcrypt`)
 - mTLS for all service-to-service communication
+- `last_login_at` tracked on users table for audit
 
 ## Authorization
 
-- `access-control` service uses OPA policies with RBAC
-- Policies stored in Git and versioned
-- Agents run with minimum privileges; per-agent permission scopes
+- `access-control` service implements role-based authorization via `internal/rbac`:
+  - **Super-admin**: platform management (orgs, all users); execution detail access DENIED
+  - **Org-admin**: full access within own `org_id`
+  - **Org-member**: access per agent visibility rules (global/public/team/private)
+  - **Team-admin**: manage team membership, create team-scoped agents
+  - **Agent-admin**: approve/reject for specific agent
+- Agent visibility enforced by `CanAccessAgent()` in `internal/rbac/visibility.go`
+- Org isolation enforced by RBAC middleware: resource `org_id` must match JWT `org_id`
+- Super-admin data redaction: `redactForSuperAdmin()` strips execution details, code, system_prompt, goal_text, payload, result, chat messages
+- Dangerous tool approval gates remain (plan approval and risky_task approval); approval routing goes to agent_admins first, then org_admins
 
 ## Secrets
 
@@ -1491,7 +1754,129 @@ Full design: **docs/phase-history-usage-audit-design.md**.
 
 ---
 
-# 19. Deployment Architecture & Scaling
+# 19. Multi-Tenancy Architecture
+
+Astra is a **privacy-focused multi-tenant platform** modeled after GitHub's organization structure: organizations contain teams and users; agents have tiered visibility; data is strictly isolated between organizations.
+
+## Entity Model
+
+- **Users** — Platform accounts with email/password authentication. A user can belong to multiple organizations.
+- **Organizations** — Tenants. Each org has its own agents, goals, tasks, workers, cost tracking, and approvals. One org's data is never visible to another org.
+- **Teams** — Groups within an org. Teams can own agents and be granted collaborator access to agents.
+- **Org Memberships** — Links users to orgs with a role (`admin` or `member`).
+- **Team Memberships** — Links users to teams with a role (`admin` or `member`).
+
+## Role Model
+
+| Role | Scope | Permissions |
+|---|---|---|
+| `super_admin` | Platform | Manage ALL orgs and ALL users across ALL orgs (CRUD, suspend, role changes, move between orgs). See platform-wide metrics and specs (agent names, worker names, counts, cost totals). **Cannot** see execution details, code, goal text, task payloads, results, system prompts, or chat messages. Create/manage global agents. |
+| `org_admin` | Organization | Full access to 100% of everything within the org: agents, goals, tasks, workers, execution details, code, chat. Manage teams and members within the org. |
+| `org_member` | Organization | Use agents per visibility rules. Create private and public agents. Submit goals. |
+| `team_admin` | Team | Manage team membership. Create team-scoped agents. |
+| `team_member` | Team | Use team-scoped agents. |
+| `agent_admin` | Agent | Receive and decide approve/reject requests for that specific agent's plans and risky tasks. |
+
+## Agent Visibility Hierarchy
+
+| Visibility | Scope | Who can see/use |
+|---|---|---|
+| `global` | Platform | Every user in every org. Only super-admins can create/modify. Current pre-existing agents are global. |
+| `public` | Organization | Every member of the org. |
+| `team` | Team | Team members and org admins only. |
+| `private` | User | Only the owner and explicitly added collaborators (users or teams). |
+
+Org admins see ALL agents within their org regardless of visibility level.
+
+### Agent Visibility Logic
+
+```go
+func CanAccessAgent(claims Claims, agent Agent) bool {
+    if agent.Visibility == "global" { return true }
+    if claims.IsSuperAdmin { return true } // metadata only, execution details redacted
+    if agent.OrgID != claims.OrgID { return false } // org isolation barrier
+    if claims.OrgRole == "admin" { return true }
+    if agent.Visibility == "public" { return true }
+    if agent.Visibility == "team" {
+        return userInTeam(claims.TeamIDs, agent.TeamID) ||
+               isCollaborator(claims.UserID, agent.ID)
+    }
+    return agent.OwnerID == claims.UserID ||
+           isCollaborator(claims.UserID, agent.ID) ||
+           isCollaboratorViaTeam(claims.TeamIDs, agent.ID)
+}
+```
+
+## Agent Collaborators & Agent Admins
+
+- **Collaborators** grant access to private/team agents. A collaborator can be a user or a team. Permission levels: `use`, `edit`, `admin`.
+- **Agent admins** are users designated to receive and decide approve/reject requests for a specific agent's plans and risky tasks. Falls back to org admins if no agent admins are set.
+
+## Privacy & Data Isolation
+
+1. **Org barrier**: Every data table carrying `org_id` is filtered by `WHERE org_id = $orgID` in all queries. This is the primary tenant isolation mechanism.
+2. **Super-admin redaction**: A `redactForSuperAdmin()` function strips `system_prompt`, `config`, `payload`, `result`, `goal_text`, code, file contents, shell output, and chat messages before returning data to super-admin endpoints.
+3. **Cross-org invisibility**: No API, dashboard, or internal service ever returns data from org A to a user in org B. Agent-service `QueryState` filters by org_id. Goal-service, task-service, worker-manager, cost-tracker, and memory-service all scope queries by org_id.
+4. **Workspace isolation**: Each org gets `WORKSPACE_ROOT/{org_slug}/{goal_id}/`. Global agents use `WORKSPACE_ROOT/_global/{goal_id}/`.
+
+## JWT Claims (Multi-Tenant)
+
+```go
+type Claims struct {
+    jwt.RegisteredClaims
+    UserID       string   `json:"user_id"`
+    Email        string   `json:"email"`
+    OrgID        string   `json:"org_id,omitempty"`
+    OrgRole      string   `json:"org_role,omitempty"`
+    TeamIDs      []string `json:"team_ids,omitempty"`
+    IsSuperAdmin bool     `json:"is_super_admin"`
+    Scopes       []string `json:"scopes"`
+}
+```
+
+Login flow: `POST /users/login` with email + password. Identity looks up user, org_memberships, team_memberships, and issues JWT with all claims. For multi-org users, they select which org to authenticate against.
+
+## URL Structure
+
+| URL Pattern | Purpose | Auth |
+|---|---|---|
+| `/` | Landing/login page | None |
+| `/login` | Login form | None |
+| `/superadmin/dashboard` | Super-admin dashboard | super_admin JWT |
+| `/superadmin/api/*` | Super-admin API (orgs, users, global agents) | super_admin JWT |
+| `/org/` | Org home (agents, goals, activity) | org JWT |
+| `/org/dashboard` | Org admin dashboard (users, teams, agents, full details) | org_admin JWT |
+| `/org/api/*` | Org-scoped API (teams, members, agents, goals) | org JWT |
+| `/health` | Health check | None |
+
+## Super-Admin Dashboard
+
+The current dashboard at `/dashboard/` is renamed to `/superadmin/dashboard/`. It shows:
+
+- **Organizations**: list, create/edit/delete, add org admins
+- **Users**: paginated table of ALL platform users with search/filter (org, status, role). Actions: suspend, activate, reset password, change role, move between orgs. Click row for detail modal (org memberships, team memberships, owned agents, last login).
+- **Platform metrics**: service health, agents (names/status only), workers (names/status only), goal/task counts, LLM cost totals — all redacted (no execution details).
+- Org filter dropdown to narrow stats by org.
+
+## Org Dashboard (`/org/dashboard`)
+
+Org-admin-only. Shows 100% of org data:
+
+- **Members**: list, invite, change roles, remove
+- **Teams**: create, manage membership
+- **Agents**: full list (all visibilities), create, edit visibility, manage collaborators/admins
+- **Goals**: full detail (goal_text, task payloads, execution results, code)
+- **Workers**: full detail
+- **Approvals**: pending for org agents
+- **Cost**: org-scoped LLM usage
+
+## Org Home (`/org/`)
+
+All org members see: agents they can access (filtered by visibility), recent goals, quick-submit goal form, chat (if enabled).
+
+---
+
+# 20. Deployment Architecture & Scaling
 
 ## Kubernetes Namespaces
 
@@ -1578,7 +1963,7 @@ When running on **linux**:
 
 ---
 
-# 20. Failure Modes, Recovery & Runbooks
+# 21. Failure Modes, Recovery & Runbooks
 
 | Failure | Detection | Recovery |
 |---|---|---|
@@ -1605,7 +1990,7 @@ When running on **linux**:
 
 ---
 
-# 21. CI/CD, Testing & Release Plan
+# 22. CI/CD, Testing & Release Plan
 
 ## CI Pipeline
 
@@ -1631,7 +2016,7 @@ When running on **linux**:
 
 ---
 
-# 22. Cost Management & LLM Routing
+# 23. Cost Management & LLM Routing
 
 ## LLM Router Logic
 
@@ -1674,6 +2059,7 @@ func (r *Router) Route(taskType string, priority int) ModelTier {
 - `cost_tracking` monitors token usage, model calls per agent, cost per task
 - Alerts when thresholds exceeded
 - Dashboard: LLM cost per agent, per model, per day
+- **Multi-tenant**: Cost queries are scoped by `org_id`. Super-admin dashboard shows platform-wide cost totals with org filter. Org-admin dashboard shows org-specific cost. Token quotas can be set per org via `organizations.config`.
 
 ## Per-request usage and audit
 
@@ -1683,7 +2069,7 @@ With every request that uses an LLM, the user sees **token/LLM usage** (model, t
 
 ---
 
-# 23. Operational Playbooks
+# 24. Operational Playbooks
 
 ## Oncall Rotations
 
@@ -1705,7 +2091,7 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 ---
 
-# 24. Acceptance Criteria & SLAs
+# 25. Acceptance Criteria & SLAs
 
 ## Functional Acceptance (MVP)
 
@@ -1743,7 +2129,7 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 ---
 
-# 25. Implementation Roadmap
+# 26. Implementation Roadmap
 
 ## Phase 0 — Prep (2 weeks) ✅ COMPLETE
 
@@ -1930,9 +2316,64 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Users can create chat sessions, connect via WebSocket, send messages and receive streaming responses, with optional tool invocation and memory context.
 
+## Phase 11 — Multi-Tenancy (8-12 weeks)
+
+**Goal:** Convert Astra from single-tenant to a privacy-focused multi-tenant platform with organizations, teams, users, roles, and tiered agent visibility.
+
+### Sub-phase 11.0: PRD update
+- [x] Update PRD (this document) with full multi-tenancy architecture specification ✅
+
+### Sub-phase 11.1: Database schema
+- [ ] `migrations/0018_multi_tenant.sql` — New tables: `users`, `organizations`, `org_memberships`, `teams`, `team_memberships`, `agent_collaborators`, `agent_admins`. ALTER: `agents`, `goals`, `tasks`, `workers`, `events`, `memories`, `llm_usage`, `approval_requests`, `chat_sessions` with `org_id` and related columns. Indexes and triggers.
+
+### Sub-phase 11.2: Identity service overhaul
+- [ ] `internal/identity/` — User CRUD, login (bcrypt), password reset
+- [ ] `cmd/identity/main.go` — New endpoints: `POST /users/login`, `POST /users`, `GET /users`, `GET /users/{id}`, `PATCH /users/{id}`. Enriched JWT claims (user_id, org_id, org_role, team_ids, is_super_admin).
+
+### Sub-phase 11.3: RBAC engine
+- [ ] `internal/rbac/rbac.go` — Role-based authorization engine
+- [ ] `internal/rbac/visibility.go` — Agent visibility logic (`CanAccessAgent`)
+- [ ] `internal/rbac/middleware.go` — HTTP/gRPC middleware for route guards and org isolation
+
+### Sub-phase 11.4: Org, team, and user management API
+- [ ] `internal/orgs/` — Org and team CRUD, membership management
+- [ ] Super-admin endpoints: `/superadmin/api/orgs/*`, `/superadmin/api/users/*` (15+ endpoints for platform-wide user management)
+- [ ] Org-level endpoints: `/org/api/teams/*`, `/org/api/members/*`
+
+### Sub-phase 11.5: Agent ownership, visibility, and collaboration
+- [ ] Agent creation with `org_id`, `owner_id`, `team_id`, `visibility`
+- [ ] Agent collaborator and agent-admin endpoints
+- [ ] `CanAccessAgent` enforcement on all agent queries
+
+### Sub-phase 11.6: Org-scoped data isolation
+- [ ] All service queries (goal-service, task-service, agent-service, worker-manager, cost-tracker, memory-service) add `WHERE org_id = $orgID`
+- [ ] Approval routing to agent admins (fallback to org admins)
+- [ ] gRPC metadata propagation: `x-user-id`, `x-org-id`, `x-org-role`, `x-team-ids`, `x-is-super-admin`
+
+### Sub-phase 11.7: URL restructure and dashboards
+- [ ] Rename `/dashboard/` to `/superadmin/dashboard/`
+- [ ] Build org home (`/org/`) and org admin dashboard (`/org/dashboard`)
+- [ ] Build login page (`/login`)
+- [ ] Super-admin dashboard: org management, platform-wide user management (paginated table, detail modal, actions)
+
+### Sub-phase 11.8: Gateway middleware overhaul
+- [ ] JWT-authenticated route guards (super_admin, org_admin, org_member)
+- [ ] Context propagation to downstream services
+
+### Sub-phase 11.9: Workspace isolation
+- [ ] `WORKSPACE_ROOT/{org_slug}/{goal_id}/` for org agents
+- [ ] `WORKSPACE_ROOT/_global/{goal_id}/` for global agents
+
+### Sub-phase 11.10: Validation and deployment
+- [ ] Update `scripts/validate.sh` with multi-tenant checks
+- [ ] Update `scripts/deploy.sh` with super-admin seeding
+- [ ] Update `.env` / `.env.example` with `ASTRA_SUPER_ADMIN_EMAIL`, `ASTRA_SUPER_ADMIN_PASSWORD`
+
+**Acceptance:** Organizations, teams, and users can be managed. Agents have tiered visibility (global/public/team/private) with collaborator support. Org data is strictly isolated. Super-admins see platform-wide metrics (redacted) and manage all users. Org-admins see 100% of their org's data. Private agents are invisible to non-collaborators. Approval routing goes to agent admins.
+
 ---
 
-# 26. Build Order & Dependency Graph
+# 27. Build Order & Dependency Graph
 
 Implementation must follow this dependency order. Packages listed earlier must be completed before packages that depend on them.
 
@@ -1965,6 +2406,9 @@ Layer 3 (services — depend on Layer 2):
   internal/tools      (depends on: pkg/config)
   internal/evaluation (depends on: internal/tasks)
   internal/agentdocs  (depends on: pkg/db, pkg/config; used by: cmd/api-gateway, cmd/goal-service)
+  internal/identity   (depends on: pkg/db, pkg/config; used by: cmd/identity)
+  internal/orgs       (depends on: pkg/db, pkg/config; used by: cmd/api-gateway)
+  internal/rbac       (depends on: pkg/config; used by: cmd/api-gateway, cmd/access-control)
 
 Layer 4 (entrypoints — depend on Layer 3):
   cmd/api-gateway

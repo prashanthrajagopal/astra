@@ -107,7 +107,13 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET /workers", func(w http.ResponseWriter, r *http.Request) {
-		active, err := registry.ListActive(r.Context())
+		var active []workers.WorkerInfo
+		var err error
+		if orgID := r.URL.Query().Get("org_id"); orgID != "" {
+			active, err = registry.ListActiveByOrg(r.Context(), orgID)
+		} else {
+			active, err = registry.ListActive(r.Context())
+		}
 		if err != nil {
 			slog.Error("list active workers failed", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
