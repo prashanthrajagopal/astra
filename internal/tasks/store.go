@@ -16,6 +16,7 @@ var ErrInvalidTransition = fmt.Errorf("invalid task state transition")
 type TaskStore interface {
 	GetTask(ctx context.Context, taskID string) (*Task, error)
 	GetGraph(ctx context.Context, graphID string) (*Graph, []Dependency, error)
+	ListTasksByGoalID(ctx context.Context, goalID string) ([]*Task, error)
 	CreateTask(ctx context.Context, t *Task) error
 	AddDependencies(ctx context.Context, taskID string, dependsOn []string) error
 	CreateGraph(ctx context.Context, graph *Graph) error
@@ -246,6 +247,39 @@ func (s *Store) GetGraph(ctx context.Context, graphID string) (*Graph, []Depende
 	}
 
 	return &Graph{ID: graphIDUUID, Tasks: tasks, Dependencies: deps}, deps, nil
+}
+
+// ListTasksByGoalID returns all tasks for a goal (for dashboard goal-detail modal).
+func (s *Store) ListTasksByGoalID(ctx context.Context, goalID string) ([]*Task, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, graph_id, goal_id, agent_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
+		FROM tasks WHERE goal_id = $1 ORDER BY created_at`,
+		goalID)
+	if err != nil {
+		return nil, fmt.Errorf("tasks.ListTasksByGoalID: %w", err)
+	}
+	defer rows.Close()
+	var out []*Task
+	for rows.Next() {
+		var t Task
+		var goalIDNull sql.NullString
+		var idStr, graphIDStr, agentIDStr string
+		if err := rows.Scan(&idStr, &graphIDStr, &goalIDNull, &agentIDStr, &t.Type, &t.Status, &t.Payload, &t.Result,
+			&t.Priority, &t.Retries, &t.MaxRetries, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("tasks.ListTasksByGoalID scan: %w", err)
+		}
+		t.ID, _ = uuid.Parse(idStr)
+		t.GraphID, _ = uuid.Parse(graphIDStr)
+		t.AgentID, _ = uuid.Parse(agentIDStr)
+		if goalIDNull.Valid {
+			t.GoalID, _ = uuid.Parse(goalIDNull.String)
+		}
+		out = append(out, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tasks.ListTasksByGoalID: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Store) CompleteTask(ctx context.Context, taskID string, result []byte) error {

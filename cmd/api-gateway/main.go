@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -105,10 +106,11 @@ func main() {
 		slog.Error("failed to initialize dashboard action client", "err", err)
 		os.Exit(1)
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient)
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore)
 	mux.Handle("GET /agents", auth.protect(http.HandlerFunc(handleListAgents)))
 	mux.Handle("POST /agents", auth.protect(http.HandlerFunc(handleAgents)))
 	mux.Handle("PATCH /agents/{id}", auth.protect(http.HandlerFunc(handleUpdateAgent)))
+	mux.Handle("DELETE /agents/{id}", auth.protect(http.HandlerFunc(handleDeleteAgent)))
 	mux.Handle("GET /agents/{id}/profile", auth.protect(http.HandlerFunc(handleGetProfile)))
 	mux.Handle("POST /agents/{id}/documents", auth.protect(http.HandlerFunc(handleCreateDocument)))
 	mux.Handle("GET /agents/{id}/documents", auth.protect(http.HandlerFunc(handleListDocuments)))
@@ -231,7 +233,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -241,11 +243,34 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 	mux.Handle("GET /dashboard/", http.StripPrefix("/dashboard/", fileServer))
 	mux.Handle("GET /dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
 	mux.HandleFunc("GET /api/dashboard/snapshot", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 250*time.Millisecond)
+		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		defer cancel()
 		snap := collector.Collect(ctx)
+		// Enrich with agents from agent-service (dashboard only, no auth)
+		if agentClient != nil {
+			resp, err := agentClient.QueryState(ctx, &kernel_pb.QueryStateRequest{EntityType: "agents"})
+			if err == nil {
+				for _, b := range resp.Results {
+					var row struct {
+						ID     string `json:"id"`
+						Name   string `json:"name"`
+						Status string `json:"status"`
+					}
+					if err := json.Unmarshal(b, &row); err != nil {
+						continue
+					}
+					snap.Agents = append(snap.Agents, map[string]any{
+						"id": row.ID, "name": row.Name, "actor_type": row.Name, "status": row.Status,
+					})
+				}
+				snap.AgentCount = len(snap.Agents)
+			}
+		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(snap)
+	})
+	mux.HandleFunc("GET /api/dashboard/approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
+		handleGetApprovalProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"))
 	})
 	mux.HandleFunc("POST /api/dashboard/approvals/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
 		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "approve")
@@ -253,6 +278,134 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 	mux.HandleFunc("POST /api/dashboard/approvals/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
 		handleApprovalActionProxy(w, r, client, strings.TrimSuffix(cfg.AccessControlAddr, "/"), "deny")
 	})
+	mux.HandleFunc("GET /api/dashboard/settings", func(w http.ResponseWriter, r *http.Request) {
+		autoApprove := os.Getenv("AUTO_APPROVE_PLANS") == "true"
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]bool{"auto_approve_plans": autoApprove})
+	})
+	goalServiceBase := fmt.Sprintf("http://localhost:%d", cfg.GoalServicePort)
+	if cfg.GoalServicePort == 0 {
+		goalServiceBase = "http://localhost:8088"
+	}
+	mux.HandleFunc("GET /api/dashboard/goals/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if strings.TrimSpace(id) == "" {
+			http.Error(w, "goal id required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(goalServiceBase, "/")+"/goals/"+id+"/details", nil)
+		if err != nil {
+			http.Error(w, "request build failed", http.StatusInternalServerError)
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, "goal service unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		if resp.StatusCode != http.StatusOK {
+			w.WriteHeader(resp.StatusCode)
+			io.Copy(w, resp.Body)
+			return
+		}
+		io.Copy(w, resp.Body)
+	})
+	if store != nil {
+		mux.HandleFunc("PATCH /api/dashboard/agents/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+			handleDashboardAgentStatus(w, r, store)
+		})
+		mux.HandleFunc("DELETE /api/dashboard/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
+			handleDashboardAgentDelete(w, r, store)
+		})
+	}
+}
+
+func handleDashboardAgentStatus(w http.ResponseWriter, r *http.Request, store *agentdocs.Store) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	agentID, err := uuid.Parse(id)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Status == "" {
+		http.Error(w, "body must be JSON with status", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := store.UpdateAgentStatus(ctx, agentID, req.Status); err != nil {
+		slog.Error("dashboard UpdateAgentStatus failed", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleDashboardAgentDelete(w http.ResponseWriter, r *http.Request, store *agentdocs.Store) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	agentID, err := uuid.Parse(id)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := store.DeleteAgent(ctx, agentID); err != nil {
+		slog.Error("dashboard DeleteAgent failed", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleGetApprovalProxy(w http.ResponseWriter, r *http.Request, client *http.Client, accessControlAddr string) {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		http.Error(w, "approval id required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, accessControlAddr+"/approvals/"+id, nil)
+	if err != nil {
+		http.Error(w, "request build failed", http.StatusInternalServerError)
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "access-control unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if resp.StatusCode == http.StatusNotFound {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "approval not found"})
+		return
+	}
+	if resp.StatusCode >= 300 {
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		return
+	}
+	io.Copy(w, resp.Body)
 }
 
 func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *http.Client, accessControlAddr, action string) {
@@ -370,6 +523,7 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SystemPrompt *string          `json:"system_prompt"`
 		Config       *json.RawMessage `json:"config"`
+		Status       *string          `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -382,9 +536,38 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if req.Status != nil {
+		if err := docStore.UpdateAgentStatus(ctx, id, *req.Status); err != nil {
+			slog.Error("UpdateAgentStatus failed", "err", err)
+			http.Error(w, "update status failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	if err := docStore.UpdateProfile(ctx, id, req.SystemPrompt, req.Config); err != nil {
 		slog.Error("UpdateProfile failed", "err", err)
 		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+	id, err := uuid.Parse(agentID)
+	if err != nil {
+		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := docStore.DeleteAgent(ctx, id); err != nil {
+		slog.Error("DeleteAgent failed", "err", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)

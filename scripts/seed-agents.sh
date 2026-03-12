@@ -42,22 +42,34 @@ fi
 echo "Token obtained."
 echo ""
 
-# Fetch existing agents so we skip duplicates (idempotent seed)
+# Fetch existing agents so we skip duplicates (idempotent seed).
+# Retry GET /agents so we don't create duplicates when the gateway is still starting (e.g. on deploy).
 EXISTING_AGENTS_JSON=""
 echo "Checking for existing agents..."
-EXISTING_AGENTS_JSON=$(curl -s -H "Authorization: Bearer $TOKEN" "$GATEWAY_URL/agents" || true)
-if ! echo "$EXISTING_AGENTS_JSON" | jq -e '.agents' &>/dev/null; then
-  EXISTING_AGENTS_JSON='{"agents":[]}'
-  echo "  (GET /agents not available or empty; will create all agents)"
-else
-  count=$(echo "$EXISTING_AGENTS_JSON" | jq -r '.agents | length')
-  echo "  Found $count existing agent(s)."
-fi
+MAX_ATTEMPTS=5
+WAIT_SEC=2
+for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+  EXISTING_AGENTS_JSON=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TOKEN" "$GATEWAY_URL/agents" 2>/dev/null || true)
+  HTTP_CODE=$(echo "$EXISTING_AGENTS_JSON" | tail -1)
+  EXISTING_AGENTS_JSON=$(echo "$EXISTING_AGENTS_JSON" | sed '$d')
+  if [[ "$HTTP_CODE" == "200" ]] && echo "$EXISTING_AGENTS_JSON" | jq -e 'has("agents")' &>/dev/null; then
+    count=$(echo "$EXISTING_AGENTS_JSON" | jq -r '(.agents // []) | length')
+    echo "  Found $count existing agent(s) (attempt $attempt)."
+    break
+  fi
+  if [[ $attempt -lt $MAX_ATTEMPTS ]]; then
+    echo "  GET /agents not ready (HTTP $HTTP_CODE); retrying in ${WAIT_SEC}s..."
+    sleep "$WAIT_SEC"
+  else
+    echo "  WARNING: GET /agents failed after $MAX_ATTEMPTS attempts (HTTP $HTTP_CODE). Skipping seed to avoid duplicate agents. Run seed again after gateway is ready."
+    exit 0
+  fi
+done
 echo ""
 
 # Return existing agent id for actor_type if any; else empty.
 get_existing_id() {
-  echo "$EXISTING_AGENTS_JSON" | jq -r --arg t "$1" '.agents[]? | select(.actor_type == $t) | .id' | head -1
+  echo "$EXISTING_AGENTS_JSON" | jq -r --arg t "$1" '(.agents // [])[]? | select(.actor_type == $t) | .id' | head -1
 }
 
 # Helper: create agent (or skip if actor_type exists) and optionally attach one rule document. Sets AGENT_ID.
@@ -97,7 +109,7 @@ create_agent() {
   echo "  Created: $AGENT_ID"
 
   # Append to in-memory list so we don't duplicate in same run if GET /agents isn't updated yet
-  EXISTING_AGENTS_JSON=$(echo "$EXISTING_AGENTS_JSON" | jq --arg id "$AGENT_ID" --arg t "$actor_type" --arg n "$name" '.agents += [{id:$id,actor_type:$t,name:$n}]')
+  EXISTING_AGENTS_JSON=$(echo "$EXISTING_AGENTS_JSON" | jq --arg id "$AGENT_ID" --arg t "$actor_type" --arg n "$name" '.agents = ((.agents // []) + [{id:$id,actor_type:$t,name:$n}])')
 
   if [[ -n "$rule_content" ]]; then
     local doc_body

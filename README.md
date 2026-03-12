@@ -8,9 +8,11 @@ Astra is the **operating system for autonomous agents**: a production-grade, mic
 
 ## Documentation
 
-- **[docs/PRD.md](docs/PRD.md)** — Single source of truth: architecture, 16 canonical services, kernel APIs, database schema, Redis streams, deployment, security, and phased roadmap.
+- **[docs/PRD.md](docs/PRD.md)** — Single source of truth: architecture, 16 canonical services, kernel APIs, database schema, Redis streams, deployment, security, and phased roadmap (v2.1).
 - **API reference:** [docs/api/openapi.yaml](docs/api/openapi.yaml) — OpenAPI 3.x spec for all REST/HTTP APIs (agents, goals, tasks, graphs, identity, access-control, and internal services), with example flows; when adding or changing endpoints, update this spec and regenerate clients if used.
 - **Design & deployment:** [docs/local-deployment.md](docs/local-deployment.md), [docs/deployment-design.md](docs/deployment-design.md), [docs/phase-history-usage-audit-design.md](docs/phase-history-usage-audit-design.md).
+- **Approval system:** [docs/approval-system-extension-spec.md](docs/approval-system-extension-spec.md) — plan vs risky-task approvals, `AUTO_APPROVE_PLANS`, dashboard integration.
+- **Chat agents:** [docs/chat-agents-design.md](docs/chat-agents-design.md) — WebSocket chat, streaming, sessions; [docs/chat-agents-implementation-plan.md](docs/chat-agents-implementation-plan.md) — implementation phases.
 - **Phase history:** [docs/phase-history/](docs/phase-history/) — what was built in each implementation phase (e.g. [phase-0.md](docs/phase-history/phase-0.md)).
 
 ---
@@ -46,6 +48,22 @@ User → POST /goals → goal-service → planner (LLM) → DAG → CreateGraph
 
 See [docs/PRD.md](docs/PRD.md) for full detail.
 
+### How agents, planner, and workers work together
+
+**What the agent actually does.** Agents do not execute tasks; workers do. The agent’s role is **identity, context, and ownership**:
+
+- **Own the goal** — The goal is tied to an agent; the agent is who “asked for this work” and who the result belongs to.
+- **Supply context** — The agent’s profile (system prompt, config, attached documents) is used when planning and when executing. The planner and workers act *on behalf of* that agent using this context.
+- **Define “who”** — So the agent’s job is to be the identity and policy (persona, rules, constraints) that shapes what gets planned and how it is executed; workers perform the steps.
+
+**How a specialist agent (e.g. “Python expert”) is applied.** The worker is generic; it does not “become” the expert. The agent’s expertise is **carried in the task payload**:
+
+1. When a goal is created, **goal-service** assembles the agent’s context (system prompt, rules, skills) via `AssembleContext(agentID, goalID)` and passes it to the planner.
+2. The **planner** embeds that context in **every task** it creates (e.g. `code_generate`, `shell_exec`) as `agent_context` in the task payload.
+3. When the **execution-worker** runs a task, it reads `agent_context` from the payload, builds the prompt (system prompt + rules + task instructions), and sends it to the LLM. The LLM therefore behaves as the “Python expert” because that text is in the prompt. The worker is a generic executor; the expert is the context that travels with the task.
+
+**Pending approvals (dashboard).** The dashboard lists two types of approval requests: (1) **Plan** — when `AUTO_APPROVE_PLANS` is false, creating a goal creates an approval request for the *implementation plan* before the task graph is created; approving it triggers goal-service to create the graph. (2) **Risky task** — when a worker tries to run a tool that policy marks as dangerous (e.g. `terraform apply`, certain `shell_exec`), the tool-runtime creates an approval request and waits; the dashboard lists these. The approvals table shows a **Type** column (plan / risky_task) and a detail modal with type-specific content. So approvals are human-in-the-loop for **implementation plans** (optional) and **risky tool runs**.
+
 ### Creating agents via API
 
 After deployment, create specialized agents via the API Gateway and Identity service:
@@ -60,7 +78,7 @@ After deployment, create specialized agents via the API Gateway and Identity ser
   ```bash
   ./scripts/seed-agents.sh
   ```
-  Requires `jq`. After deployment, run once to seed the platform; then use `GET /agents` to list agents and submit goals to any agent ID.
+  Requires `jq`. The script is **idempotent** (skips creation if agents already exist). Agent **names are unique** (enforced by migration 0015); to de-duplicate existing data without adding the constraint, run `psql "$DATABASE_URL" -f scripts/dedup-agents-by-name.sql`. After deployment, run the seed once; use `GET /agents` to list agents and submit goals to any agent ID.
 
 ---
 
@@ -80,6 +98,8 @@ In short: **Entry** (api-gateway, goals) → **Kernel** (actors, task graph, sch
 **Control-plane:** api-gateway, identity, access-control, agent-service, goal-service, planner-service, scheduler-service, task-service.  
 **Worker-side:** execution-worker, browser-worker, worker-manager, tool-runtime, llm-router.  
 **Data stores:** Postgres (source of truth), Redis (streams, state, locks), Memcached (LLM/embedding/tool caches).
+
+**Dashboard** (api-gateway `/dashboard/`): Summary stats include **Tokens In** and **Tokens Out** (from cost data). Goal detail modal shows actions; clicking a completed **code_generate** action opens a **Generated code** modal with path and content per file. Pending approvals show **Type** (plan / risky_task) and a type-specific detail modal.
 
 ### 3. Lifecycle
 
@@ -359,10 +379,19 @@ See [docs/local-deployment.md](docs/local-deployment.md) for details. **Deployme
 | `internal/` | Kernel and service implementation (actors, kernel, tasks, scheduler, messaging, events, planner, etc.) |
 | `pkg/` | Shared packages (db, config, logger, metrics, grpc, models, otel) |
 | `proto/` | Protobuf/gRPC definitions; generated Go in `proto/kernel/`, `proto/tasks/` |
-| `migrations/` | Idempotent SQL migrations (0001–0009) |
-| `scripts/` | `deploy.sh`, `proto-generate.sh`, `create-python-expert-agent.sh`, `seed-agents.sh` |
+| `migrations/` | Idempotent SQL migrations (0001–0015; includes approval plan type, agents unique name) |
+| `scripts/` | `deploy.sh`, `proto-generate.sh`, `create-python-expert-agent.sh`, `seed-agents.sh`, `dedup-agents-by-name.sql` |
 | `deployments/` | Helm charts and K8s manifests |
-| `docs/` | PRD, design docs, phase history, runbooks |
+| `docs/` | PRD, design docs (approval-system, chat-agents), phase history, runbooks |
+
+---
+
+## Recent changes
+
+- **Approval system:** Two types — *plan* (implementation plan before creating task graph) and *risky_task* (dangerous tool run). `AUTO_APPROVE_PLANS` env; dashboard shows Type and detail modal. See [docs/approval-system-extension-spec.md](docs/approval-system-extension-spec.md).
+- **Dashboard:** Tokens In/Out in summary; goal detail → click `code_generate` to view generated code; approvals table and modal with plan/risky_task.
+- **Agents:** Unique names (migration 0015); idempotent seed; `scripts/dedup-agents-by-name.sql` for de-dup.
+- **Chat agents:** Design and implementation plan for WebSocket chat with streaming ([docs/chat-agents-design.md](docs/chat-agents-design.md), [docs/chat-agents-implementation-plan.md](docs/chat-agents-implementation-plan.md)).
 
 ---
 

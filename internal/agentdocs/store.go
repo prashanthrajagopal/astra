@@ -137,6 +137,36 @@ func (s *Store) UpdateProfile(ctx context.Context, agentID uuid.UUID, systemProm
 	return nil
 }
 
+// UpdateAgentStatus sets the agent's status (e.g. "active", "stopped"). Invalid status is rejected by DB constraint.
+func (s *Store) UpdateAgentStatus(ctx context.Context, agentID uuid.UUID, status string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE agents SET status = $1, updated_at = now() WHERE id = $2`, status, agentID)
+	if err != nil {
+		return fmt.Errorf("agentdocs.UpdateAgentStatus: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+		_ = s.rdb.Del(ctx, docsKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
+// DeleteAgent removes the agent and its dependent data in order: task_dependencies, tasks for agent's goals, then agent (cascades to goals, agent_documents, memories, phase_runs).
+func (s *Store) DeleteAgent(ctx context.Context, agentID uuid.UUID) error {
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE goal_id IN (SELECT id FROM goals WHERE agent_id = $1));
+		DELETE FROM tasks WHERE goal_id IN (SELECT id FROM goals WHERE agent_id = $1);
+		DELETE FROM agents WHERE id = $1;
+	`, agentID)
+	if err != nil {
+		return fmt.Errorf("agentdocs.DeleteAgent: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+		_ = s.rdb.Del(ctx, docsKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
 func joinStrings(ss []string, sep string) string {
 	if len(ss) == 0 {
 		return ""

@@ -161,6 +161,10 @@ func (c *CachedStore) FindOrphanedRunningTasks(ctx context.Context) ([]string, e
 	return c.store.FindOrphanedRunningTasks(ctx)
 }
 
+func (c *CachedStore) ListTasksByGoalID(ctx context.Context, goalID string) ([]*Task, error) {
+	return c.store.ListTasksByGoalID(ctx, goalID)
+}
+
 func (c *CachedStore) RequeueTask(ctx context.Context, taskID string) error {
 	if err := c.store.RequeueTask(ctx, taskID); err != nil {
 		return err
