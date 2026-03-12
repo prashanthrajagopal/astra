@@ -172,3 +172,11 @@ func (c *CachedStore) RequeueTask(ctx context.Context, taskID string) error {
 	c.InvalidateTask(ctx, taskID)
 	return nil
 }
+
+func (c *CachedStore) CancelTask(ctx context.Context, taskID string) error {
+	if err := c.store.CancelTask(ctx, taskID); err != nil {
+		return err
+	}
+	c.InvalidateTask(ctx, taskID)
+	return nil
+}

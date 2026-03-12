@@ -138,6 +138,18 @@ func (s *Store) UpdateProfile(ctx context.Context, agentID uuid.UUID, systemProm
 	return nil
 }
 
+// UpdateAgentName sets the agent's display name and invalidates profile cache.
+func (s *Store) UpdateAgentName(ctx context.Context, agentID uuid.UUID, name string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE agents SET name = $1, updated_at = now() WHERE id = $2`, name, agentID)
+	if err != nil {
+		return fmt.Errorf("agentdocs.UpdateAgentName: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
 // UpdateAgentStatus sets the agent's status (e.g. "active", "stopped"). Invalid status is rejected by DB constraint.
 func (s *Store) UpdateAgentStatus(ctx context.Context, agentID uuid.UUID, status string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE agents SET status = $1, updated_at = now() WHERE id = $2`, status, agentID)

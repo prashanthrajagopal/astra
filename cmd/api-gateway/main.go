@@ -112,14 +112,16 @@ func main() {
 		slog.Error("failed to initialize dashboard action client", "err", err)
 		os.Exit(1)
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore)
+	var memoryStore *memory.Store
 	if cfg.ChatEnabled {
-		var memoryStore *memory.Store
 		memoryStore, err = initMemoryStore(database)
 		if err != nil {
 			slog.Warn("memory store init failed, chat will run without memory context", "err", err)
 			memoryStore = nil
 		}
+	}
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore)
+	if cfg.ChatEnabled {
 		wsHandler := chat.NewWebSocketHandler(chatStore, database, llmBackend, &chat.HandlerConfig{
 			MaxMsgLength: cfg.ChatMaxMsgLength,
 			RateLimit:    cfg.ChatRateLimit,
@@ -263,7 +265,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -344,6 +346,66 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		}
 		io.Copy(w, resp.Body)
 	})
+	mux.HandleFunc("POST /api/dashboard/goals/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if strings.TrimSpace(id) == "" {
+			http.Error(w, "goal id required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		// Cancel all non-terminal tasks for this goal
+		_, _ = database.ExecContext(ctx,
+			`UPDATE tasks SET status = 'failed', result = '{"cancelled":true}'::jsonb, updated_at = now()
+			 WHERE goal_id = $1::uuid AND status NOT IN ('completed', 'failed')`, id)
+
+		// Cancel the goal itself
+		result, err := database.ExecContext(ctx,
+			`UPDATE goals SET status = 'failed' WHERE id = $1::uuid AND status NOT IN ('completed', 'failed')`, id)
+		if err != nil {
+			slog.Error("cancel goal failed", "err", err, "goal_id", id)
+			http.Error(w, "cancel failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			http.Error(w, "goal not found or already terminal", http.StatusConflict)
+			return
+		}
+		// Event for audit
+		_, _ = database.ExecContext(ctx,
+			`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ('GoalCancelled', $1::uuid, jsonb_build_object('goal_id', $1::uuid, 'cancelled', true), now())`, id)
+
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+	})
+	mux.HandleFunc("POST /api/dashboard/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "task id required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		result, err := database.ExecContext(ctx,
+			`UPDATE tasks SET status = 'failed', result = '{"cancelled":true}'::jsonb, updated_at = now()
+			 WHERE id = $1::uuid AND status NOT IN ('completed', 'failed')`, id)
+		if err != nil {
+			slog.Error("cancel task failed", "err", err, "task_id", id)
+			http.Error(w, "cancel failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			http.Error(w, "task not found or already terminal", http.StatusConflict)
+			return
+		}
+		_, _ = database.ExecContext(ctx,
+			`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ('TaskCancelled', $1::uuid, '{"cancelled":true}'::jsonb, now())`, id)
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+	})
 	if store != nil {
 		mux.HandleFunc("PATCH /api/dashboard/agents/{id}/status", func(w http.ResponseWriter, r *http.Request) {
 			handleDashboardAgentStatus(w, r, store)
@@ -358,7 +420,8 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		mux.HandleFunc("POST /api/dashboard/chat/sessions", handleDashboardChatCreateSession(chatStore))
 		mux.HandleFunc("GET /api/dashboard/chat/sessions/{id}", handleDashboardChatGetSession(chatStore))
 		mux.HandleFunc("GET /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatGetMessages(chatStore))
-		mux.HandleFunc("POST /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatAppendMessage(chatStore))
+		goalServiceAddr := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
+		mux.HandleFunc("POST /api/dashboard/chat/sessions/{id}/messages", handleDashboardChatAppendMessage(chatStore, goalServiceAddr, database, llmBackend, memStore))
 	}
 }
 
@@ -577,7 +640,7 @@ func handleDashboardChatGetMessages(chatStore *chat.Store) http.HandlerFunc {
 	}
 }
 
-func handleDashboardChatAppendMessage(chatStore *chat.Store) http.HandlerFunc {
+func handleDashboardChatAppendMessage(chatStore *chat.Store, goalServiceAddr string, db *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
@@ -600,8 +663,9 @@ func handleDashboardChatAppendMessage(chatStore *chat.Store) http.HandlerFunc {
 			http.Error(w, "content required", http.StatusBadRequest)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 		defer cancel()
+
 		m, err := chatStore.AppendMessage(ctx, sessionID, chat.DashboardUserID, "user", req.Content, nil, nil, 0, 0)
 		if err != nil {
 			slog.Error("chat AppendMessage failed", "err", err)
@@ -612,11 +676,43 @@ func handleDashboardChatAppendMessage(chatStore *chat.Store) http.HandlerFunc {
 			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
+
+		se, err := chatStore.GetSession(ctx, sessionID, chat.DashboardUserID)
+		if err != nil || se == nil {
+			slog.Error("chat GetSession failed", "err", err, "session_id", sessionID)
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		var assistantMsg *chat.Message
+		if chat.NeedsGoalWorkflow(req.Content) {
+			slog.Info("chat routing to goal workflow", "session_id", sessionID, "content_preview", req.Content[:min(len(req.Content), 50)])
+			assistantMsg, err = chat.ProcessGoalMessage(ctx, chatStore, goalServiceAddr, se.AgentID, sessionID, chat.DashboardUserID, req.Content)
+		} else {
+			slog.Info("chat routing to direct LLM", "session_id", sessionID, "content_preview", req.Content[:min(len(req.Content), 50)])
+			directCtx, directCancel := context.WithTimeout(ctx, 60*time.Second)
+			defer directCancel()
+			assistantMsg, err = chat.ProcessRESTMessage(directCtx, chatStore, db, llmBackend, sessionID, chat.DashboardUserID, memStore)
+		}
+		if err != nil {
+			slog.Error("chat ProcessGoalMessage failed", "err", err, "session_id", sessionID)
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": m.ID.String(), "role": "user", "content": m.Content,
+				"assistant_error": err.Error(),
+			})
+			return
+		}
+
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{
-			"id": m.ID.String(), "session_id": m.SessionID.String(), "role": m.Role, "content": m.Content,
-			"created_at": m.CreatedAt,
+			"id": m.ID.String(), "role": "user", "content": m.Content,
+			"assistant": map[string]any{
+				"id": assistantMsg.ID.String(), "role": "assistant", "content": assistantMsg.Content,
+				"tokens_in": assistantMsg.TokensIn, "tokens_out": assistantMsg.TokensOut,
+			},
 		})
 	}
 }
@@ -706,9 +802,10 @@ func handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type agentRow struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		ActorType string `json:"actor_type"`
+		Status    string `json:"status"`
 	}
 	var agents []map[string]interface{}
 	for _, b := range resp.Results {
@@ -718,7 +815,7 @@ func handleListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		agents = append(agents, map[string]interface{}{
 			"id":          row.ID,
-			"actor_type":  row.Name,
+			"actor_type":  row.ActorType,
 			"name":        row.Name,
 			"status":      row.Status,
 		})
@@ -754,6 +851,12 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		agentID, err := uuid.Parse(resp.ActorId)
 		if err == nil && docStore != nil {
 			_ = docStore.UpdateProfile(ctx, agentID, &req.SystemPrompt, nil)
+		}
+	}
+	if req.Name != "" {
+		agentID, err := uuid.Parse(resp.ActorId)
+		if err == nil && docStore != nil {
+			_ = docStore.UpdateAgentName(ctx, agentID, req.Name)
 		}
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
