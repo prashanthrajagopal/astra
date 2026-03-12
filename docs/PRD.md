@@ -1,6 +1,6 @@
 # ASTRA — The Autonomous Agent Operating System
 
-**Engineering Specification v2.0**
+**Engineering Specification v2.1**
 
 > A single, self-contained specification for building Astra — a production-grade, microkernel-style, planet-scale autonomous agent platform and SDK. Contains architecture, Go interfaces, gRPC contracts, database DDL, Redis stream schemas, deployment manifests, and phased implementation roadmap.
 
@@ -54,6 +54,14 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 - When features, schema, APIs, or implementation phases change, the PRD is updated **in the same work** (same PR or same phase completion). Do not ship changes that alter architecture, APIs, or schema without updating the corresponding PRD sections.
 - **Tech Lead** is responsible for ensuring PRD updates when a phase is completed or when architectural/schema decisions are made during implementation.
 - **Architect** reviews and approves material PRD changes (new sections, contract changes, or structural edits).
+
+### Recent changes (v2.1)
+
+- **Approval system:** Two types — *plan* (implementation plan approval before creating task graph) and *risky_task* (dangerous tool execution). `AUTO_APPROVE_PLANS` env; goal-service returns 202 and creates plan approval when disabled; access-control calls goal-service `apply-plan` on plan approval. See **docs/approval-system-extension-spec.md**.
+- **Dashboard:** Goal detail modal lists actions; clicking a completed `code_generate` action opens a "Generated code" modal (path + content per file). Summary stats include **Tokens In** and **Tokens Out** (from cost data). Approvals table has **Type** column (plan / risky_task); approval detail modal shows type-specific content.
+- **Agents:** Agent names are unique; migration 0015 de-duplicates by name and adds `UNIQUE(agents.name)`. Standalone script `scripts/dedup-agents-by-name.sql` for de-dup without constraint. Seed script is idempotent and resilient to gateway startup.
+- **Codegen:** Task result for `code_generate` includes `generated_files` (path + content) for dashboard display.
+- **Chat agents (design):** WebSocket-based chat agents with streaming, sessions, and optional tool/worker calls. Design: **docs/chat-agents-design.md**; implementation plan: **docs/chat-agents-implementation-plan.md**.
 
 ---
 
@@ -1056,6 +1064,14 @@ CREATE TRIGGER agent_documents_updated_at BEFORE UPDATE ON agent_documents
 
 Idempotent migration: `migrations/0013_agent_profile_and_documents.sql`. Documents with `goal_id` set are scoped to that goal only. Documents without `goal_id` are global to the agent. Large document content may be stored in MinIO/S3 with a URI reference in the `uri` column.
 
+## Migration 0014: Approval requests — plan type
+
+Extends `approval_requests` to support two types: *plan* (implementation plan approval) and *risky_task* (dangerous tool execution). Adds `request_type`, `goal_id`, `graph_id`, `plan_payload` (JSONB). Idempotent migration: `migrations/0014_approval_requests_plan_type.sql`. See **docs/approval-system-extension-spec.md**.
+
+## Migration 0015: Agents unique name
+
+De-duplicates agents by `name` (keeps oldest per name), reassigns foreign keys to the kept agent, then adds `UNIQUE(agents.name)`. Idempotent migration: `migrations/0015_agents_unique_name.sql`. Standalone script `scripts/dedup-agents-by-name.sql` performs de-dup only (no constraint). Agent names are canonical and unique going forward.
+
 ---
 
 # 12. Message & Event Protocols
@@ -1359,6 +1375,10 @@ func (a *SimpleAgent) Reflect(ctx AgentContext, outcome Outcome) error {
 8. Learning agent optimizes prompts for next iteration
 ```
 
+## Chat agents (design)
+
+Agents that users connect to via **WebSocket** for real-time chat with **streaming** responses (e.g. token-by-token). Chat agents can invoke the same workers and tool runtime as goal-based agents. Design: **docs/chat-agents-design.md** (session model, protocol, auth, tool calls). Implementation plan: **docs/chat-agents-implementation-plan.md**.
+
 ---
 
 # 17. Observability, Tracing, Metrics
@@ -1398,6 +1418,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 | Dashboard | Content |
 |---|---|
+| **Operations Dashboard** (api-gateway `/dashboard/`) | Service health, workers, **agents** (count, status chart, paginated table with Prev/Next), goals (recent list; clickable rows open **goal detail modal** with full goal text, **task list with actions** — clicking a completed `code_generate` action opens a **Generated code** modal showing path and content per file), **summary stats** including **Tokens In** and **Tokens Out** (from cost data), **pending approvals** (table with **Type** column: plan / risky_task; detail modal shows type-specific content), cost trends, logs, PIDs. Snapshot includes `agents`, `agent_count`, `cost`; goal details via `GET /api/dashboard/goals/{id}`. |
 | Cluster Overview | Capacity, active agents, task throughput, error rate |
 | Agent Health | Per-agent throughput, avg latency, failure rate |
 | Cost | LLM token usage & cost per agent, per model |
@@ -1437,6 +1458,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 - Dangerous actions (delete infra, change prod, data deletion) require approval gates (human-in-the-loop)
 - `policy-engine` intercepts tool execution events and allows/denies based on policy
+- **Two approval types:** (1) **Plan** — when `AUTO_APPROVE_PLANS` is false, goal-service creates an approval request for the implementation plan before creating the task graph; access-control exposes it and calls goal-service `POST /internal/apply-plan` on approve. (2) **Risky task** — dangerous tool execution (e.g. `terraform apply`, certain `shell_exec`) creates an `approval_requests` row with `request_type='risky_task'`; tool-runtime waits for approval before running. Full design: **docs/approval-system-extension-spec.md**.
 
 ## Audit & Compliance
 
@@ -1638,6 +1660,8 @@ func (r *Router) Route(taskType string, priority int) ModelTier {
 ## Per-request usage and audit
 
 With every request that uses an LLM, the user sees **token/LLM usage** (model, tokens in/out, latency, cost) in the response. Usage is captured in the LLM router (or caller), returned in the response envelope, and persisted **asynchronously** via the `astra:usage` stream to the `llm_usage` table and to `events` (type `LLMUsage`) for audit and metrics. No synchronous DB write on the hot path. See **docs/phase-history-usage-audit-design.md** and §18 Audit & Compliance.
+
+**Token counts:** Backends (OpenAI, Anthropic, Gemini, Ollama, MLX) parse provider responses and return real `tokens_in`/`tokens_out`; the router builds `Usage` and the gRPC response and usage stream carry these values. The router cache stores and restores token usage on cache hit so cached responses still show non-zero counts. For MLX, the client tries `/v1/chat/completions` first and falls back to `/chat/completions` on 404 for compatibility with older mlx_lm.server versions.
 
 ---
 
@@ -1845,10 +1869,15 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 - [x] Embedded dashboard UI served by api-gateway at `/dashboard/` ✅
 - [x] Snapshot API at `/api/dashboard/snapshot` with services/workers/approvals/cost/logs/pids ✅
+- [x] Snapshot enriched with agents (agent_count, agents list) from agent-service QueryState ✅
+- [x] Summary stats include Agents count; Agents doughnut chart (by status) next to Service Health ✅
+- [x] Agents table with Previous/Next pagination to scroll through all agents ✅
+- [x] Recent Goals rows clickable; goal detail modal shows full goal text, actions (tasks), and failure logs for failed tasks ✅
+- [x] Goal-service `GET /goals/{id}/details` returns goal + tasks (task store `ListTasksByGoalID`); gateway `GET /api/dashboard/goals/{id}` proxies for dashboard ✅
 - [x] Auto-refreshing frontend with status and latency indicators ✅
 - [x] Dashboard validation coverage in `scripts/validate.sh` ✅
 
-**Acceptance:** Operators can open one dashboard and inspect service health, workers, pending approvals, cost trends, process state, and recent logs without shell access.
+**Acceptance:** Operators can open one dashboard and inspect service health, workers, **agents** (count, chart, paginated list), pending approvals, cost trends, process state, and recent logs without shell access. Clicking a goal opens a modal with full goal description, task list (actions), and failure logs for failed tasks.
 
 ## Phase 9 — Agent Profile & Context Management (3-4 weeks)
 

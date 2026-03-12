@@ -40,11 +40,18 @@ type AgentDocument struct {
 
 // Result summarizes what the code generation step produced.
 type Result struct {
-	FilesWritten []string `json:"files_written"`
-	LLMModel     string   `json:"llm_model"`
-	TokensIn     int      `json:"tokens_in"`
-	TokensOut    int      `json:"tokens_out"`
-	Error        string   `json:"error,omitempty"`
+	FilesWritten   []string          `json:"files_written"`
+	GeneratedFiles []GeneratedFile   `json:"generated_files,omitempty"` // path + content for dashboard display
+	LLMModel       string            `json:"llm_model"`
+	TokensIn       int               `json:"tokens_in"`
+	TokensOut      int               `json:"tokens_out"`
+	Error          string            `json:"error,omitempty"`
+}
+
+// GeneratedFile holds path and content of one generated file (for UI display).
+type GeneratedFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 var fileBlockRe = regexp.MustCompile("(?m)^```(?:(?:typescript|tsx|ts|javascript|jsx|js|json|css|html|md|sh|bash|text)?:)?([^\\s`]+)\\s*\\n")
@@ -82,6 +89,7 @@ func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceR
 	}
 
 	var written []string
+	var generatedFiles []GeneratedFile
 	for path, content := range files {
 		input, _ := json.Marshal(tools.FileWriteRequest{Path: path, Content: content})
 		result, err := wsRuntime.Execute(ctx, tools.ToolRequest{
@@ -94,13 +102,15 @@ func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceR
 			continue
 		}
 		written = append(written, path)
+		generatedFiles = append(generatedFiles, GeneratedFile{Path: path, Content: content})
 	}
 
 	return &Result{
-		FilesWritten: written,
-		LLMModel:     resp.GetModel(),
-		TokensIn:     int(resp.GetTokensIn()),
-		TokensOut:    int(resp.GetTokensOut()),
+		FilesWritten:   written,
+		GeneratedFiles: generatedFiles,
+		LLMModel:       resp.GetModel(),
+		TokensIn:       int(resp.GetTokensIn()),
+		TokensOut:      int(resp.GetTokensOut()),
 	}, nil
 }
 

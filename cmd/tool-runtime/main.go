@@ -232,8 +232,8 @@ func (g *approvalGate) insertPending(ctx context.Context, toolName, taskID, work
 	}
 
 	_, err := g.db.ExecContext(ctx,
-		`INSERT INTO approval_requests (id, task_id, worker_id, tool_name, action_summary, status)
-		 VALUES ($1, $2, $3, $4, $5, 'pending')`,
+		`INSERT INTO approval_requests (id, request_type, task_id, worker_id, tool_name, action_summary, status)
+		 VALUES ($1, 'risky_task', $2, $3, $4, $5, 'pending')`,
 		id, tID, wID, toolName, actionSummary)
 	if err != nil {
 		return "", fmt.Errorf("insert approval_requests: %w", err)

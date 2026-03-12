@@ -50,6 +50,18 @@
       <div class="summary-value" id="sum-approvals">0</div>
       <div class="summary-label">Pending Approvals</div>
     </div>
+    <div class="summary-card card-accent-cyan">
+      <div class="summary-value" id="sum-agents">0</div>
+      <div class="summary-label">Agents</div>
+    </div>
+    <div class="summary-card card-accent-teal">
+      <div class="summary-value" id="sum-tokens-in">0</div>
+      <div class="summary-label">Tokens In</div>
+    </div>
+    <div class="summary-card card-accent-slate">
+      <div class="summary-value" id="sum-tokens-out">0</div>
+      <div class="summary-label">Tokens Out</div>
+    </div>
   </section>
 
   <section id="section-charts" class="charts-grid">
@@ -64,6 +76,25 @@
     <div class="dashboard-card chart-container">
       <h2 class="section-title">Service Health</h2>
       <canvas id="chart-services"></canvas>
+    </div>
+    <div class="dashboard-card chart-container">
+      <h2 class="section-title">Agents</h2>
+      <canvas id="chart-agents"></canvas>
+    </div>
+  </section>
+
+  <section id="section-agents" class="dashboard-card card-agents">
+    <h2 class="section-title">Agents</h2>
+    <div class="table-scroll">
+    <table id="table-agents" class="data-table">
+      <thead><tr><th>ID</th><th>Name</th><th>Status</th><th class="th-actions">Actions</th></tr></thead>
+      <tbody id="tbody-agents"></tbody>
+    </table>
+    </div>
+    <div class="pagination-row">
+      <button type="button" id="agents-prev" class="pagination-btn" disabled>Previous</button>
+      <span id="agents-page-info" class="pagination-info">Page 1</span>
+      <button type="button" id="agents-next" class="pagination-btn">Next</button>
     </div>
   </section>
 
@@ -99,9 +130,13 @@
 
   <section id="section-approvals" class="dashboard-card card-approvals">
     <h2 class="section-title">Pending Approvals</h2>
+    <div class="approvals-toolbar">
+      <label class="toggle-label"><input type="checkbox" id="toggle-auto-approve-plans" /> Auto-approve implementation plans</label>
+      <span id="auto-approve-note" class="auto-approve-note"></span>
+    </div>
     <div class="table-scroll">
     <table id="table-approvals" class="data-table">
-      <thead><tr><th>ID</th><th>Tool</th><th>Action Summary</th><th>Status</th><th>Requested At</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Type</th><th>ID</th><th>Tool / Summary</th><th>Action Summary</th><th>Status</th><th>Requested At</th><th>Actions</th></tr></thead>
       <tbody id="tbody-approvals"></tbody>
     </table>
     </div>
@@ -160,6 +195,50 @@
         <ul id="approvals-summary-list"></ul>
       </section>
     </aside>
+  </div>
+
+  <!-- Approval detail modal -->
+  <div id="approval-modal" class="approval-modal" role="dialog" aria-labelledby="approval-modal-title" aria-modal="true" hidden>
+    <div class="approval-modal-backdrop"></div>
+    <div class="approval-modal-content">
+      <header class="approval-modal-header">
+        <h2 id="approval-modal-title" class="approval-modal-title">Approval details</h2>
+        <button type="button" class="approval-modal-close" id="approval-modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div id="approval-modal-body" class="approval-modal-body">
+        <p class="approval-modal-loading">Loading…</p>
+      </div>
+      <footer class="approval-modal-footer">
+        <button type="button" class="action-btn approve" id="approval-dialog-approve">Approve</button>
+        <button type="button" class="action-btn reject" id="approval-dialog-reject">Reject</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Goal detail modal -->
+  <div id="goal-modal" class="goal-modal" role="dialog" aria-labelledby="goal-modal-title" aria-modal="true" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content">
+      <header class="goal-modal-header">
+        <h2 id="goal-modal-title" class="goal-modal-title">Goal details</h2>
+        <button type="button" class="goal-modal-close" id="goal-modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div id="goal-modal-body" class="goal-modal-body">
+        <p class="goal-modal-loading">Loading…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generated code modal (when clicking a code_generate action in goal details) -->
+  <div id="code-modal" class="goal-modal code-modal" role="dialog" aria-labelledby="code-modal-title" aria-modal="true" hidden>
+    <div class="goal-modal-backdrop" id="code-modal-backdrop"></div>
+    <div class="goal-modal-content">
+      <header class="goal-modal-header">
+        <h2 id="code-modal-title" class="goal-modal-title">Generated code</h2>
+        <button type="button" class="goal-modal-close" id="code-modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div id="code-modal-body" class="goal-modal-body code-modal-body"></div>
+    </div>
   </div>
 
   <script src="/dashboard/static/app.js"></script>
