@@ -357,16 +357,21 @@ function renderAgents(agents) {
 function renderRecentGoals(recentGoals) {
   var tbody = document.getElementById('tbody-goals');
   tbody.innerHTML = '';
-  if (!recentGoals || recentGoals.length === 0) return tbody.appendChild(emptyRow(5, 'No goals yet'));
+  if (!recentGoals || recentGoals.length === 0) return tbody.appendChild(emptyRow(6, 'No goals yet'));
   recentGoals.forEach(function (g) {
     var tr = document.createElement('tr');
     tr.setAttribute('data-goal-id', g.id || '');
     var st = (g.status || '').toLowerCase();
+    var isCancellable = ['pending', 'active', 'running', 'queued', 'scheduled', 'created'].indexOf(st) !== -1;
+    var actionsHtml = isCancellable
+      ? '<button class="cancel-goal-btn" data-goal-id="' + escapeHtml(g.id || '') + '" title="Cancel goal">✕</button>'
+      : '';
     tr.innerHTML = '<td>' + (g.id || '').substring(0, 8) + '</td>' +
       '<td>' + (g.agent_id || '').substring(0, 8) + '</td>' +
       '<td class="goal-text-cell" title="' + (g.goal_text || '').replace(/"/g, '&quot;') + '">' + (g.goal_text || '') + '</td>' +
       '<td class="td-status status-' + st + '">' + (g.status || '') + '</td>' +
-      '<td>' + (g.created_at || '') + '</td>';
+      '<td>' + (g.created_at || '') + '</td>' +
+      '<td class="td-actions">' + actionsHtml + '</td>';
     tbody.appendChild(tr);
   });
 }
@@ -555,6 +560,7 @@ function openGoalModal(goalId) {
   var modal = document.getElementById('goal-modal');
   var body = document.getElementById('goal-modal-body');
   if (!modal || !body) return;
+  modal.dataset.goalId = goalId;
   modal.hidden = false;
   body.innerHTML = '<p class="goal-modal-loading">Loading…</p>';
   fetch('/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
@@ -585,8 +591,11 @@ function renderGoalModalContent(d) {
       var isCodeGen = (t.type || '').toLowerCase() === 'code_generate';
       var clickableClass = isCodeGen ? ' goal-detail-task-clickable' : '';
       var resultAttr = isCodeGen && t.result ? " data-task-result='" + String(JSON.stringify(t.result)).replace(/'/g, '&#39;') + "'" : '';
+      var isCancellable = ['pending', 'queued', 'scheduled', 'running', 'created'].indexOf((t.status || '').toLowerCase()) !== -1;
       html += '<div class="goal-detail-task' + statusClass + clickableClass + '"' + resultAttr + ' data-task-type="' + escapeHtml(t.type || '') + '">';
-      html += '<strong>' + escapeHtml(t.type || 'task') + '</strong> &middot; ' + escapeHtml(t.status || '') + ' (updated: ' + escapeHtml(t.updated_at || '') + ')' + (isCodeGen ? ' <span class="goal-detail-task-hint">— click to view code</span>' : '') + '';
+      html += '<strong>' + escapeHtml(t.type || 'task') + '</strong> &middot; ' + escapeHtml(t.status || '') + ' (updated: ' + escapeHtml(t.updated_at || '') + ')';
+      if (isCodeGen) html += ' <span class="goal-detail-task-hint">— click to view code</span>';
+      if (isCancellable) html += ' <button class="cancel-task-btn" data-task-id="' + escapeHtml(t.id || '') + '" title="Cancel task">✕</button>';
       if ((t.status || '').toLowerCase() === 'failed' && t.result) {
         var resultStr = typeof t.result === 'string' ? t.result : (typeof t.result === 'object' ? JSON.stringify(t.result, null, 2) : String(t.result));
         html += '<div class="goal-detail-task-failure">' + escapeHtml(resultStr) + '</div>';
@@ -713,540 +722,10 @@ function approvalDialogReject() {
   submitApprovalAction(id, 'reject');
 }
 
-// ─── Chat ───────────────────────────────────────────────────────────────
-
-var currentChatSessionId = null;
-
-function fetchChatSessions() {
-  fetch('/api/dashboard/chat/sessions', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      renderChatSessions(d.sessions || []);
-    })
-    .catch(function (e) {
-      renderChatSessions([]);
-      var statusEl = document.getElementById('chat-status');
-      if (statusEl) statusEl.textContent = 'Sessions unavailable';
-    });
-}
-
-function renderChatSessions(sessions) {
-  var list = document.getElementById('chat-sessions-list');
-  if (!list) return;
-  list.innerHTML = '';
-  if (!sessions || sessions.length === 0) {
-    list.innerHTML = '<div class="chat-sessions-empty">No sessions yet. Click "New chat" to start.</div>';
-    return;
-  }
-  sessions.forEach(function (s) {
-    var div = document.createElement('div');
-    div.className = 'chat-session-item' + (currentChatSessionId === s.id ? ' active' : '');
-    div.setAttribute('data-session-id', s.id);
-    var title = (s.title || '').trim() || ('Session ' + (s.id || '').substring(0, 8));
-    div.innerHTML = '<span class="chat-session-title">' + escapeHtml(title) + '</span><span class="chat-session-meta">' + escapeHtml(s.agent_id ? s.agent_id.substring(0, 8) : '') + '</span>';
-    list.appendChild(div);
-  });
-}
-
-function openChatNewModal() {
-  var modal = document.getElementById('chat-new-modal');
-  var loading = document.getElementById('chat-new-loading');
-  var list = document.getElementById('chat-new-agent-list');
-  var empty = document.getElementById('chat-new-empty');
-  if (!modal) return;
-  modal.hidden = false;
-  if (loading) loading.hidden = false;
-  if (list) list.hidden = true;
-  if (empty) empty.hidden = true;
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      var agents = d.agents || [];
-      if (loading) loading.hidden = true;
-      if (agents.length === 0) {
-        if (empty) empty.hidden = false;
-        return;
-      }
-      if (list) {
-        list.hidden = false;
-        list.innerHTML = '';
-        agents.forEach(function (a) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'chat-agent-btn';
-          btn.setAttribute('data-agent-id', a.id || '');
-          btn.textContent = a.name || a.id || 'Agent';
-          list.appendChild(btn);
-        });
-      }
-    })
-    .catch(function (e) {
-      if (loading) loading.textContent = 'Error: ' + (e.message || e);
-    });
-}
-
-function closeChatNewModal() {
-  var modal = document.getElementById('chat-new-modal');
-  if (modal) modal.hidden = true;
-}
-
-function createChatSession(agentId) {
-  fetch('/api/dashboard/chat/sessions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, title: '' })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      closeChatNewModal();
-      fetchChatSessions();
-      selectChatSession(d.id);
-    })
-    .catch(function (e) {
-      setStatus('Chat create failed: ' + (e.message || e), true);
-    });
-}
-
-function selectChatSession(sessionId) {
-  currentChatSessionId = sessionId;
-  var placeholder = document.getElementById('chat-placeholder');
-  var view = document.getElementById('chat-view');
-  var list = document.getElementById('chat-sessions-list');
-  if (placeholder) placeholder.hidden = true;
-  if (view) view.hidden = false;
-  if (list) {
-    [].forEach.call(list.querySelectorAll('.chat-session-item'), function (el) {
-      el.classList.toggle('active', el.getAttribute('data-session-id') === sessionId);
-    });
-  }
-  loadChatMessages(sessionId);
-}
-
-function loadChatMessages(sessionId) {
-  var container = document.getElementById('chat-messages');
-  if (!container) return;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      renderChatMessages(d.messages || []);
-    })
-    .catch(function (e) {
-      container.innerHTML = '<div class="chat-message chat-message-error">Failed to load messages.</div>';
-    });
-}
-
-function renderChatMessages(messages) {
-  var container = document.getElementById('chat-messages');
-  if (!container) return;
-  container.innerHTML = '';
-  if (!messages || messages.length === 0) {
-    container.innerHTML = '<div class="chat-message chat-message-system">No messages yet. Type below to send.</div>';
-    return;
-  }
-  messages.forEach(function (m) {
-    var div = document.createElement('div');
-    div.className = 'chat-message chat-message-' + (m.role || 'user');
-    div.innerHTML = '<div class="chat-message-role">' + escapeHtml(m.role || '') + '</div><div class="chat-message-content">' + escapeHtml(m.content || '') + '</div><div class="chat-message-meta">' + escapeHtml(m.created_at || '') + '</div>';
-    container.appendChild(div);
-  });
-  container.scrollTop = container.scrollHeight;
-}
-
-function sendChatMessage() {
-  var sessionId = currentChatSessionId;
-  var input = document.getElementById('chat-input');
-  if (!sessionId || !input) return;
-  var content = (input.value || '').trim();
-  if (!content) return;
-  input.value = '';
-  input.disabled = true;
-  var container = document.getElementById('chat-messages');
-  var tempDiv = document.createElement('div');
-  tempDiv.className = 'chat-message chat-message-user chat-message-pending';
-  tempDiv.innerHTML = '<div class="chat-message-role">user</div><div class="chat-message-content">' + escapeHtml(content) + '</div>';
-  if (container) {
-    var sys = container.querySelector('.chat-message-system');
-    if (sys) sys.remove();
-    container.appendChild(tempDiv);
-    container.scrollTop = container.scrollHeight;
-  }
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: content })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      tempDiv.classList.remove('chat-message-pending');
-      loadChatMessages(sessionId);
-    })
-    .catch(function (e) {
-      tempDiv.innerHTML += '<div class="chat-message-error">Send failed: ' + escapeHtml(e.message || e) + '</div>';
-      tempDiv.classList.remove('chat-message-pending');
-    })
-    .finally(function () {
-      input.disabled = false;
-    });
-}
-
-// ─── Chat ─────────────────────────────────────────────────────────────
-
-var currentChatSessionId = null;
-
-function fetchChatSessions() {
-  fetch('/api/dashboard/chat/sessions', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      renderChatSessions(d.sessions || []);
-    })
-    .catch(function (e) {
-      renderChatSessions([]);
-      var statusEl = document.getElementById('chat-status');
-      if (statusEl) statusEl.textContent = 'Chat unavailable: ' + (e.message || e);
-    });
-}
-
-function renderChatSessions(sessions) {
-  var list = document.getElementById('chat-sessions-list');
-  var statusEl = document.getElementById('chat-status');
-  if (!list) return;
-  if (statusEl) statusEl.textContent = '';
-  list.innerHTML = '';
-  if (!sessions || sessions.length === 0) {
-    list.innerHTML = '<p class="chat-empty-hint">No sessions yet. Click New chat to start.</p>';
-    return;
-  }
-  sessions.forEach(function (s) {
-    var div = document.createElement('div');
-    div.className = 'chat-session-item' + (currentChatSessionId === s.id ? ' chat-session-active' : '');
-    div.setAttribute('data-session-id', s.id);
-    div.setAttribute('data-agent-id', s.agent_id || '');
-    var title = (s.title || '').trim() || ('Session ' + (s.id || '').substring(0, 8));
-    var updated = s.updated_at || s.created_at || '';
-    div.innerHTML = '<span class="chat-session-title">' + escapeHtml(title) + '</span><span class="chat-session-meta">' + escapeHtml(updated) + '</span>';
-    list.appendChild(div);
-  });
-}
-
-function openChatSession(sessionId) {
-  currentChatSessionId = sessionId;
-  renderChatSessions(document.querySelectorAll('#chat-sessions-list .chat-session-item') ? [] : []);
-  var placeholder = document.getElementById('chat-placeholder');
-  var view = document.getElementById('chat-view');
-  if (placeholder) placeholder.hidden = true;
-  if (view) view.hidden = false;
-  fetchChatMessages(sessionId);
-  var items = document.querySelectorAll('.chat-session-item');
-  items.forEach(function (el) {
-    el.classList.toggle('chat-session-active', el.getAttribute('data-session-id') === sessionId);
-  });
-}
-
-function fetchChatMessages(sessionId) {
-  if (!sessionId) return;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      renderChatMessages(d.messages || []);
-    })
-    .catch(function (e) {
-      renderChatMessages([]);
-      setStatus('Chat messages load failed: ' + (e.message || e), true);
-    });
-}
-
-function renderChatMessages(messages) {
-  var cont = document.getElementById('chat-messages');
-  if (!cont) return;
-  cont.innerHTML = '';
-  (messages || []).forEach(function (m) {
-    var div = document.createElement('div');
-    div.className = 'chat-message chat-message-' + (m.role || 'user');
-    var role = (m.role || 'user');
-    var content = escapeHtml((m.content || '').trim() || '(empty)');
-    div.innerHTML = '<span class="chat-message-role">' + escapeHtml(role) + '</span><div class="chat-message-content">' + content.replace(/\n/g, '<br>') + '</div>';
-    cont.appendChild(div);
-  });
-  cont.scrollTop = cont.scrollHeight;
-}
-
-function sendChatMessage(content) {
-  if (!currentChatSessionId || !content || !content.trim()) return;
-  var input = document.getElementById('chat-input');
-  if (input) input.disabled = true;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(currentChatSessionId) + '/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: content.trim() })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return fetchChatMessages(currentChatSessionId);
-    })
-    .catch(function (e) {
-      setStatus('Send failed: ' + (e.message || e), true);
-    })
-    .finally(function () {
-      if (input) input.disabled = false;
-    });
-}
-
-function openChatNewModal() {
-  var modal = document.getElementById('chat-new-modal');
-  var loading = document.getElementById('chat-new-loading');
-  var list = document.getElementById('chat-new-agent-list');
-  var empty = document.getElementById('chat-new-empty');
-  if (!modal) return;
-  modal.hidden = false;
-  if (loading) loading.hidden = false;
-  if (list) { list.hidden = true; list.innerHTML = ''; }
-  if (empty) empty.hidden = true;
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      var agents = d.agents || [];
-      if (loading) loading.hidden = true;
-      if (agents.length === 0) {
-        if (empty) empty.hidden = false;
-      } else {
-        if (list) {
-          list.hidden = false;
-          agents.forEach(function (a) {
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'chat-agent-btn';
-            btn.setAttribute('data-agent-id', a.id || '');
-            btn.textContent = a.name || a.id || 'Agent';
-            list.appendChild(btn);
-          });
-        }
-      }
-    })
-    .catch(function (e) {
-      if (loading) loading.textContent = 'Error: ' + (e.message || e);
-    });
-}
-
-function closeChatNewModal() {
-  var modal = document.getElementById('chat-new-modal');
-  if (modal) modal.hidden = true;
-}
-
-function createChatSession(agentId) {
-  closeChatNewModal();
-  fetch('/api/dashboard/chat/sessions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, title: '' })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      fetchChatSessions();
-      if (d.id) openChatSession(d.id);
-    })
-    .catch(function (e) {
-      setStatus('Create session failed: ' + (e.message || e), true);
-    });
-}
-
 // ─── Chat ─────────────────────────────────────────────────────────────
 
 var currentChatSessionId = null;
 var chatSessionsList = [];
-
-function fetchChatSessions() {
-  fetch('/api/dashboard/chat/sessions', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      chatSessionsList = d.sessions || [];
-      renderChatSessions();
-    })
-    .catch(function () {
-      chatSessionsList = [];
-      renderChatSessions();
-    });
-}
-
-function renderChatSessions() {
-  var listEl = document.getElementById('chat-sessions-list');
-  if (!listEl) return;
-  listEl.innerHTML = '';
-  if (chatSessionsList.length === 0) {
-    listEl.innerHTML = '<p class="chat-empty-hint">No sessions. Click "New chat" to start.</p>';
-    return;
-  }
-  chatSessionsList.forEach(function (s) {
-    var title = (s.title || '').toString() || 'Session ' + (s.id || '').substring(0, 8);
-    var item = document.createElement('div');
-    item.className = 'chat-session-item' + (currentChatSessionId === (s.id || '') ? ' active' : '');
-    item.setAttribute('data-session-id', s.id || '');
-    item.setAttribute('data-agent-id', s.agent_id || '');
-    item.innerHTML = '<span class="chat-session-title">' + escapeHtml(title) + '</span><span class="chat-session-meta">' + escapeHtml((s.updated_at || '').toString().substring(0, 16)) + '</span>';
-    listEl.appendChild(item);
-  });
-}
-
-function openChatNewModal() {
-  var modal = document.getElementById('chat-new-modal');
-  var loadingEl = document.getElementById('chat-new-loading');
-  var listEl = document.getElementById('chat-new-agent-list');
-  var emptyEl = document.getElementById('chat-new-empty');
-  if (!modal) return;
-  modal.hidden = false;
-  if (loadingEl) loadingEl.hidden = false;
-  if (listEl) { listEl.hidden = true; listEl.innerHTML = ''; }
-  if (emptyEl) emptyEl.hidden = true;
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      var agents = d.agents || [];
-      if (loadingEl) loadingEl.hidden = true;
-      if (agents.length === 0) {
-        if (emptyEl) emptyEl.hidden = false;
-        return;
-      }
-      if (listEl) {
-        listEl.hidden = false;
-        agents.forEach(function (a) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'chat-agent-btn';
-          btn.setAttribute('data-agent-id', a.id || '');
-          btn.setAttribute('data-agent-name', a.name || '');
-          btn.textContent = (a.name || a.id || 'Agent');
-          listEl.appendChild(btn);
-        });
-      }
-    })
-    .catch(function () {
-      if (loadingEl) loadingEl.hidden = true;
-      if (emptyEl) { emptyEl.hidden = false; emptyEl.textContent = 'Failed to load agents.'; }
-    });
-}
-
-function closeChatNewModal() {
-  var modal = document.getElementById('chat-new-modal');
-  if (modal) modal.hidden = true;
-}
-
-function createChatSession(agentId, agentName) {
-  closeChatNewModal();
-  fetch('/api/dashboard/chat/sessions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, title: agentName || '' })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      fetchChatSessions();
-      selectChatSession(d.id);
-    })
-    .catch(function (e) {
-      setStatus('Chat create failed: ' + (e.message || e), true);
-    });
-}
-
-function selectChatSession(sessionId) {
-  currentChatSessionId = sessionId;
-  renderChatSessions();
-  var placeholder = document.getElementById('chat-placeholder');
-  var view = document.getElementById('chat-view');
-  if (placeholder) placeholder.hidden = true;
-  if (view) { view.hidden = false; }
-  fetchChatMessages(sessionId);
-}
-
-function fetchChatMessages(sessionId) {
-  var messagesEl = document.getElementById('chat-messages');
-  if (!messagesEl) return;
-  messagesEl.innerHTML = '<p class="chat-loading">Loading…</p>';
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      return res.json();
-    })
-    .then(function (d) {
-      renderChatMessages(d.messages || []);
-    })
-    .catch(function () {
-      messagesEl.innerHTML = '<p class="chat-error">Failed to load messages.</p>';
-    });
-}
-
-function renderChatMessages(messages) {
-  var messagesEl = document.getElementById('chat-messages');
-  if (!messagesEl) return;
-  messagesEl.innerHTML = '';
-  messages.forEach(function (m) {
-    var div = document.createElement('div');
-    div.className = 'chat-message chat-message-' + (m.role || 'user');
-    div.innerHTML = '<div class="chat-message-role">' + escapeHtml(m.role || '') + '</div><div class="chat-message-content">' + escapeHtml(m.content || '') + '</div><div class="chat-message-meta">' + escapeHtml((m.created_at || '').toString()) + '</div>';
-    messagesEl.appendChild(div);
-  });
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function sendChatMessage() {
-  var sessionId = currentChatSessionId;
-  var input = document.getElementById('chat-input');
-  if (!sessionId || !input) return;
-  var content = (input.value || '').trim();
-  if (!content) return;
-  input.value = '';
-  var messagesEl = document.getElementById('chat-messages');
-  var div = document.createElement('div');
-  div.className = 'chat-message chat-message-user';
-  div.innerHTML = '<div class="chat-message-role">user</div><div class="chat-message-content">' + escapeHtml(content) + '</div><div class="chat-message-meta">Sending…</div>';
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: content })
-  })
-    .then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      fetchChatMessages(sessionId);
-    })
-    .catch(function (e) {
-      var meta = div.querySelector('.chat-message-meta');
-      if (meta) meta.textContent = 'Failed: ' + (e.message || e);
-    });
-}
 
 function loadSettings() {
   fetch('/api/dashboard/settings', { cache: 'no-store' })
@@ -1437,6 +916,162 @@ function sendChatMessage() {
     });
 }
 
+// ─── Floating Chat Widget ───────────────────────────────────────────
+
+var widgetSessionId = null;
+var widgetAgentId = null;
+var widgetOpen = false;
+
+function initChatWidget() {
+  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
+    .then(function (res) { return res.ok ? res.json() : Promise.reject('no agents'); })
+    .then(function (d) {
+      var agents = d.agents || [];
+      var chatAgent = agents.find(function (a) {
+        return (a.name || '').toLowerCase().indexOf('chat assistant') !== -1;
+      });
+      if (!chatAgent) {
+        var widget = document.getElementById('chat-widget');
+        if (widget) widget.style.display = 'none';
+        return;
+      }
+      widgetAgentId = chatAgent.id;
+
+      var savedSessionId = localStorage.getItem('astra_chat_widget_session');
+      if (savedSessionId) {
+        fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .then(function (session) {
+            if (session && session.id) {
+              widgetSessionId = session.id;
+              widgetSetStatus('Connected');
+            } else {
+              localStorage.removeItem('astra_chat_widget_session');
+              widgetCreateSession();
+            }
+          })
+          .catch(function () { widgetCreateSession(); });
+      } else {
+        widgetCreateSession();
+      }
+    })
+    .catch(function () {
+      var widget = document.getElementById('chat-widget');
+      if (widget) widget.style.display = 'none';
+    });
+}
+
+function widgetCreateSession() {
+  if (!widgetAgentId) return;
+  fetch('/api/dashboard/chat/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: widgetAgentId, title: 'Dashboard Chat' })
+  })
+    .then(function (res) { return res.ok ? res.json() : Promise.reject('create failed'); })
+    .then(function (d) {
+      widgetSessionId = d.id;
+      localStorage.setItem('astra_chat_widget_session', d.id);
+      widgetSetStatus('Connected');
+    })
+    .catch(function () {
+      widgetSetStatus('Offline');
+    });
+}
+
+function widgetSetStatus(text) {
+  var el = document.getElementById('chat-widget-status');
+  if (el) el.textContent = text;
+}
+
+function widgetToggle() {
+  widgetOpen = !widgetOpen;
+  var panel = document.getElementById('chat-widget-panel');
+  if (panel) panel.hidden = !widgetOpen;
+  if (widgetOpen && widgetSessionId) {
+    widgetLoadMessages();
+    var badge = document.getElementById('chat-widget-badge');
+    if (badge) badge.hidden = true;
+  }
+}
+
+function widgetLoadMessages() {
+  if (!widgetSessionId) return;
+  var container = document.getElementById('chat-widget-messages');
+  if (!container) return;
+  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
+    .then(function (res) { return res.ok ? res.json() : Promise.reject('load failed'); })
+    .then(function (d) {
+      widgetRenderMessages(d.messages || []);
+    })
+    .catch(function () {
+      container.innerHTML = '<div class="chat-widget-msg chat-widget-msg-system">Could not load messages.</div>';
+    });
+}
+
+function widgetRenderMessages(messages) {
+  var container = document.getElementById('chat-widget-messages');
+  if (!container) return;
+  container.innerHTML = '';
+  if (messages.length === 0) {
+    container.innerHTML = '<div class="chat-widget-msg chat-widget-msg-system">Send a message to start chatting.</div>';
+    return;
+  }
+  messages.forEach(function (m) {
+    var div = document.createElement('div');
+    div.className = 'chat-widget-msg chat-widget-msg-' + (m.role || 'user');
+    div.textContent = m.content || '';
+    container.appendChild(div);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function widgetSend() {
+  if (!widgetSessionId) return;
+  var input = document.getElementById('chat-widget-input');
+  if (!input) return;
+  var content = (input.value || '').trim();
+  if (!content) return;
+  input.value = '';
+
+  var container = document.getElementById('chat-widget-messages');
+  var system = container.querySelector('.chat-widget-msg-system');
+  if (system && system.textContent.indexOf('Send a message') !== -1) system.remove();
+
+  var userDiv = document.createElement('div');
+  userDiv.className = 'chat-widget-msg chat-widget-msg-user';
+  userDiv.textContent = content;
+  container.appendChild(userDiv);
+  container.scrollTop = container.scrollHeight;
+
+  var typing = document.createElement('div');
+  typing.className = 'chat-widget-typing';
+  typing.textContent = 'Thinking...';
+  container.appendChild(typing);
+  container.scrollTop = container.scrollHeight;
+
+  var sendBtn = document.getElementById('chat-widget-send');
+  if (sendBtn) sendBtn.disabled = true;
+
+  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: content })
+  })
+    .then(function (res) {
+      if (!res.ok) throw new Error('status ' + res.status);
+      return widgetLoadMessages();
+    })
+    .catch(function (e) {
+      typing.textContent = 'Failed: ' + (e.message || e);
+      typing.className = 'chat-widget-msg chat-widget-msg-system';
+    })
+    .finally(function () {
+      if (sendBtn) sendBtn.disabled = false;
+      if (typing.parentNode) typing.remove();
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btn-refresh').addEventListener('click', fetchSnapshot);
   var tbodyApprovals = document.getElementById('tbody-approvals');
@@ -1470,6 +1105,20 @@ document.addEventListener('DOMContentLoaded', function () {
   var tbodyGoals = document.getElementById('tbody-goals');
   if (tbodyGoals) {
     tbodyGoals.addEventListener('click', function (e) {
+      var cancelGoalBtn = e.target && e.target.closest && e.target.closest('.cancel-goal-btn');
+      if (cancelGoalBtn && cancelGoalBtn.dataset && cancelGoalBtn.dataset.goalId) {
+        e.stopPropagation();
+        if (!confirm('Cancel this goal and all its tasks?')) return;
+        fetch('/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
+          .then(function (r) {
+            if (r.ok) {
+              fetchSnapshot();
+            } else {
+              r.text().then(function (t) { alert('Cancel failed: ' + t); });
+            }
+          });
+        return;
+      }
       var tr = e.target && e.target.closest && e.target.closest('tr[data-goal-id]');
       if (tr && tr.dataset && tr.dataset.goalId) openGoalModal(tr.dataset.goalId);
     });
@@ -1479,6 +1128,24 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('goal-modal-close').addEventListener('click', closeGoalModal);
     goalModal.querySelector('.goal-modal-backdrop').addEventListener('click', closeGoalModal);
     goalModal.addEventListener('click', function (e) {
+      var cancelBtn = e.target && e.target.closest && e.target.closest('.cancel-task-btn');
+      if (cancelBtn && cancelBtn.dataset && cancelBtn.dataset.taskId) {
+        e.stopPropagation();
+        if (!confirm('Cancel this task?')) return;
+        fetch('/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
+          .then(function (r) {
+            if (r.ok) {
+              cancelBtn.disabled = true;
+              cancelBtn.textContent = '✓';
+              var goalId = document.getElementById('goal-modal').dataset.goalId;
+              if (goalId) setTimeout(function () { openGoalModal(goalId); }, 500);
+            } else {
+              r.text().then(function (t) { alert('Cancel failed: ' + t); });
+            }
+          })
+          .catch(function (err) { alert('Cancel failed: ' + (err.message || err)); });
+        return;
+      }
       var taskEl = e.target && e.target.closest && e.target.closest('.goal-detail-task-clickable[data-task-result]');
       if (taskEl && taskEl.getAttribute('data-task-result')) {
         try {
@@ -1519,7 +1186,17 @@ document.addEventListener('DOMContentLoaded', function () {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
     });
   }
-  fetchChatSessions();
+  // Chat widget event listeners
+  document.getElementById('chat-widget-toggle')?.addEventListener('click', widgetToggle);
+  document.getElementById('chat-widget-minimize')?.addEventListener('click', widgetToggle);
+  document.getElementById('chat-widget-send')?.addEventListener('click', widgetSend);
+  var widgetInput = document.getElementById('chat-widget-input');
+  if (widgetInput) {
+    widgetInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); widgetSend(); }
+    });
+  }
+  initChatWidget();
   var agentsPrev = document.getElementById('agents-prev');
   var agentsNext = document.getElementById('agents-next');
   if (agentsPrev) agentsPrev.addEventListener('click', function () { agentsPage = Math.max(1, agentsPage - 1); renderAgentsPage(); });
@@ -1544,93 +1221,6 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   }
-  var chatNewBtn = document.getElementById('chat-new-btn');
-  if (chatNewBtn) chatNewBtn.addEventListener('click', openChatNewModal);
-  var chatSendBtn = document.getElementById('chat-send-btn');
-  if (chatSendBtn) chatSendBtn.addEventListener('click', sendChatMessage);
-  var chatSessionsListEl = document.getElementById('chat-sessions-list');
-  if (chatSessionsListEl) {
-    chatSessionsListEl.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest && e.target.closest('.chat-session-btn');
-      if (btn && btn.dataset && btn.dataset.sessionId) selectChatSession(btn.dataset.sessionId, btn.dataset.agentId || '');
-    });
-  }
-  var chatAgentListEl = document.getElementById('chat-new-agent-list');
-  if (chatAgentListEl) {
-    chatAgentListEl.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest && e.target.closest('.chat-agent-btn');
-      if (btn && btn.dataset && btn.dataset.agentId) createChatSession(btn.dataset.agentId, btn.dataset.agentName || '');
-    });
-  }
-  var chatNewModalClose = document.getElementById('chat-new-modal-close');
-  var chatNewModalBackdrop = document.getElementById('chat-new-modal-backdrop');
-  if (chatNewModalClose) chatNewModalClose.addEventListener('click', closeChatNewModal);
-  if (chatNewModalBackdrop) chatNewModalBackdrop.addEventListener('click', closeChatNewModal);
-  var chatInput = document.getElementById('chat-input');
-  if (chatInput) {
-    chatInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
-    });
-  }
-  fetchChatSessions();
-  fetchChatSessions();
-  var chatNewBtn = document.getElementById('chat-new-btn');
-  if (chatNewBtn) chatNewBtn.addEventListener('click', openChatNewModal);
-  var chatSendBtn = document.getElementById('chat-send-btn');
-  if (chatSendBtn) chatSendBtn.addEventListener('click', sendChatMessage);
-  var chatSessionsListEl = document.getElementById('chat-sessions-list');
-  if (chatSessionsListEl) {
-    chatSessionsListEl.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest && e.target.closest('.chat-session-btn');
-      if (btn && btn.dataset && btn.dataset.sessionId) selectChatSession(btn.dataset.sessionId, btn.dataset.agentId || '');
-    });
-  }
-  var chatAgentList = document.getElementById('chat-new-agent-list');
-  if (chatAgentList) {
-    chatAgentList.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest && e.target.closest('.chat-agent-btn');
-      if (btn && btn.dataset && btn.dataset.agentId) createChatSession(btn.dataset.agentId, btn.dataset.agentName || '');
-    });
-  }
-  var chatNewClose = document.getElementById('chat-new-modal-close');
-  var chatNewBackdrop = document.getElementById('chat-new-modal-backdrop');
-  if (chatNewClose) chatNewClose.addEventListener('click', closeChatNewModal);
-  if (chatNewBackdrop) chatNewBackdrop.addEventListener('click', closeChatNewModal);
-  var chatInput = document.getElementById('chat-input');
-  if (chatInput) {
-    chatInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
-    });
-  }
-  var chatNewBtn = document.getElementById('chat-new-btn');
-  if (chatNewBtn) chatNewBtn.addEventListener('click', openChatNewModal);
-  var chatSendBtn = document.getElementById('chat-send-btn');
-  if (chatSendBtn) chatSendBtn.addEventListener('click', sendChatMessage);
-  var chatSessionsListEl = document.getElementById('chat-sessions-list');
-  if (chatSessionsListEl) {
-    chatSessionsListEl.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest && e.target.closest('.chat-session-btn');
-      if (btn && btn.dataset && btn.dataset.sessionId) selectChatSession(btn.dataset.sessionId, btn.dataset.agentId || '');
-    });
-  }
-  var chatNewAgentList = document.getElementById('chat-new-agent-list');
-  if (chatNewAgentList) {
-    chatNewAgentList.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest && e.target.closest('.chat-agent-btn');
-      if (btn && btn.dataset && btn.dataset.agentId) createChatSession(btn.dataset.agentId, btn.dataset.agentName || '');
-    });
-  }
-  var chatNewModalClose = document.getElementById('chat-new-modal-close');
-  var chatNewModalBackdrop = document.getElementById('chat-new-modal-backdrop');
-  if (chatNewModalClose) chatNewModalClose.addEventListener('click', closeChatNewModal);
-  if (chatNewModalBackdrop) chatNewModalBackdrop.addEventListener('click', closeChatNewModal);
-  var chatInput = document.getElementById('chat-input');
-  if (chatInput) {
-    chatInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
-    });
-  }
-  fetchChatSessions();
   fetchSnapshot();
   setInterval(fetchSnapshot, 5000);
 });

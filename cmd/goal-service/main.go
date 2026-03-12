@@ -243,11 +243,12 @@ func main() {
 
 	mux.HandleFunc("POST /goals", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			AgentID   string `json:"agent_id"`
-			GoalText  string `json:"goal_text"`
-			Priority  int    `json:"priority"`
-			Workspace string `json:"workspace"`
-			Documents []struct {
+			AgentID     string `json:"agent_id"`
+			GoalText    string `json:"goal_text"`
+			Priority    int    `json:"priority"`
+			Workspace   string `json:"workspace"`
+			AutoApprove bool   `json:"auto_approve"`
+			Documents   []struct {
 				DocType  string          `json:"doc_type"`
 				Name     string          `json:"name"`
 				Content  *string         `json:"content,omitempty"`
@@ -346,7 +347,7 @@ func main() {
 			return
 		}
 
-		if !autoApprovePlans {
+		if !autoApprovePlans && !req.AutoApprove {
 			planPayload := buildPlanPayload(&graph, goalID, agentID, req.GoalText)
 			planPayloadJSON, err := json.Marshal(planPayload)
 			if err != nil {

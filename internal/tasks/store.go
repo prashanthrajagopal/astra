@@ -27,6 +27,7 @@ type TaskStore interface {
 	SetWorkerID(ctx context.Context, taskID, workerID string) error
 	FindOrphanedRunningTasks(ctx context.Context) ([]string, error)
 	RequeueTask(ctx context.Context, taskID string) error
+	CancelTask(ctx context.Context, taskID string) error
 }
 
 type Store struct {
@@ -413,6 +414,24 @@ func (s *Store) FindOrphanedRunningTasks(ctx context.Context) ([]string, error) 
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (s *Store) CancelTask(ctx context.Context, taskID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status = 'failed', result = '{"cancelled":true}'::jsonb, updated_at = now()
+		 WHERE id = $1::uuid AND status NOT IN ('completed', 'failed')`,
+		taskID)
+	if err != nil {
+		return fmt.Errorf("tasks.CancelTask: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrInvalidTransition
+	}
+	_, _ = s.db.ExecContext(ctx,
+		`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ('TaskCancelled', $1, '{"cancelled":true}'::jsonb, now())`,
+		taskID)
+	return nil
 }
 
 func (s *Store) RequeueTask(ctx context.Context, taskID string) error {
