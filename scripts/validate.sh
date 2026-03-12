@@ -352,6 +352,48 @@ assert_eq "GET /health" "ok" "$COST_HEALTH"
 COST_RESP=$(curl -sf "$COST_TRACKER_URL/cost/daily?days=7" 2>/dev/null || echo '{}')
 assert_contains "GET /cost/daily returns rows or empty" "rows" "$COST_RESP"
 
+# ── Chat (sessions and WebSocket) ──
+# WebSocket streaming tests require a WebSocket client; manual or integration test.
+echo ""
+echo "$(bold '═══ Chat (sessions and WebSocket) ═══')"
+
+if [[ "${CHAT_ENABLED:-false}" != "true" ]] && [[ "${CHAT_ENABLED:-0}" != "1" ]]; then
+  echo "  $(yellow "⊘") Chat tests skipped (CHAT_ENABLED not set)"
+  SKIP=$((SKIP + 5))
+  TOTAL=$((TOTAL + 5))
+else
+  echo "Chat sessions:"
+  CHAT_AGENT_ID=$(echo "$AGENTS_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); a=d.get('agents',[]); a=a[0] if isinstance(a,list) and a else {}; print(a.get('id',''))" 2>/dev/null || echo "")
+  [[ -z "$CHAT_AGENT_ID" ]] && CHAT_AGENT_ID="$ACTOR_ID"
+  assert_not_empty "agent_id available for chat session" "$CHAT_AGENT_ID"
+
+  SESSION_RESP=$(curl -s -w "\n%{http_code}" -X POST "$API/api/dashboard/chat/sessions" -H "Content-Type: application/json" -d "{\"agent_id\":\"$CHAT_AGENT_ID\",\"title\":\"\"}" 2>/dev/null || echo -e "\n000")
+  SESSION_BODY=$(echo "$SESSION_RESP" | sed '$d')
+  SESSION_CODE=$(echo "$SESSION_RESP" | tail -1)
+  assert_eq "POST /api/dashboard/chat/sessions returns 201" "201" "$SESSION_CODE"
+
+  SESSION_ID=$(echo "$SESSION_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  assert_not_empty "session create returns session_id (id)" "$SESSION_ID"
+
+  LIST_SESSIONS_RESP=$(curl -s -w "\n%{http_code}" "$API/api/dashboard/chat/sessions" 2>/dev/null || echo -e "\n000")
+  LIST_SESSIONS_CODE=$(echo "$LIST_SESSIONS_RESP" | tail -1)
+  assert_eq "GET /api/dashboard/chat/sessions returns 200" "200" "$LIST_SESSIONS_CODE"
+
+  if [[ -n "$SESSION_ID" ]]; then
+    GET_SESSION_RESP=$(curl -s -w "\n%{http_code}" "$API/api/dashboard/chat/sessions/$SESSION_ID" 2>/dev/null || echo -e "\n000")
+    GET_SESSION_CODE=$(echo "$GET_SESSION_RESP" | tail -1)
+    assert_eq "GET /api/dashboard/chat/sessions/{id} returns 200" "200" "$GET_SESSION_CODE"
+
+    SEND_MSG_RESP=$(curl -s -w "\n%{http_code}" -X POST "$API/api/dashboard/chat/sessions/$SESSION_ID/messages" -H "Content-Type: application/json" -d '{"content":"hello"}' 2>/dev/null || echo -e "\n000")
+    SEND_MSG_CODE=$(echo "$SEND_MSG_RESP" | tail -1)
+    assert_eq "POST /api/dashboard/chat/sessions/{id}/messages returns 200 or 201" "true" "$([ "$SEND_MSG_CODE" = "200" ] || [ "$SEND_MSG_CODE" = "201" ] && echo true || echo false)"
+
+    MSGS_RESP=$(curl -s -w "\n%{http_code}" "$API/api/dashboard/chat/sessions/$SESSION_ID/messages" 2>/dev/null || echo -e "\n000")
+    MSGS_CODE=$(echo "$MSGS_RESP" | tail -1)
+    assert_eq "GET /api/dashboard/chat/sessions/{id}/messages returns 200" "200" "$MSGS_CODE"
+  fi
+fi
+
 # ═══════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════
