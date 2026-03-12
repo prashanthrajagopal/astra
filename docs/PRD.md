@@ -82,6 +82,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 - Policy & governance: RBAC, approval flows, tool restrictions
 - SDK for building agent applications in Go (bindings for Python/TS later)
 - **Platform-aware hardware acceleration:** On macOS, leverage Metal, Neural Engine, and GPU where beneficial for inference, embeddings, and compute; on Linux, support standard CPU and CUDA-based deployments. Astra can be deployed in production on both macOS (e.g. Mac Mini, Mac Studio) and Linux (e.g. Kubernetes, cloud, on-prem).
+- **Real-time chat agents** via WebSocket with streaming responses, tool invocation, and session management.
 
 ## Non-Goals
 
@@ -645,7 +646,7 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 
 | # | Service | Responsibility | Namespace |
 |---|---|---|---|
-| 1 | `api-gateway` | REST/gRPC gateway, auth middleware, rate limiting, versioning | control-plane |
+| 1 | `api-gateway` | REST/gRPC gateway, auth middleware, rate limiting, versioning; chat sessions, WebSocket streaming | control-plane |
 | 2 | `identity` | User/service auth, JWT tokens, audit log | control-plane |
 | 3 | `access-control` | RBAC, OPA policy enforcement, per-agent permission scopes | control-plane |
 | 4 | `agent-service` | Agent lifecycle (spawn/stop/inspect), actor supervisor integration, agent profile & document management | kernel |
@@ -661,6 +662,17 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 | 14 | `browser-worker` | Headless browser automation worker (Playwright/Puppeteer) | workers |
 | 15 | `tool-runtime` | Tool sandbox controller (WASM/Docker/Firecracker lifecycle) | workers |
 | 16 | `memory-service` | Episodic/semantic memory, embedding pipeline, pgvector search | kernel |
+
+**Chat (v1):** Chat capability is built into `api-gateway`; there is no separate chat service for v1.
+
+## Chat API (Phase 10)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/chat/sessions` | Create a chat session (agent_id, title) |
+| `GET` | `/chat/sessions` | List chat sessions for user |
+| `GET` | `/chat/sessions/{id}` | Get chat session details |
+| `GET` | `/chat/ws` | WebSocket upgrade for streaming chat |
 
 ## Agent Profile & Documents API (Phase 9)
 
@@ -1072,6 +1084,10 @@ Extends `approval_requests` to support two types: *plan* (implementation plan ap
 
 De-duplicates agents by `name` (keeps oldest per name), reassigns foreign keys to the kept agent, then adds `UNIQUE(agents.name)`. Idempotent migration: `migrations/0015_agents_unique_name.sql`. Standalone script `scripts/dedup-agents-by-name.sql` performs de-dup only (no constraint). Agent names are canonical and unique going forward.
 
+## Migration 0016: Chat sessions and messages
+
+Adds `chat_sessions` (user_id, agent_id, title, status, expires_at), `chat_messages` (session_id, role, content, tool_calls, tool_results, token counts), and `agents.chat_capable` column. Sessions and messages support real-time WebSocket chat with streaming and optional tool invocation. Idempotent migration: **migrations/0016_chat.sql**.
+
 ---
 
 # 12. Message & Event Protocols
@@ -1379,6 +1395,8 @@ func (a *SimpleAgent) Reflect(ctx AgentContext, outcome Outcome) error {
 
 Agents that users connect to via **WebSocket** for real-time chat with **streaming** responses (e.g. token-by-token). Chat agents can invoke the same workers and tool runtime as goal-based agents. Design: **docs/chat-agents-design.md** (session model, protocol, auth, tool calls). Implementation plan: **docs/chat-agents-implementation-plan.md**.
 
+**WebSocket protocol:** JSON frames include `chunk`, `message_start`, `message_end`, `tool_call`, `tool_result`, `done`, `error`, `pong`, and `session`. Session model: each chat is a session (user + agent) with a message history; sessions are created via REST and upgraded to WebSocket at `/chat/ws`.
+
 ---
 
 # 17. Observability, Tracing, Metrics
@@ -1418,7 +1436,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 | Dashboard | Content |
 |---|---|
-| **Operations Dashboard** (api-gateway `/dashboard/`) | Service health, workers, **agents** (count, status chart, paginated table with Prev/Next), goals (recent list; clickable rows open **goal detail modal** with full goal text, **task list with actions** — clicking a completed `code_generate` action opens a **Generated code** modal showing path and content per file), **summary stats** including **Tokens In** and **Tokens Out** (from cost data), **pending approvals** (table with **Type** column: plan / risky_task; detail modal shows type-specific content), cost trends, logs, PIDs. Snapshot includes `agents`, `agent_count`, `cost`; goal details via `GET /api/dashboard/goals/{id}`. |
+| **Operations Dashboard** (api-gateway `/dashboard/`) | Service health, workers, **agents** (count, status chart, paginated table with Prev/Next), goals (recent list; clickable rows open **goal detail modal** with full goal text, **task list with actions** — clicking a completed `code_generate` action opens a **Generated code** modal showing path and content per file), **summary stats** including **Tokens In** and **Tokens Out** (from cost data), **pending approvals** (table with **Type** column: plan / risky_task; detail modal shows type-specific content), **Chat** section (session management, real-time messaging via dashboard REST), cost trends, logs, PIDs. Snapshot includes `agents`, `agent_count`, `cost`; goal details via `GET /api/dashboard/goals/{id}`. |
 | Cluster Overview | Capacity, active agents, task throughput, error rate |
 | Agent Health | Per-agent throughput, avg latency, failure rate |
 | Cost | LLM token usage & cost per agent, per model |
@@ -1897,6 +1915,20 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] Phase 9 validation checks in `scripts/validate.sh`
 
 **Acceptance:** Agent profiles and documents can be created and queried via REST API. Goal submission with inline documents works. The full agent context (system_prompt + rules + skills + context_docs) is assembled by goal-service, passed through the planner into task payloads, and available to execution workers for LLM prompt construction. Profile and document reads served from Redis cache within 10ms SLA.
+
+## Phase 10: Chat Agents (WebSocket streaming)
+
+- [x] Migration 0016: chat_sessions, chat_messages, agents.chat_capable
+- [x] Session REST API (POST/GET /chat/sessions, GET /chat/sessions/{id})
+- [x] WebSocket /chat/ws with JWT auth, session validation
+- [x] Streaming chat loop (LLM → chunks → message_end → done)
+- [x] Tool invocation from chat (tool_call → tool-runtime → tool_result)
+- [x] Memory context integration (optional)
+- [x] Rate limits and token caps (per-session)
+- [x] Dashboard chat UI (session list, message panel, new chat)
+- [x] Config: CHAT_ENABLED, CHAT_MAX_MSG_LENGTH, CHAT_RATE_LIMIT, CHAT_TOKEN_CAP
+
+**Acceptance:** Users can create chat sessions, connect via WebSocket, send messages and receive streaming responses, with optional tool invocation and memory context.
 
 ---
 
