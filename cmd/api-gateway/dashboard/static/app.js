@@ -44,6 +44,16 @@ function renderSummary(data) {
   setText('sum-failed-tasks', tasks.failed || 0);
   setText('sum-agents', data.agent_count != null ? data.agent_count : (Array.isArray(data.agents) ? data.agents.length : 0));
 
+  var costRows = (data.cost && data.cost.rows && Array.isArray(data.cost.rows)) ? data.cost.rows : [];
+  var tokensIn = 0;
+  var tokensOut = 0;
+  costRows.forEach(function (r) {
+    tokensIn += Number(r.tokens_in != null ? r.tokens_in : r.TokensIn) || 0;
+    tokensOut += Number(r.tokens_out != null ? r.tokens_out : r.TokensOut) || 0;
+  });
+  setText('sum-tokens-in', tokensIn.toLocaleString());
+  setText('sum-tokens-out', tokensOut.toLocaleString());
+
   const activeWorkers = workers.filter(function (w) {
     var s = pick(w, ['status', 'Status'], '').toString().toLowerCase();
     return s === 'active' || s === 'online';
