@@ -164,11 +164,13 @@ func buildPrompt(payload TaskPayload, existingContext map[string]string, ac *Age
 		sb.WriteString("- Return ONLY code files, no explanation or commentary.\n")
 	}
 	sb.WriteString("- For each file, use this exact format:\n")
-	sb.WriteString("```filepath:path/to/file.tsx\n")
+	sb.WriteString("```filepath:path/to/file.ext\n")
 	sb.WriteString("// file content here\n")
 	sb.WriteString("```\n")
 	sb.WriteString("- Generate complete, working files. Do not use placeholders or TODOs.\n")
-	sb.WriteString("- Use TypeScript, React 18, Next.js 14 App Router, and Tailwind CSS.\n\n")
+	lang := detectLanguageFromTask(payload)
+	sb.WriteString("- Use " + lang + ".\n")
+	sb.WriteString("- Match file extensions, imports, and idioms to the language.\n\n")
 
 	if ac != nil && len(ac.Skills) > 0 {
 		sb.WriteString("SKILLS:\n")
@@ -209,6 +211,44 @@ func buildPrompt(payload TaskPayload, existingContext map[string]string, ac *Age
 	}
 
 	return sb.String()
+}
+
+func detectLanguageFromTask(payload TaskPayload) string {
+	all := strings.ToLower(payload.Instructions + " " + strings.Join(payload.OutputFiles, " "))
+	switch {
+	case strings.Contains(all, ".rb") || strings.Contains(all, "ruby"):
+		return "Ruby"
+	case strings.Contains(all, ".py") || strings.Contains(all, "python"):
+		return "Python"
+	case strings.Contains(all, ".go") || strings.Contains(all, "golang"):
+		return "Go"
+	case strings.Contains(all, ".rs") || strings.Contains(all, "rust"):
+		return "Rust"
+	case strings.Contains(all, ".java") || strings.Contains(all, "java "):
+		return "Java"
+	case strings.Contains(all, ".cs") || strings.Contains(all, "c#") || strings.Contains(all, "csharp"):
+		return "C#"
+	case strings.Contains(all, ".cpp") || strings.Contains(all, ".cc") || strings.Contains(all, "c++"):
+		return "C++"
+	case strings.Contains(all, ".c ") || strings.Contains(all, ".h "):
+		return "C"
+	case strings.Contains(all, ".php") || strings.Contains(all, "php"):
+		return "PHP"
+	case strings.Contains(all, ".swift") || strings.Contains(all, "swift"):
+		return "Swift"
+	case strings.Contains(all, ".kt") || strings.Contains(all, "kotlin"):
+		return "Kotlin"
+	case strings.Contains(all, ".scala") || strings.Contains(all, "scala"):
+		return "Scala"
+	case strings.Contains(all, ".tsx") || strings.Contains(all, ".ts") || strings.Contains(all, "typescript"):
+		return "TypeScript with React and Next.js"
+	case strings.Contains(all, ".jsx") || strings.Contains(all, ".js") || strings.Contains(all, "javascript"):
+		return "JavaScript"
+	case strings.Contains(all, ".sh") || strings.Contains(all, "bash") || strings.Contains(all, "shell"):
+		return "Bash/Shell"
+	default:
+		return "Python"
+	}
 }
 
 func gatherContext(workspace string, outputFiles []string) map[string]string {
