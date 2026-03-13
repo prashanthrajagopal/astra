@@ -1353,18 +1353,55 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		Config       string `json:"config"`
 		Name         string `json:"name"`
 		SystemPrompt string `json:"system_prompt"`
+		Visibility   string `json:"visibility"`
+		ChatCapable  bool   `json:"chat_capable"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") {
-		isSA := r.Header.Get("X-Is-Super-Admin") == "true"
-		if !isSA {
-			http.Error(w, `{"error":"agents with the astra-global- prefix can only be created by super admins"}`, http.StatusForbidden)
+
+	// Role-based visibility enforcement (before SpawnActor)
+	visibility := req.Visibility
+	if visibility == "" {
+		visibility = "private"
+	}
+	isSuperAdmin := r.Header.Get("X-Is-Super-Admin") == "true"
+	orgIDStr := r.Header.Get("X-Org-Id")
+	orgRole := r.Header.Get("X-Org-Role")
+	userIDStr := r.Header.Get("X-User-Id")
+	teamIDStr := r.Header.Get("X-Team-Id")
+	if teamIDStr == "" {
+		if ids := r.Header.Get("X-Team-Ids"); ids != "" {
+			teamIDStr = strings.Split(ids, ",")[0]
+		}
+	}
+
+	if isSuperAdmin {
+		if visibility != "global" {
+			visibility = "global"
+		}
+		if !strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") {
+			req.Name = "astra-global-" + req.Name
+		}
+		orgIDStr = ""
+	} else if orgRole == "admin" {
+		if visibility == "global" {
+			http.Error(w, `{"error":"org admins cannot create global agents"}`, http.StatusForbidden)
+			return
+		}
+	} else {
+		if visibility == "global" || visibility == "public" {
+			http.Error(w, `{"error":"only org admins can create public agents; only super admins can create global agents"}`, http.StatusForbidden)
 			return
 		}
 	}
+
+	if strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") && !isSuperAdmin {
+		http.Error(w, `{"error":"agents with the astra-global- prefix can only be created by super admins"}`, http.StatusForbidden)
+		return
+	}
+
 	configBytes := []byte(req.Config)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -1377,18 +1414,43 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spawn failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if req.SystemPrompt != "" {
-		agentID, err := uuid.Parse(resp.ActorId)
-		if err == nil && docStore != nil {
-			_ = docStore.UpdateProfile(ctx, agentID, &req.SystemPrompt, nil)
+	agentID, parseErr := uuid.Parse(resp.ActorId)
+	if parseErr != nil {
+		http.Error(w, "invalid agent id from spawn", http.StatusInternalServerError)
+		return
+	}
+
+	if req.SystemPrompt != "" && docStore != nil {
+		_ = docStore.UpdateProfile(ctx, agentID, &req.SystemPrompt, nil)
+		docStore.SetAgentPromptCache(ctx, agentID, req.SystemPrompt)
+	}
+	if req.Name != "" && docStore != nil {
+		_ = docStore.UpdateAgentName(ctx, agentID, req.Name)
+	}
+
+	// Update agent with visibility, chat_capable, org ownership
+	var orgID, ownerID, teamID *uuid.UUID
+	if orgIDStr != "" {
+		if o, err := uuid.Parse(orgIDStr); err == nil {
+			orgID = &o
 		}
 	}
-	if req.Name != "" {
-		agentID, err := uuid.Parse(resp.ActorId)
-		if err == nil && docStore != nil {
-			_ = docStore.UpdateAgentName(ctx, agentID, req.Name)
+	if userIDStr != "" && orgID != nil {
+		if u, err := uuid.Parse(userIDStr); err == nil {
+			ownerID = &u
 		}
 	}
+	if teamIDStr != "" && orgID != nil {
+		if t, err := uuid.Parse(teamIDStr); err == nil {
+			teamID = &t
+		}
+	}
+	if docStore != nil {
+		if err := docStore.UpdateAgentMeta(ctx, agentID, visibility, req.ChatCapable, orgID, ownerID, teamID); err != nil {
+			slog.Error("UpdateAgentMeta failed", "err", err)
+		}
+	}
+
 	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"actor_id": resp.ActorId})
 }

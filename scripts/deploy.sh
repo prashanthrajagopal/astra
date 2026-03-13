@@ -117,6 +117,92 @@ else
   echo "Postgres: Docker (ready)"
 fi
 
+# --- Bootstrap Postgres role & database (native only) ---
+if [[ "$POSTGRES_SOURCE" == "native" ]]; then
+  # Determine which superuser to connect as for bootstrapping.
+  # On macOS Homebrew, the default superuser is often the current OS user.
+  # On Linux, it's typically "postgres".
+  PG_SUPERUSER="${PG_SUPERUSER:-}"
+  if [[ -z "$PG_SUPERUSER" ]]; then
+    if [[ "$DETECTED_OS" == "Darwin" ]]; then
+      PG_SUPERUSER="$(whoami)"
+    else
+      PG_SUPERUSER="postgres"
+    fi
+  fi
+
+  if command -v psql &>/dev/null; then
+    # Check/create role
+    ROLE_EXISTS=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -tAc \
+      "SELECT 1 FROM pg_roles WHERE rolname = '$POSTGRES_USER'" postgres 2>/dev/null || true)
+    if [[ "$ROLE_EXISTS" != "1" ]]; then
+      echo "Creating Postgres role '$POSTGRES_USER'..."
+      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
+        "CREATE ROLE $POSTGRES_USER WITH LOGIN SUPERUSER PASSWORD '$PGPASSWORD';" postgres 2>/dev/null \
+        && echo "  Role '$POSTGRES_USER' created (superuser)." \
+        || echo "  WARNING: Could not create role '$POSTGRES_USER'. Create it manually: CREATE ROLE $POSTGRES_USER WITH LOGIN SUPERUSER PASSWORD '\$PGPASSWORD';"
+    else
+      # Ensure existing role has superuser (required for CREATE EXTENSION vector)
+      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
+        "ALTER ROLE $POSTGRES_USER WITH SUPERUSER;" postgres 2>/dev/null \
+        && echo "  Role '$POSTGRES_USER' granted superuser." \
+        || true
+    fi
+
+    # Check/create database
+    DB_EXISTS=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" postgres 2>/dev/null || true)
+    if [[ "$DB_EXISTS" != "1" ]]; then
+      echo "Creating Postgres database '$POSTGRES_DB'..."
+      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
+        "CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;" postgres 2>/dev/null \
+        && echo "  Database '$POSTGRES_DB' created." \
+        || echo "  WARNING: Could not create database '$POSTGRES_DB'. Create it manually: CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;"
+    fi
+  else
+    echo "  psql not in PATH — cannot verify role/database exist. If migrations fail, create them manually:"
+    echo "    CREATE ROLE $POSTGRES_USER WITH LOGIN PASSWORD '\$PGPASSWORD';"
+    echo "    CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;"
+  fi
+fi
+
+# --- Ensure pgvector extension is available (native only) ---
+if [[ "$POSTGRES_SOURCE" == "native" ]] && command -v psql &>/dev/null; then
+  VECTOR_AVAILABLE=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+    "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'" 2>/dev/null || true)
+  if [[ "$VECTOR_AVAILABLE" != "1" ]]; then
+    echo "pgvector extension not found — attempting install..."
+    if [[ "$DETECTED_OS" == "Darwin" ]]; then
+      if command -v brew &>/dev/null; then
+        brew install pgvector 2>&1 | tail -3
+      else
+        echo "  WARNING: Homebrew not found. Install pgvector manually: brew install pgvector"
+      fi
+    else
+      if command -v apt-get &>/dev/null; then
+        sudo apt-get install -y postgresql-14-pgvector 2>/dev/null \
+          || sudo apt-get install -y postgresql-pgvector 2>/dev/null \
+          || echo "  WARNING: Could not install pgvector via apt. Install manually."
+      elif command -v dnf &>/dev/null; then
+        sudo dnf install -y pgvector 2>/dev/null \
+          || echo "  WARNING: Could not install pgvector via dnf. Install manually."
+      else
+        echo "  WARNING: No supported package manager found. Install pgvector manually."
+        echo "  See: https://github.com/pgvector/pgvector#installation"
+      fi
+    fi
+    # Re-check after install attempt
+    VECTOR_AVAILABLE=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+      "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'" 2>/dev/null || true)
+    if [[ "$VECTOR_AVAILABLE" == "1" ]]; then
+      echo "  pgvector: installed and available."
+    else
+      echo "  WARNING: pgvector still not available. Migrations requiring 'CREATE EXTENSION vector' will fail."
+      echo "  Install manually and re-run: https://github.com/pgvector/pgvector#installation"
+    fi
+  fi
+fi
+
 # --- Redis ---
 if redis_ok; then
   REDIS_SOURCE="native"
@@ -193,23 +279,27 @@ if [[ -f docs/api/openapi.yaml ]]; then
 fi
 
 echo "Building..."
-go build -o bin/api-gateway        ./cmd/api-gateway
-go build -o bin/scheduler-service  ./cmd/scheduler-service
-go build -o bin/task-service       ./cmd/task-service
-go build -o bin/agent-service      ./cmd/agent-service
-go build -o bin/execution-worker   ./cmd/execution-worker
-go build -o bin/worker-manager     ./cmd/worker-manager
-go build -o bin/tool-runtime       ./cmd/tool-runtime
-go build -o bin/browser-worker     ./cmd/browser-worker
-go build -o bin/memory-service     ./cmd/memory-service
-go build -o bin/llm-router         ./cmd/llm-router
-go build -o bin/prompt-manager     ./cmd/prompt-manager
-go build -o bin/identity           ./cmd/identity
-go build -o bin/access-control     ./cmd/access-control
-go build -o bin/planner-service    ./cmd/planner-service
-go build -o bin/goal-service       ./cmd/goal-service
-go build -o bin/evaluation-service ./cmd/evaluation-service
-go build -o bin/cost-tracker       ./cmd/cost-tracker
+ASTRA_VERSION="$(cat VERSION 2>/dev/null || echo dev)"
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LDFLAGS="-X astra/pkg/version.Version=${ASTRA_VERSION} -X astra/pkg/version.GitCommit=${GIT_COMMIT} -X astra/pkg/version.BuildDate=${BUILD_DATE}"
+go build -ldflags "$LDFLAGS" -o bin/api-gateway        ./cmd/api-gateway
+go build -ldflags "$LDFLAGS" -o bin/scheduler-service  ./cmd/scheduler-service
+go build -ldflags "$LDFLAGS" -o bin/task-service       ./cmd/task-service
+go build -ldflags "$LDFLAGS" -o bin/agent-service      ./cmd/agent-service
+go build -ldflags "$LDFLAGS" -o bin/execution-worker   ./cmd/execution-worker
+go build -ldflags "$LDFLAGS" -o bin/worker-manager     ./cmd/worker-manager
+go build -ldflags "$LDFLAGS" -o bin/tool-runtime       ./cmd/tool-runtime
+go build -ldflags "$LDFLAGS" -o bin/browser-worker     ./cmd/browser-worker
+go build -ldflags "$LDFLAGS" -o bin/memory-service     ./cmd/memory-service
+go build -ldflags "$LDFLAGS" -o bin/llm-router         ./cmd/llm-router
+go build -ldflags "$LDFLAGS" -o bin/prompt-manager     ./cmd/prompt-manager
+go build -ldflags "$LDFLAGS" -o bin/identity           ./cmd/identity
+go build -ldflags "$LDFLAGS" -o bin/access-control     ./cmd/access-control
+go build -ldflags "$LDFLAGS" -o bin/planner-service    ./cmd/planner-service
+go build -ldflags "$LDFLAGS" -o bin/goal-service       ./cmd/goal-service
+go build -ldflags "$LDFLAGS" -o bin/evaluation-service ./cmd/evaluation-service
+go build -ldflags "$LDFLAGS" -o bin/cost-tracker       ./cmd/cost-tracker
 echo "Build done."
 
 echo ""

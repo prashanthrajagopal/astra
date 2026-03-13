@@ -2007,9 +2007,38 @@ button#btn-refresh:focus-visible {
 .chat-widget-badge[hidden] {
   display: none !important;
 }
-.chat-widget-panel[hidden] {
-  display: none !important;
+
+/* ─── Create Agent Modal ─────────────────────────── */
+.agent-prompt-textarea {
+  font-family: 'Roboto Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  min-height: 160px;
+  resize: vertical;
+  white-space: pre-wrap;
 }
-.chat-widget-badge[hidden] {
-  display: none !important;
+.agent-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.agent-file-input {
+  flex: 1;
+  font-size: 0.8125rem;
+}
+.agent-file-info {
+  font-size: 0.75rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.agent-file-clear {
+  background: transparent;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 4px;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 2px 8px;
+}
+.agent-file-clear:hover {
+  background: var(--md-sys-color-surface-container-high);
 }

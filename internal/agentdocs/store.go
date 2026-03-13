@@ -15,6 +15,7 @@ const (
 	profileKeyPrefix     = "agent:profile:"
 	docsKeyPrefix        = "agent:docs:"
 	chatCapableKeyPrefix = "agent:chat_capable:"
+	agentPromptKeyPrefix = "agent:prompt:"
 )
 
 type DocType string
@@ -148,6 +149,28 @@ func (s *Store) UpdateAgentName(ctx context.Context, agentID uuid.UUID, name str
 		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
 	}
 	return nil
+}
+
+// UpdateAgentMeta updates visibility, chat_capable, and org ownership on an agent.
+func (s *Store) UpdateAgentMeta(ctx context.Context, agentID uuid.UUID, visibility string, chatCapable bool, orgID, ownerID, teamID *uuid.UUID) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET visibility = $1, chat_capable = $2, org_id = $3, owner_id = $4, team_id = $5, updated_at = now() WHERE id = $6`,
+		visibility, chatCapable, orgID, ownerID, teamID, agentID)
+	if err != nil {
+		return fmt.Errorf("agentdocs.UpdateAgentMeta: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+		_ = s.rdb.Del(ctx, docsKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
+// SetAgentPromptCache stores the system prompt in Redis for fast access (24h TTL).
+func (s *Store) SetAgentPromptCache(ctx context.Context, agentID uuid.UUID, prompt string) {
+	if s.rdb != nil && prompt != "" {
+		_ = s.rdb.Set(ctx, agentPromptKeyPrefix+agentID.String(), prompt, 24*time.Hour).Err()
+	}
 }
 
 // UpdateAgentStatus sets the agent's status (e.g. "active", "stopped"). Invalid status is rejected by DB constraint.
