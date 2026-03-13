@@ -270,6 +270,30 @@ echo $! > logs/api-gateway.pid
 
 echo "Chat WebSocket: ${CHAT_ENABLED:-false} (set CHAT_ENABLED=true to enable)"
 
+# Seed super-admin user (idempotent)
+SA_EMAIL="${ASTRA_SUPER_ADMIN_EMAIL:-admin@astra.local}"
+SA_PASS="${ASTRA_SUPER_ADMIN_PASSWORD:-changeme-admin}"
+echo "Seeding super-admin user ($SA_EMAIL)..."
+
+# Wait for identity service
+for i in 1 2 3 4 5; do
+  if curl -sf "http://localhost:${IDENTITY_PORT:-8085}/health" >/dev/null 2>&1; then break; fi
+  sleep 2
+done
+
+# Try to create via identity service API (idempotent — will fail if already exists)
+SEED_RESP=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:${IDENTITY_PORT:-8085}/users" \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"$SA_EMAIL\",\"name\":\"Super Admin\",\"password\":\"$SA_PASS\",\"is_super_admin\":true}" 2>/dev/null)
+SEED_CODE=$(echo "$SEED_RESP" | tail -1)
+if [[ "$SEED_CODE" == "201" || "$SEED_CODE" == "200" ]]; then
+  echo "  Super-admin created: $SA_EMAIL"
+elif echo "$SEED_RESP" | grep -qi "already\|duplicate\|exists\|unique"; then
+  echo "  Super-admin already exists: $SA_EMAIL"
+else
+  echo "  Super-admin seed: HTTP $SEED_CODE (may already exist)"
+fi
+
 echo ""
 echo "Seeding default agents (idempotent; skips existing)..."
 # Wait for api-gateway to be ready so seed can call GET /agents (avoids duplicate agents)

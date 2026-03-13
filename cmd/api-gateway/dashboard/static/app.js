@@ -30,6 +30,14 @@ function setText(id, val) {
   if (el) el.textContent = val;
 }
 
+function authFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  var token = localStorage.getItem('astra_token');
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  return fetch(url, opts);
+}
+
 // ─── Summary cards ──────────────────────────────────────────────────
 
 function renderSummary(data) {
@@ -493,7 +501,7 @@ function submitApprovalAction(id, action) {
   if (!id || approvalActionInFlight) return;
   approvalActionInFlight = true;
   setStatus('Submitting ' + action + ' for ' + id, false);
-  fetch('/api/dashboard/approvals/' + encodeURIComponent(id) + '/' + action, {
+  authFetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(id) + '/' + action, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decided_by: 'dashboard-ui' })
@@ -511,7 +519,7 @@ function fetchSnapshot() {
   if (inFlight) return;
   inFlight = true;
   setStatus('Refreshing', false);
-  return fetch('/api/dashboard/snapshot', { cache: 'no-store' })
+  return authFetch('/superadmin/api/dashboard/snapshot', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -563,7 +571,7 @@ function openGoalModal(goalId) {
   modal.dataset.goalId = goalId;
   modal.hidden = false;
   body.innerHTML = '<p class="goal-modal-loading">Loading…</p>';
-  fetch('/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(goalId), { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -661,7 +669,7 @@ function openApprovalModal(approvalId) {
   currentApprovalId = approvalId;
   modal.hidden = false;
   body.innerHTML = '<p class="approval-modal-loading">Loading…</p>';
-  fetch('/api/dashboard/approvals/' + encodeURIComponent(approvalId), { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/approvals/' + encodeURIComponent(approvalId), { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -728,7 +736,7 @@ var currentChatSessionId = null;
 var chatSessionsList = [];
 
 function loadSettings() {
-  fetch('/api/dashboard/settings', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/settings', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) return;
       return res.json();
@@ -753,7 +761,7 @@ var currentChatSessionId = null;
 var chatSessionsList = [];
 
 function fetchChatSessions() {
-  fetch('/api/dashboard/chat/sessions', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/sessions', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -797,7 +805,7 @@ function openChatNewModal() {
   if (loadingEl) loadingEl.hidden = false;
   if (listEl) { listEl.hidden = true; listEl.innerHTML = ''; }
   if (emptyEl) emptyEl.hidden = true;
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -834,7 +842,7 @@ function closeChatNewModal() {
 
 function createChatSession(agentId, agentName) {
   closeChatNewModal();
-  fetch('/api/dashboard/chat/sessions', {
+  authFetch('/superadmin/api/dashboard/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId, title: agentName || 'Chat' })
@@ -865,7 +873,7 @@ function selectChatSession(sessionId, agentId) {
 function fetchChatMessages(sessionId) {
   var container = document.getElementById('chat-messages');
   if (!container) return;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
       return res.json();
@@ -899,7 +907,7 @@ function sendChatMessage() {
   if (!content) return;
   input.value = '';
   input.disabled = true;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(sessionId) + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: content })
@@ -923,7 +931,7 @@ var widgetAgentId = null;
 var widgetOpen = false;
 
 function initChatWidget() {
-  fetch('/api/dashboard/chat/agents', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/agents', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('no agents'); })
     .then(function (d) {
       var agents = d.agents || [];
@@ -939,7 +947,7 @@ function initChatWidget() {
 
       var savedSessionId = localStorage.getItem('astra_chat_widget_session');
       if (savedSessionId) {
-        fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
+        authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(savedSessionId), { cache: 'no-store' })
           .then(function (res) { return res.ok ? res.json() : null; })
           .then(function (session) {
             if (session && session.id) {
@@ -963,7 +971,7 @@ function initChatWidget() {
 
 function widgetCreateSession() {
   if (!widgetAgentId) return;
-  fetch('/api/dashboard/chat/sessions', {
+  authFetch('/superadmin/api/dashboard/chat/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: widgetAgentId, title: 'Dashboard Chat' })
@@ -999,7 +1007,7 @@ function widgetLoadMessages() {
   if (!widgetSessionId) return;
   var container = document.getElementById('chat-widget-messages');
   if (!container) return;
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('load failed'); })
     .then(function (d) {
       widgetRenderMessages(d.messages || []);
@@ -1053,7 +1061,7 @@ function widgetSend() {
   var sendBtn = document.getElementById('chat-widget-send');
   if (sendBtn) sendBtn.disabled = true;
 
-  fetch('/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
+  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: content })
@@ -1109,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (cancelGoalBtn && cancelGoalBtn.dataset && cancelGoalBtn.dataset.goalId) {
         e.stopPropagation();
         if (!confirm('Cancel this goal and all its tasks?')) return;
-        fetch('/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
+        authFetch('/superadmin/api/dashboard/goals/' + encodeURIComponent(cancelGoalBtn.dataset.goalId) + '/cancel', { method: 'POST' })
           .then(function (r) {
             if (r.ok) {
               fetchSnapshot();
@@ -1132,7 +1140,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (cancelBtn && cancelBtn.dataset && cancelBtn.dataset.taskId) {
         e.stopPropagation();
         if (!confirm('Cancel this task?')) return;
-        fetch('/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
+        authFetch('/superadmin/api/dashboard/tasks/' + encodeURIComponent(cancelBtn.dataset.taskId) + '/cancel', { method: 'POST' })
           .then(function (r) {
             if (r.ok) {
               cancelBtn.disabled = true;
@@ -1209,18 +1217,566 @@ document.addEventListener('DOMContentLoaded', function () {
       var agentId = btn.dataset.agentId;
       var action = (btn.dataset.action || '').toLowerCase();
       if (action === 'enable') {
-        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent enable failed: ' + t, true); }); });
       } else if (action === 'disable') {
-        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'stopped' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent disable failed: ' + t, true); }); });
       } else if (action === 'delete') {
         if (!confirm('Delete this agent and all its goals and tasks?')) return;
-        fetch('/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId), { method: 'DELETE' })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent delete failed: ' + t, true); }); });
       }
     });
   }
   fetchSnapshot();
   setInterval(fetchSnapshot, 5000);
+
+  // ─── Tab navigation ────────────────────────────────────────────────
+  document.querySelectorAll('.nav-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      var target = tab.dataset.tab;
+      document.querySelectorAll('.tab-panel').forEach(function(p) { p.hidden = true; });
+      var panel = document.getElementById('tab-' + target);
+      if (panel) panel.hidden = false;
+      if (target === 'orgs') loadOrgs();
+      if (target === 'users') loadUsers();
+    });
+  });
+
+  // ─── Org management ────────────────────────────────────────────────
+  var orgModal = document.getElementById('org-modal');
+  if (orgModal) {
+    document.getElementById('org-modal-close').addEventListener('click', function() { orgModal.hidden = true; });
+    orgModal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { orgModal.hidden = true; });
+  }
+  var orgAdminSelect = document.getElementById('org-admin-select');
+  var orgAdminNewFields = document.getElementById('org-admin-new-fields');
+  if (orgAdminSelect) orgAdminSelect.addEventListener('change', function() {
+    orgAdminNewFields.hidden = !!orgAdminSelect.value;
+  });
+  var orgNameInput = document.getElementById('org-name');
+  if (orgNameInput) orgNameInput.addEventListener('input', function() {
+    var slugEl = document.getElementById('org-slug');
+    if (slugEl) slugEl.value = orgNameInput.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  });
+
+  var btnCreateOrg = document.getElementById('btn-create-org');
+  if (btnCreateOrg) btnCreateOrg.addEventListener('click', function() {
+    document.getElementById('org-name').value = '';
+    document.getElementById('org-slug').value = '';
+    document.getElementById('org-admin-name') && (document.getElementById('org-admin-name').value = '');
+    document.getElementById('org-admin-email') && (document.getElementById('org-admin-email').value = '');
+    document.getElementById('org-admin-password') && (document.getElementById('org-admin-password').value = '');
+    if (orgAdminSelect) { orgAdminSelect.value = ''; orgAdminNewFields.hidden = false; }
+    document.getElementById('org-modal-error').hidden = true;
+    document.getElementById('org-modal-title').textContent = 'Create Organization';
+    populateOrgAdminDropdown();
+    orgModal.hidden = false;
+  });
+  var orgSaveBtn = document.getElementById('org-modal-save');
+  if (orgSaveBtn) orgSaveBtn.addEventListener('click', function() {
+    var name = document.getElementById('org-name').value.trim();
+    var slug = document.getElementById('org-slug').value.trim();
+    if (!name || !slug) { showOrgError('Name and slug required'); return; }
+    var existingUserId = orgAdminSelect ? orgAdminSelect.value : '';
+    var adminName = (document.getElementById('org-admin-name') || {}).value || '';
+    var adminEmail = (document.getElementById('org-admin-email') || {}).value || '';
+    var adminPass = (document.getElementById('org-admin-password') || {}).value || '';
+    if (!existingUserId && (!adminName.trim() || !adminEmail.trim() || !adminPass)) {
+      showOrgError('Org admin is required — select an existing user or fill in new admin details');
+      return;
+    }
+    orgSaveBtn.disabled = true; orgSaveBtn.textContent = 'Creating...';
+    authFetch('/superadmin/api/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,slug:slug}) })
+      .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
+      .then(function(res) {
+        if (!res.ok) { showOrgError(res.data.error || 'Failed to create org'); orgSaveBtn.disabled = false; orgSaveBtn.textContent = 'Create Organization'; return; }
+        var orgId = res.data.id;
+        if (existingUserId) {
+          return addOrgAdmin(orgId, existingUserId);
+        } else {
+          return authFetch('/superadmin/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email:adminEmail.trim(),name:adminName.trim(),password:adminPass}) })
+            .then(function(r2) { return r2.json().then(function(d2) { return {ok:r2.ok,data:d2}; }); })
+            .then(function(res2) {
+              if (!res2.ok) { showOrgError('Org created but admin user failed: ' + (res2.data.error || '')); orgSaveBtn.disabled = false; orgSaveBtn.textContent = 'Create Organization'; return; }
+              return addOrgAdmin(orgId, res2.data.id);
+            });
+        }
+      })
+      .catch(function(e) { showOrgError(e.message); orgSaveBtn.disabled = false; orgSaveBtn.textContent = 'Create Organization'; });
+  });
+  function addOrgAdmin(orgId, userId) {
+    return authFetch('/superadmin/api/orgs/' + orgId + '/admins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId}) })
+      .then(function() {
+        orgModal.hidden = true;
+        var btn = document.getElementById('org-modal-save');
+        btn.disabled = false; btn.textContent = 'Create Organization';
+        loadOrgs();
+      });
+  }
+  function populateOrgAdminDropdown() {
+    if (!orgAdminSelect) return;
+    while (orgAdminSelect.options.length > 1) orgAdminSelect.remove(1);
+    authFetch('/superadmin/api/users?per_page=200')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        (d.users || []).forEach(function(u) {
+          var opt = document.createElement('option');
+          opt.value = u.id; opt.textContent = u.name + ' (' + u.email + ')';
+          orgAdminSelect.appendChild(opt);
+        });
+      }).catch(function() {});
+  }
+
+  // ─── User management ───────────────────────────────────────────────
+  var userModal = document.getElementById('user-modal');
+  if (userModal) {
+    document.getElementById('user-modal-close').addEventListener('click', function() { userModal.hidden = true; });
+    userModal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { userModal.hidden = true; });
+  }
+  var userOrgSelect = document.getElementById('user-org-select');
+  var userOrgRoleField = document.getElementById('user-org-role-field');
+  if (userOrgSelect) userOrgSelect.addEventListener('change', function() {
+    userOrgRoleField.hidden = !userOrgSelect.value;
+  });
+
+  var btnCreateUser = document.getElementById('btn-create-user');
+  if (btnCreateUser) btnCreateUser.addEventListener('click', function() {
+    document.getElementById('user-name').value = '';
+    document.getElementById('user-email').value = '';
+    document.getElementById('user-password').value = '';
+    document.getElementById('user-superadmin').checked = false;
+    if (userOrgSelect) { userOrgSelect.value = ''; userOrgRoleField.hidden = true; }
+    document.getElementById('user-org-role') && (document.getElementById('user-org-role').value = 'member');
+    document.getElementById('user-modal-error').hidden = true;
+    populateUserOrgDropdown();
+    userModal.hidden = false;
+  });
+  var userSaveBtn = document.getElementById('user-modal-save');
+  if (userSaveBtn) userSaveBtn.addEventListener('click', function() {
+    var name = document.getElementById('user-name').value.trim();
+    var email = document.getElementById('user-email').value.trim();
+    var password = document.getElementById('user-password').value;
+    var isSuperAdmin = document.getElementById('user-superadmin').checked;
+    if (!name || !email || !password) { showUserError('Name, email, and password required'); return; }
+    var selectedOrg = userOrgSelect ? userOrgSelect.value : '';
+    var orgRole = (document.getElementById('user-org-role') || {}).value || 'member';
+    userSaveBtn.disabled = true; userSaveBtn.textContent = 'Creating...';
+    authFetch('/superadmin/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email:email,name:name,password:password,is_super_admin:isSuperAdmin}) })
+      .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
+      .then(function(res) {
+        if (!res.ok) { showUserError(res.data.error || 'Failed'); userSaveBtn.disabled = false; userSaveBtn.textContent = 'Create User'; return; }
+        var userId = res.data.id;
+        if (selectedOrg) {
+          return authFetch('/superadmin/api/users/' + userId + '/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({org_id:selectedOrg,role:orgRole}) })
+            .then(function() {
+              userModal.hidden = true; userSaveBtn.disabled = false; userSaveBtn.textContent = 'Create User';
+              loadUsers();
+            });
+        }
+        userModal.hidden = true; userSaveBtn.disabled = false; userSaveBtn.textContent = 'Create User';
+        loadUsers();
+      })
+      .catch(function(e) { showUserError(e.message); userSaveBtn.disabled = false; userSaveBtn.textContent = 'Create User'; });
+  });
+  function populateUserOrgDropdown() {
+    if (!userOrgSelect) return;
+    while (userOrgSelect.options.length > 1) userOrgSelect.remove(1);
+    authFetch('/superadmin/api/orgs?limit=200&offset=0')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        (d.orgs || d || []).forEach(function(o) {
+          var opt = document.createElement('option');
+          opt.value = o.id; opt.textContent = o.name + ' (' + o.slug + ')';
+          userOrgSelect.appendChild(opt);
+        });
+      }).catch(function() {});
+  }
+
+  var usersSearch = document.getElementById('users-search');
+  if (usersSearch) usersSearch.addEventListener('input', debounce(function() { usersPage = 1; loadUsers(); }, 300));
+  var usersOrgFilter = document.getElementById('users-org-filter');
+  if (usersOrgFilter) usersOrgFilter.addEventListener('change', function() { usersPage = 1; loadUsers(); });
+  var usersStatusFilter = document.getElementById('users-status-filter');
+  if (usersStatusFilter) usersStatusFilter.addEventListener('change', function() { usersPage = 1; loadUsers(); });
+  var usersPrev = document.getElementById('users-prev');
+  var usersNext = document.getElementById('users-next');
+  if (usersPrev) usersPrev.addEventListener('click', function() { usersPage = Math.max(1, usersPage - 1); loadUsers(); });
+  if (usersNext) usersNext.addEventListener('click', function() { usersPage++; loadUsers(); });
 });
+
+function showOrgError(msg) {
+  var el = document.getElementById('org-modal-error');
+  el.textContent = msg; el.hidden = false;
+}
+function showUserError(msg) {
+  var el = document.getElementById('user-modal-error');
+  el.textContent = msg; el.hidden = false;
+}
+function debounce(fn, ms) {
+  var t; return function() { clearTimeout(t); t = setTimeout(fn, ms); };
+}
+
+function loadOrgs() {
+  authFetch('/superadmin/api/orgs?limit=100&offset=0')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var list = d.orgs || d || [];
+      if (!Array.isArray(list)) list = [];
+      var tbody = document.getElementById('tbody-orgs');
+      var empty = document.getElementById('orgs-empty');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      if (list.length === 0) { empty.hidden = false; return; }
+      empty.hidden = true;
+      list.forEach(function(o) {
+        var tr = document.createElement('tr');
+        tr.style.cursor = 'pointer';
+        tr.setAttribute('data-org-id', o.id);
+        var st = (o.status || 'active').toLowerCase();
+        tr.innerHTML = '<td>' + esc(o.name) + '</td><td><code>' + esc(o.slug) + '</code></td>' +
+          '<td class="badge-' + st + '">' + esc(o.status || 'active') + '</td>' +
+          '<td>' + esc((o.created_at || '').substring(0, 10)) + '</td>' +
+          '<td><button class="action-btn reject org-delete-btn" data-id="' + o.id + '" style="font-size:.75rem">Delete</button></td>';
+        tbody.appendChild(tr);
+      });
+      var sel = document.getElementById('users-org-filter');
+      if (sel && sel.options.length <= 1) {
+        list.forEach(function(o) {
+          var opt = document.createElement('option');
+          opt.value = o.id; opt.textContent = o.name;
+          sel.appendChild(opt);
+        });
+      }
+    })
+    .catch(function() {});
+}
+
+(function() {
+  var tbodyOrgs = document.getElementById('tbody-orgs');
+  if (tbodyOrgs) tbodyOrgs.addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest && e.target.closest('.org-delete-btn');
+    if (btn) {
+      e.stopPropagation();
+      if (!confirm('Delete this organization and all its data?')) return;
+      authFetch('/superadmin/api/orgs/' + btn.dataset.id, { method: 'DELETE' })
+        .then(function() { loadOrgs(); });
+      return;
+    }
+    var tr = e.target && e.target.closest && e.target.closest('tr[data-org-id]');
+    if (tr && tr.dataset.orgId) openOrgDetail(tr.dataset.orgId);
+  });
+})();
+
+function openOrgDetail(orgId) {
+  var modal = document.getElementById('org-detail-modal');
+  if (!modal) return;
+  modal.hidden = false;
+  document.getElementById('org-detail-error').hidden = true;
+  document.getElementById('org-detail-id').value = orgId;
+  document.getElementById('org-detail-title').textContent = 'Loading...';
+  authFetch('/superadmin/api/orgs/' + orgId)
+    .then(function(r) { return r.json(); })
+    .then(function(o) {
+      document.getElementById('org-detail-title').textContent = o.name || 'Organization';
+      document.getElementById('org-detail-name').value = o.name || '';
+      document.getElementById('org-detail-slug').value = o.slug || '';
+      document.getElementById('org-detail-status').value = o.status || 'active';
+      loadOrgMembers(orgId);
+      loadOrgAddUserDropdown(orgId);
+    })
+    .catch(function() { document.getElementById('org-detail-title').textContent = 'Error loading org'; });
+}
+
+function loadOrgMembers(orgId) {
+  var tbody = document.getElementById('org-detail-members');
+  var empty = document.getElementById('org-detail-members-empty');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="4" style="color:var(--md-sys-color-on-surface-variant)">Loading...</td></tr>';
+  authFetch('/org/api/members?org_id=' + orgId)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var members = d.members || d || [];
+      if (!Array.isArray(members)) members = [];
+      tbody.innerHTML = '';
+      if (members.length === 0) { empty.hidden = false; return; }
+      empty.hidden = true;
+      members.forEach(function(m) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + esc(m.name) + '</td><td>' + esc(m.email) + '</td>' +
+          '<td>' + esc(m.role) + '</td>' +
+          '<td><button class="action-btn reject org-member-remove-btn" data-uid="' + m.user_id + '" data-oid="' + orgId + '" style="font-size:.7rem;padding:2px 8px">Remove</button></td>';
+        tbody.appendChild(tr);
+      });
+    })
+    .catch(function() { tbody.innerHTML = ''; empty.hidden = false; });
+}
+
+function loadOrgAddUserDropdown(orgId) {
+  var sel = document.getElementById('org-detail-add-user');
+  if (!sel) return;
+  while (sel.options.length > 1) sel.remove(1);
+  authFetch('/superadmin/api/users?per_page=200')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      (d.users || []).forEach(function(u) {
+        var opt = document.createElement('option');
+        opt.value = u.id; opt.textContent = u.name + ' (' + u.email + ')';
+        sel.appendChild(opt);
+      });
+    }).catch(function() {});
+}
+
+(function() {
+  var modal = document.getElementById('org-detail-modal');
+  if (!modal) return;
+  document.getElementById('org-detail-close').addEventListener('click', function() { modal.hidden = true; });
+  modal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { modal.hidden = true; });
+
+  document.getElementById('org-detail-save').addEventListener('click', function() {
+    var orgId = document.getElementById('org-detail-id').value;
+    var name = document.getElementById('org-detail-name').value.trim();
+    var slug = document.getElementById('org-detail-slug').value.trim();
+    var status = document.getElementById('org-detail-status').value;
+    if (!name || !slug) { var e = document.getElementById('org-detail-error'); e.textContent = 'Name and slug required'; e.hidden = false; return; }
+    authFetch('/superadmin/api/orgs/' + orgId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,slug:slug,status:status}) })
+      .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
+      .then(function(res) {
+        if (!res.ok) { var e = document.getElementById('org-detail-error'); e.textContent = res.data.error || 'Update failed'; e.hidden = false; return; }
+        document.getElementById('org-detail-title').textContent = name;
+        document.getElementById('org-detail-error').hidden = true;
+        loadOrgs();
+      });
+  });
+
+  document.getElementById('org-detail-add-btn').addEventListener('click', function() {
+    var orgId = document.getElementById('org-detail-id').value;
+    var userId = document.getElementById('org-detail-add-user').value;
+    var role = document.getElementById('org-detail-add-role').value;
+    if (!userId) return;
+    authFetch('/superadmin/api/orgs/' + orgId + '/admins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId,role:role}) })
+      .then(function() {
+        if (role === 'member') {
+          return authFetch('/org/api/members?org_id=' + orgId, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id:userId,role:role}) });
+        }
+      })
+      .then(function() { loadOrgMembers(orgId); document.getElementById('org-detail-add-user').value = ''; });
+  });
+
+  document.getElementById('org-detail-members').addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest && e.target.closest('.org-member-remove-btn');
+    if (!btn) return;
+    var orgId = btn.dataset.oid;
+    var userId = btn.dataset.uid;
+    if (!confirm('Remove this member from the organization?')) return;
+    authFetch('/superadmin/api/users/' + userId + '/orgs/' + orgId, { method: 'DELETE' })
+      .then(function() { loadOrgMembers(orgId); });
+  });
+})();
+
+var usersPage = 1;
+var USERS_PAGE_SIZE = 20;
+function loadUsers() {
+  var q = (document.getElementById('users-search') || {}).value || '';
+  var orgId = (document.getElementById('users-org-filter') || {}).value || '';
+  var status = (document.getElementById('users-status-filter') || {}).value || '';
+  var params = '?per_page=' + USERS_PAGE_SIZE + '&page=' + usersPage;
+  if (q) params += '&q=' + encodeURIComponent(q);
+  if (orgId) params += '&org_id=' + encodeURIComponent(orgId);
+  if (status) params += '&status=' + encodeURIComponent(status);
+  authFetch('/superadmin/api/users' + params)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var users = d.users || [];
+      var total = d.total || users.length;
+      var tbody = document.getElementById('tbody-users');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      if (users.length === 0) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="7" class="empty-message">No users found</td>';
+        tbody.appendChild(tr);
+      } else {
+        users.forEach(function(u) {
+          var tr = document.createElement('tr');
+          tr.style.cursor = 'pointer';
+          tr.setAttribute('data-user-id', u.id);
+          var st = (u.status || 'active').toLowerCase();
+          tr.innerHTML = '<td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td>' +
+            '<td class="user-orgs-cell" id="user-orgs-' + u.id + '"><span style="color:var(--md-sys-color-outline)">—</span></td>' +
+            '<td class="badge-' + st + '">' + esc(u.status || 'active') + '</td>' +
+            '<td>' + (u.is_super_admin ? '<span class="badge-super">SUPER</span>' : '') + '</td>' +
+            '<td>' + esc(u.last_login_at ? u.last_login_at.substring(0, 16).replace('T', ' ') : 'Never') + '</td>' +
+            '<td>' +
+              (st === 'active' ? '<button class="action-btn reject user-action-btn" data-id="' + u.id + '" data-action="suspend" style="font-size:.75rem">Suspend</button>' : '') +
+              (st === 'suspended' ? '<button class="action-btn approve user-action-btn" data-id="' + u.id + '" data-action="activate" style="font-size:.75rem">Activate</button>' : '') +
+            '</td>';
+          tbody.appendChild(tr);
+          fetchUserOrgsForCell(u.id);
+        });
+      }
+      var totalPages = Math.max(1, Math.ceil(total / USERS_PAGE_SIZE));
+      var info = document.getElementById('users-page-info');
+      if (info) info.textContent = 'Page ' + usersPage + ' of ' + totalPages + ' (' + total + ' users)';
+      var prev = document.getElementById('users-prev');
+      var next = document.getElementById('users-next');
+      if (prev) prev.disabled = usersPage <= 1;
+      if (next) next.disabled = usersPage >= totalPages;
+    })
+    .catch(function() {});
+  var tbodyUsers = document.getElementById('tbody-users');
+  if (tbodyUsers) tbodyUsers.addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest && e.target.closest('.user-action-btn');
+    if (btn) {
+      e.stopPropagation();
+      var action = btn.dataset.action;
+      authFetch('/superadmin/api/users/' + btn.dataset.id + '/' + action, { method: 'POST' })
+        .then(function() { loadUsers(); });
+      return;
+    }
+    var tr = e.target && e.target.closest && e.target.closest('tr[data-user-id]');
+    if (tr && tr.dataset.userId) openUserDetail(tr.dataset.userId);
+  });
+}
+
+function openUserDetail(userId) {
+  var modal = document.getElementById('user-detail-modal');
+  if (!modal) return;
+  modal.hidden = false;
+  document.getElementById('user-detail-error').hidden = true;
+  document.getElementById('user-detail-pw-row').hidden = true;
+  document.getElementById('user-detail-id').value = userId;
+  document.getElementById('user-detail-title').textContent = 'Loading...';
+  authFetch('/superadmin/api/users/' + userId)
+    .then(function(r) { return r.json(); })
+    .then(function(u) {
+      document.getElementById('user-detail-title').textContent = u.name || 'User';
+      document.getElementById('user-detail-name').value = u.name || '';
+      document.getElementById('user-detail-email').value = u.email || '';
+      document.getElementById('user-detail-status').value = u.status || 'active';
+      document.getElementById('user-detail-superadmin').checked = !!u.is_super_admin;
+      loadUserOrgs(userId);
+      loadUserAddOrgDropdown();
+    })
+    .catch(function() { document.getElementById('user-detail-title').textContent = 'Error loading user'; });
+}
+
+function loadUserOrgs(userId) {
+  var tbody = document.getElementById('user-detail-orgs');
+  var empty = document.getElementById('user-detail-orgs-empty');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="3" style="color:var(--md-sys-color-on-surface-variant)">Loading...</td></tr>';
+  authFetch('/superadmin/api/users/' + userId + '/orgs')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var orgs = d.memberships || d.orgs || d || [];
+      if (!Array.isArray(orgs)) orgs = [];
+      tbody.innerHTML = '';
+      if (orgs.length === 0) { empty.hidden = false; return; }
+      empty.hidden = true;
+      orgs.forEach(function(m) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + esc(m.org_name || m.name || '') + '</td>' +
+          '<td>' + esc(m.role || '') + '</td>' +
+          '<td><button class="action-btn reject user-org-remove-btn" data-uid="' + userId + '" data-oid="' + (m.org_id || m.id || '') + '" style="font-size:.7rem;padding:2px 8px">Remove</button></td>';
+        tbody.appendChild(tr);
+      });
+    })
+    .catch(function() { tbody.innerHTML = ''; empty.hidden = false; });
+}
+
+function loadUserAddOrgDropdown() {
+  var sel = document.getElementById('user-detail-add-org');
+  if (!sel) return;
+  while (sel.options.length > 1) sel.remove(1);
+  authFetch('/superadmin/api/orgs?limit=200&offset=0')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      (d.orgs || d || []).forEach(function(o) {
+        var opt = document.createElement('option');
+        opt.value = o.id; opt.textContent = o.name + ' (' + o.slug + ')';
+        sel.appendChild(opt);
+      });
+    }).catch(function() {});
+}
+
+(function() {
+  var modal = document.getElementById('user-detail-modal');
+  if (!modal) return;
+  document.getElementById('user-detail-close').addEventListener('click', function() { modal.hidden = true; });
+  modal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { modal.hidden = true; });
+
+  document.getElementById('user-detail-save').addEventListener('click', function() {
+    var userId = document.getElementById('user-detail-id').value;
+    var name = document.getElementById('user-detail-name').value.trim();
+    var email = document.getElementById('user-detail-email').value.trim();
+    var status = document.getElementById('user-detail-status').value;
+    var isSuperAdmin = document.getElementById('user-detail-superadmin').checked;
+    if (!name || !email) { var e = document.getElementById('user-detail-error'); e.textContent = 'Name and email required'; e.hidden = false; return; }
+    authFetch('/superadmin/api/users/' + userId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:name,email:email,status:status,is_super_admin:isSuperAdmin}) })
+      .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
+      .then(function(res) {
+        if (!res.ok) { var e = document.getElementById('user-detail-error'); e.textContent = res.data.error || 'Update failed'; e.hidden = false; return; }
+        document.getElementById('user-detail-title').textContent = name;
+        document.getElementById('user-detail-error').hidden = true;
+        loadUsers();
+      });
+  });
+
+  document.getElementById('user-detail-reset-pw').addEventListener('click', function() {
+    document.getElementById('user-detail-pw-row').hidden = false;
+    document.getElementById('user-detail-new-pw').value = '';
+  });
+  document.getElementById('user-detail-pw-cancel').addEventListener('click', function() {
+    document.getElementById('user-detail-pw-row').hidden = true;
+  });
+  document.getElementById('user-detail-pw-confirm').addEventListener('click', function() {
+    var userId = document.getElementById('user-detail-id').value;
+    var pw = document.getElementById('user-detail-new-pw').value;
+    if (!pw) return;
+    authFetch('/superadmin/api/users/' + userId + '/reset-password', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({new_password:pw}) })
+      .then(function(r) {
+        if (r.ok) { document.getElementById('user-detail-pw-row').hidden = true; alert('Password reset successfully.'); }
+        else { alert('Password reset failed.'); }
+      });
+  });
+
+  document.getElementById('user-detail-add-org-btn').addEventListener('click', function() {
+    var userId = document.getElementById('user-detail-id').value;
+    var orgId = document.getElementById('user-detail-add-org').value;
+    var role = document.getElementById('user-detail-add-org-role').value;
+    if (!orgId) return;
+    authFetch('/superadmin/api/users/' + userId + '/orgs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({org_id:orgId,role:role}) })
+      .then(function() { loadUserOrgs(userId); document.getElementById('user-detail-add-org').value = ''; });
+  });
+
+  document.getElementById('user-detail-orgs').addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest && e.target.closest('.user-org-remove-btn');
+    if (!btn) return;
+    if (!confirm('Remove this user from the organization?')) return;
+    authFetch('/superadmin/api/users/' + btn.dataset.uid + '/orgs/' + btn.dataset.oid, { method: 'DELETE' })
+      .then(function() { loadUserOrgs(btn.dataset.uid); });
+  });
+})();
+
+function fetchUserOrgsForCell(userId) {
+  var cell = document.getElementById('user-orgs-' + userId);
+  if (!cell) return;
+  authFetch('/superadmin/api/users/' + userId + '/orgs')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var orgs = d.memberships || d.orgs || d || [];
+      if (!Array.isArray(orgs) || orgs.length === 0) { cell.innerHTML = '<span style="color:var(--md-sys-color-outline)">—</span>'; return; }
+      cell.innerHTML = orgs.map(function(m) {
+        var name = esc(m.org_name || m.name || '?');
+        var role = m.role === 'admin' ? ' <span class="badge-super" style="font-size:.65rem">admin</span>' : '';
+        return '<span class="org-badge">' + name + role + '</span>';
+      }).join(' ');
+    })
+    .catch(function() {});
+}
+
+function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }

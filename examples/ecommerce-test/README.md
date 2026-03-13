@@ -17,7 +17,7 @@ fully functional Next.js 14 e-commerce website from a single goal description.
 6. **Approval flow** — Dangerous operations (shell commands) trigger approval
    requests that must be approved before execution proceeds.
 7. **Dashboard visibility** — All progress is visible in the Astra dashboard
-   at `http://localhost:8080/dashboard/`.
+   at `http://localhost:8080/superadmin/dashboard/`.
 
 ## Prerequisites
 
