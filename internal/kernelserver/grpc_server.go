@@ -8,14 +8,15 @@ import (
 	"log/slog"
 	"time"
 
-	"astra/internal/agent"
 	"astra/internal/actors"
+	"astra/internal/agent"
 	"astra/internal/kernel"
 	"astra/internal/messaging"
 
 	kernel_pb "astra/proto/kernel"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -82,17 +83,46 @@ func (s *KernelGRPCServer) QueryState(ctx context.Context, req *kernel_pb.QueryS
 
 	switch entityType {
 	case "agents":
-		rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(actor_type, name) as actor_type, status FROM agents LIMIT 100`)
+		md, _ := metadata.FromIncomingContext(ctx)
+		orgID := ""
+		if vals := md.Get("x-org-id"); len(vals) > 0 {
+			orgID = vals[0]
+		}
+		isSuperAdmin := false
+		if vals := md.Get("x-is-super-admin"); len(vals) > 0 && vals[0] == "true" {
+			isSuperAdmin = true
+		}
+
+		var query string
+		var args []interface{}
+		switch {
+		case isSuperAdmin:
+			query = `SELECT id, name, COALESCE(actor_type, name) AS actor_type, status, visibility, COALESCE(org_id::text, '') AS org_id FROM agents LIMIT 100`
+		case orgID != "":
+			query = `SELECT id, name, COALESCE(actor_type, name) AS actor_type, status, visibility, COALESCE(org_id::text, '') AS org_id FROM agents WHERE org_id = $1 OR visibility = 'global' LIMIT 100`
+			args = append(args, orgID)
+		default:
+			query = `SELECT id, name, COALESCE(actor_type, name) AS actor_type, status, visibility, COALESCE(org_id::text, '') AS org_id FROM agents WHERE visibility = 'global' LIMIT 100`
+		}
+
+		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "query agents: %v", err)
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id, name, actorType, statusVal string
-			if err := rows.Scan(&id, &name, &actorType, &statusVal); err != nil {
+			var id, name, actorType, statusVal, visibility, agentOrgID string
+			if err := rows.Scan(&id, &name, &actorType, &statusVal, &visibility, &agentOrgID); err != nil {
 				continue
 			}
-			b, _ := json.Marshal(map[string]string{"id": id, "name": name, "actor_type": actorType, "status": statusVal})
+			b, _ := json.Marshal(map[string]string{
+				"id":         id,
+				"name":       name,
+				"actor_type": actorType,
+				"status":     statusVal,
+				"visibility": visibility,
+				"org_id":     agentOrgID,
+			})
 			results = append(results, b)
 		}
 	case "tasks":

@@ -204,8 +204,8 @@ assert_eq "GET /graphs/{graphId} returns 404 or 500 for unknown id" "true" "$([ 
 
 # API Gateway — Dashboard
 echo "Dashboard:"
-SNAPSHOT=$(curl -sf "$API/api/dashboard/snapshot" 2>/dev/null || echo "{}")
-assert_not_empty "GET /api/dashboard/snapshot returns data" "$SNAPSHOT"
+SNAPSHOT=$(curl -sf "$API/superadmin/api/dashboard/snapshot" 2>/dev/null || echo "{}")
+assert_not_empty "GET /superadmin/api/dashboard/snapshot returns data" "$SNAPSHOT"
 SNAPSHOT_KEYS=$(echo "$SNAPSHOT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(sorted(d.keys())))" 2>/dev/null || echo "")
 assert_contains "snapshot has services key" "services" "$SNAPSHOT_KEYS"
 assert_contains "snapshot has workers key" "workers" "$SNAPSHOT_KEYS"
@@ -214,16 +214,16 @@ assert_contains "snapshot has cost key" "cost" "$SNAPSHOT_KEYS"
 assert_contains "snapshot has logs key" "logs" "$SNAPSHOT_KEYS"
 assert_contains "snapshot has pids key" "pids" "$SNAPSHOT_KEYS"
 
-DASH_HTML=$(curl -sf "$API/dashboard/" 2>/dev/null || curl -sf "$API/dashboard/index.html" 2>/dev/null || echo "")
-assert_contains "GET /dashboard/ serves HTML" "Astra Platform Dashboard" "$DASH_HTML"
+DASH_HTML=$(curl -sf "$API/superadmin/dashboard/" 2>/dev/null || curl -sf "$API/superadmin/dashboard/index.html" 2>/dev/null || echo "")
+assert_contains "GET /superadmin/dashboard/ serves HTML" "Astra Platform Dashboard" "$DASH_HTML"
 
 # Dashboard approval flow: create pending approval then approve via gateway
 APPROVAL_SEED=$(curl -s -X POST "$TOOL_RUNTIME_URL/execute" -H "Content-Type: application/json" -d '{"name":"terraform apply","timeout_seconds":5}' 2>/dev/null || echo '{}')
 APPROVAL_ID=$(echo "$APPROVAL_SEED" | python3 -c "import sys,json; print(json.load(sys.stdin).get('approval_request_id',''))" 2>/dev/null || echo "")
 assert_not_empty "Tool runtime returns approval_request_id for dangerous tool (dashboard approve)" "$APPROVAL_ID"
-APPROVE_RESP=$(curl -sf -X POST "$API/api/dashboard/approvals/$APPROVAL_ID/approve" -H "Content-Type: application/json" -d '{"decided_by":"validate"}' 2>/dev/null || echo '{}')
+APPROVE_RESP=$(curl -sf -X POST "$API/superadmin/api/dashboard/approvals/$APPROVAL_ID/approve" -H "Content-Type: application/json" -d '{"decided_by":"validate"}' 2>/dev/null || echo '{}')
 APPROVE_STATUS=$(echo "$APPROVE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
-assert_eq "POST /api/dashboard/approvals/{id}/approve" "ok" "$APPROVE_STATUS"
+assert_eq "POST /superadmin/api/dashboard/approvals/{id}/approve" "ok" "$APPROVE_STATUS"
 
 # ═══════════════════════════════════════════════
 # Access Control Service
@@ -367,36 +367,57 @@ else
   [[ -z "$CHAT_AGENT_ID" ]] && CHAT_AGENT_ID="$ACTOR_ID"
   assert_not_empty "agent_id available for chat session" "$CHAT_AGENT_ID"
 
-  SESSION_RESP=$(curl -s -w "\n%{http_code}" -X POST "$API/api/dashboard/chat/sessions" -H "Content-Type: application/json" -d "{\"agent_id\":\"$CHAT_AGENT_ID\",\"title\":\"\"}" 2>/dev/null || echo -e "\n000")
+  SESSION_RESP=$(curl -s -w "\n%{http_code}" -X POST "$API/superadmin/api/dashboard/chat/sessions" -H "Content-Type: application/json" -d "{\"agent_id\":\"$CHAT_AGENT_ID\",\"title\":\"\"}" 2>/dev/null || echo -e "\n000")
   SESSION_BODY=$(echo "$SESSION_RESP" | sed '$d')
   SESSION_CODE=$(echo "$SESSION_RESP" | tail -1)
-  assert_eq "POST /api/dashboard/chat/sessions returns 201" "201" "$SESSION_CODE"
+  assert_eq "POST /superadmin/api/dashboard/chat/sessions returns 201" "201" "$SESSION_CODE"
 
   SESSION_ID=$(echo "$SESSION_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
   assert_not_empty "session create returns session_id (id)" "$SESSION_ID"
 
-  LIST_SESSIONS_RESP=$(curl -s -w "\n%{http_code}" "$API/api/dashboard/chat/sessions" 2>/dev/null || echo -e "\n000")
+  LIST_SESSIONS_RESP=$(curl -s -w "\n%{http_code}" "$API/superadmin/api/dashboard/chat/sessions" 2>/dev/null || echo -e "\n000")
   LIST_SESSIONS_CODE=$(echo "$LIST_SESSIONS_RESP" | tail -1)
-  assert_eq "GET /api/dashboard/chat/sessions returns 200" "200" "$LIST_SESSIONS_CODE"
+  assert_eq "GET /superadmin/api/dashboard/chat/sessions returns 200" "200" "$LIST_SESSIONS_CODE"
 
   if [[ -n "$SESSION_ID" ]]; then
-    GET_SESSION_RESP=$(curl -s -w "\n%{http_code}" "$API/api/dashboard/chat/sessions/$SESSION_ID" 2>/dev/null || echo -e "\n000")
+    GET_SESSION_RESP=$(curl -s -w "\n%{http_code}" "$API/superadmin/api/dashboard/chat/sessions/$SESSION_ID" 2>/dev/null || echo -e "\n000")
     GET_SESSION_CODE=$(echo "$GET_SESSION_RESP" | tail -1)
-    assert_eq "GET /api/dashboard/chat/sessions/{id} returns 200" "200" "$GET_SESSION_CODE"
+    assert_eq "GET /superadmin/api/dashboard/chat/sessions/{id} returns 200" "200" "$GET_SESSION_CODE"
 
-    SEND_MSG_RESP=$(curl -s -w "\n%{http_code}" -X POST "$API/api/dashboard/chat/sessions/$SESSION_ID/messages" -H "Content-Type: application/json" -d '{"content":"hello"}' 2>/dev/null || echo -e "\n000")
+    SEND_MSG_RESP=$(curl -s -w "\n%{http_code}" -X POST "$API/superadmin/api/dashboard/chat/sessions/$SESSION_ID/messages" -H "Content-Type: application/json" -d '{"content":"hello"}' 2>/dev/null || echo -e "\n000")
     SEND_MSG_CODE=$(echo "$SEND_MSG_RESP" | tail -1)
-    assert_eq "POST /api/dashboard/chat/sessions/{id}/messages returns 200 or 201" "true" "$([ "$SEND_MSG_CODE" = "200" ] || [ "$SEND_MSG_CODE" = "201" ] && echo true || echo false)"
+    assert_eq "POST /superadmin/api/dashboard/chat/sessions/{id}/messages returns 200 or 201" "true" "$([ "$SEND_MSG_CODE" = "200" ] || [ "$SEND_MSG_CODE" = "201" ] && echo true || echo false)"
 
-    MSGS_RESP=$(curl -s -w "\n%{http_code}" "$API/api/dashboard/chat/sessions/$SESSION_ID/messages" 2>/dev/null || echo -e "\n000")
+    MSGS_RESP=$(curl -s -w "\n%{http_code}" "$API/superadmin/api/dashboard/chat/sessions/$SESSION_ID/messages" 2>/dev/null || echo -e "\n000")
     MSGS_CODE=$(echo "$MSGS_RESP" | tail -1)
-    assert_eq "GET /api/dashboard/chat/sessions/{id}/messages returns 200" "200" "$MSGS_CODE"
+    assert_eq "GET /superadmin/api/dashboard/chat/sessions/{id}/messages returns 200" "200" "$MSGS_CODE"
   fi
 fi
 
 # ═══════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# Phase 11: Multi-Tenancy
+# ═══════════════════════════════════════════════════════════════
+
+echo ""; echo "=== Phase 11: Multi-Tenancy ==="; echo ""
+
+assert_eq "migration 0018 exists" "true" "$(test -f migrations/0018_multi_tenant.sql && echo true || echo false)"
+assert_eq "internal/identity/store.go exists" "true" "$(test -f internal/identity/store.go && echo true || echo false)"
+assert_eq "internal/identity/jwt.go exists" "true" "$(test -f internal/identity/jwt.go && echo true || echo false)"
+assert_eq "internal/rbac/rbac.go exists" "true" "$(test -f internal/rbac/rbac.go && echo true || echo false)"
+assert_eq "internal/rbac/visibility.go exists" "true" "$(test -f internal/rbac/visibility.go && echo true || echo false)"
+assert_eq "internal/rbac/middleware.go exists" "true" "$(test -f internal/rbac/middleware.go && echo true || echo false)"
+assert_eq "internal/orgs/store.go exists" "true" "$(test -f internal/orgs/store.go && echo true || echo false)"
+assert_eq "identity builds" "true" "$(go build ./internal/identity/... 2>/dev/null && echo true || echo false)"
+assert_eq "rbac builds" "true" "$(go build ./internal/rbac/... 2>/dev/null && echo true || echo false)"
+assert_eq "orgs builds" "true" "$(go build ./internal/orgs/... 2>/dev/null && echo true || echo false)"
+assert_eq "identity service builds" "true" "$(go build ./cmd/identity/... 2>/dev/null && echo true || echo false)"
+assert_eq "api-gateway builds" "true" "$(go build ./cmd/api-gateway/... 2>/dev/null && echo true || echo false)"
+assert_eq "PRD has multi-tenancy section" "true" "$(grep -q 'Multi-Tenancy Architecture' docs/PRD.md && echo true || echo false)"
+assert_eq ".env.example has ASTRA_SUPER_ADMIN_EMAIL" "true" "$(grep -q 'ASTRA_SUPER_ADMIN_EMAIL' .env.example && echo true || echo false)"
+
 echo ""
 echo "$(bold '═══════════════════════════════════════')"
 echo "$(bold '         VALIDATION SUMMARY')"
