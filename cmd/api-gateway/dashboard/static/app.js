@@ -1,5 +1,11 @@
 /* global Chart */
 
+(function checkAuth() {
+  if (!localStorage.getItem('astra_token') && window.location.pathname.indexOf('/superadmin/dashboard') === 0) {
+    window.location.href = '/login';
+  }
+})();
+
 function setStatus(msg, isError) {
   const status = document.getElementById('refresh-status');
   status.textContent = msg;
@@ -35,7 +41,13 @@ function authFetch(url, opts) {
   opts.headers = opts.headers || {};
   var token = localStorage.getItem('astra_token');
   if (token) opts.headers['Authorization'] = 'Bearer ' + token;
-  return fetch(url, opts);
+  return fetch(url, opts).then(function(r) {
+    if ((r.status === 401 || r.status === 403) && window.location.pathname.indexOf('/superadmin/dashboard') === 0) {
+      localStorage.removeItem('astra_token');
+      window.location.href = '/login';
+    }
+    return r;
+  });
 }
 
 // ─── Summary cards ──────────────────────────────────────────────────

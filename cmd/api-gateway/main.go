@@ -238,10 +238,13 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 
 		action := r.Method + " " + r.URL.Path
 		checkBody, _ := json.Marshal(map[string]interface{}{
-			"subject":   valRes.Subject,
-			"action":    action,
-			"resource":  r.URL.Path,
-			"tool_name": "",
+			"subject":        valRes.Subject,
+			"action":         action,
+			"resource":       r.URL.Path,
+			"tool_name":      "",
+			"org_id":         valRes.OrgID,
+			"org_role":       valRes.OrgRole,
+			"is_super_admin": valRes.IsSuperAdmin,
 		})
 		checkReq, _ := http.NewRequestWithContext(ctx, "POST", a.accessControlAddr+"/check", bytes.NewReader(checkBody))
 		checkReq.Header.Set(headerContentType, contentTypeJSON)
