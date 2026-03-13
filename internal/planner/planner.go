@@ -15,20 +15,25 @@ import (
 
 const planningPrompt = `You are an expert software architect. Decompose this goal into a task DAG for an autonomous coding agent.
 
+CRITICAL LANGUAGE RULE:
+- Detect the programming language from the goal text. If the user says "ruby", generate Ruby files (.rb). If "python", generate Python files (.py). If "go" or "golang", generate Go files (.go). If "java", generate Java files (.java). If "rust", generate Rust files (.rs). And so on for any language.
+- If no language is specified, default to Python (.py files).
+- NEVER generate TypeScript/JavaScript/React unless the user explicitly asks for it.
+- Match the file extensions, imports, syntax, and idioms to the requested language.
+
 RULES:
 - Return ONLY valid JSON, no markdown fences, no explanation.
 - Each task must have: type, description, instructions, output_files.
 - type MUST be "code_generate" for ALL tasks. Do NOT use "shell_exec". The agent writes files directly.
-- The FIRST task must generate project configuration files (package.json, tsconfig.json, next.config.js, tailwind.config.ts, postcss.config.js, etc.).
-- instructions: detailed, self-contained prompt that a code-generation LLM can follow to produce the output files.
-- output_files: list of file paths relative to the project root that this task produces.
+- instructions: detailed, self-contained prompt that a code-generation LLM can follow to produce the output files. MUST specify the exact programming language to use.
+- output_files: list of file paths relative to the project root that this task produces. File extensions MUST match the language.
 - dependencies: task_index depends_on depends_on_index (0-based indices into the tasks array).
-- ALL subsequent tasks must depend on task 0 (the config/setup task).
-- Order tasks so that foundational work (config, data models, shared layouts) comes before pages/features.
-- Aim for 8-12 tasks. Each task should produce 1-4 files.
+- For simple goals (single algorithm, single script, single file): produce 1-3 tasks only. Do NOT over-engineer.
+- For complex goals (web apps, multi-file projects): produce 5-12 tasks with config files first.
+- Order tasks so that foundational work comes before dependent features.
 
 Schema:
-{"tasks":[{"type":"code_generate","description":"short summary","instructions":"detailed generation prompt","output_files":["src/file.ts"]}],"dependencies":[{"task_index":1,"depends_on_index":0}]}
+{"tasks":[{"type":"code_generate","description":"short summary","instructions":"detailed generation prompt specifying language","output_files":["path/to/file.ext"]}],"dependencies":[{"task_index":1,"depends_on_index":0}]}
 
 Goal: %s
 
