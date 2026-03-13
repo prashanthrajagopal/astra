@@ -33,7 +33,12 @@ jobs:
         run: go test ./... -count=1
 
       - name: Build
-        run: go build ./...
+        run: |
+          ASTRA_VERSION="$(cat VERSION 2>/dev/null || echo dev)"
+          GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-X astra/pkg/version.Version=${ASTRA_VERSION} -X astra/pkg/version.GitCommit=${GIT_COMMIT} -X astra/pkg/version.BuildDate=${BUILD_DATE}"
+          go build -ldflags "$LDFLAGS" ./...
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
