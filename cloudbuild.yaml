@@ -1,0 +1,57 @@
+# Cloud Build CI/CD: triggered on push to main
+# Builds key service images and deploys to GKE
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-api-gateway'
+    args: ['build', '--build-arg', 'SERVICE=api-gateway', '-t', '${_REGISTRY}/astra-api-gateway:${SHORT_SHA}', '-t', '${_REGISTRY}/astra-api-gateway:latest', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-api-gateway'
+    args: ['push', '--all-tags', '${_REGISTRY}/astra-api-gateway']
+    waitFor: ['build-api-gateway']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-identity'
+    args: ['build', '--build-arg', 'SERVICE=identity', '-t', '${_REGISTRY}/astra-identity:${SHORT_SHA}', '-t', '${_REGISTRY}/astra-identity:latest', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-identity'
+    args: ['push', '--all-tags', '${_REGISTRY}/astra-identity']
+    waitFor: ['build-identity']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-goal-service'
+    args: ['build', '--build-arg', 'SERVICE=goal-service', '-t', '${_REGISTRY}/astra-goal-service:${SHORT_SHA}', '-t', '${_REGISTRY}/astra-goal-service:latest', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-goal-service'
+    args: ['push', '--all-tags', '${_REGISTRY}/astra-goal-service']
+    waitFor: ['build-goal-service']
+
+  # Deploy to GKE
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'deploy'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud container clusters get-credentials ${_CLUSTER} --region ${_REGION} --quiet
+        for svc in api-gateway identity access-control agent-service goal-service \
+          planner-service scheduler-service task-service llm-router prompt-manager \
+          evaluation-service worker-manager execution-worker browser-worker \
+          tool-runtime memory-service cost-tracker; do
+          helm upgrade --install astra-$$svc deployments/helm/astra \
+            -f deployments/helm/astra/values-gke-dev.yaml \
+            --set service.name=$$svc \
+            --set image.repository=${_REGISTRY}/astra-$$svc \
+            --set image.tag=${SHORT_SHA} \
+            --wait --timeout=120s || true
+        done
+    waitFor: ['push-api-gateway', 'push-identity', 'push-goal-service']
+
+substitutions:
+  _REGISTRY: us-central1-docker.pkg.dev/astra1-490021/astra-repo
+  _CLUSTER: astra-cluster
+  _REGION: us-central1
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+timeout: '1800s'

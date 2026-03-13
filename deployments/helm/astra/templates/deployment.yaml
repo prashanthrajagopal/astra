@@ -4,6 +4,7 @@ metadata:
   name: {{ .Release.Name }}
   labels:
     app: {{ .Release.Name }}
+    service: {{ .Values.service.name | default .Release.Name }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -13,76 +14,92 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}
+        service: {{ .Values.service.name | default .Release.Name }}
     spec:
       containers:
-        - name: {{ .Release.Name }}
+        - name: {{ .Values.service.name | default .Release.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
+            - containerPort: {{ .Values.service.httpPort | default 8080 }}
+              name: http
+            {{- if .Values.service.grpcPort }}
             - containerPort: {{ .Values.service.grpcPort }}
               name: grpc
-            - containerPort: {{ .Values.service.httpPort }}
-              name: http
+            {{- end }}
           env:
+            - name: SERVICE
+              value: {{ .Values.service.name | default "api-gateway" | quote }}
             - name: POSTGRES_HOST
               value: {{ .Values.postgres.host | quote }}
             - name: POSTGRES_PORT
-              value: {{ .Values.postgres.port | quote }}
+              value: {{ .Values.postgres.port | default 5432 | quote }}
             - name: POSTGRES_DB
-              value: {{ .Values.postgres.database | quote }}
+              value: {{ .Values.postgres.database | default "astra" | quote }}
             - name: POSTGRES_USER
-              value: {{ .Values.postgres.user | quote }}
+              value: {{ .Values.postgres.user | default "astra" | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.postgres.password | quote }}
+              value: {{ .Values.postgres.password | default "" | quote }}
             - name: REDIS_ADDR
               value: {{ .Values.redis.addr | quote }}
             - name: MEMCACHED_ADDR
               value: {{ .Values.memcached.addr | quote }}
             - name: GRPC_PORT
-              value: {{ .Values.service.grpcPort | quote }}
+              value: {{ .Values.service.grpcPort | default 9090 | quote }}
             - name: HTTP_PORT
-              value: {{ .Values.service.httpPort | quote }}
+              value: {{ .Values.service.httpPort | default 8080 | quote }}
+            - name: AGENT_GRPC_PORT
+              value: {{ .Values.service.agentGrpcPort | default 9091 | quote }}
+            - name: MEMORY_GRPC_PORT
+              value: {{ .Values.service.memoryGrpcPort | default 9092 | quote }}
+            - name: LLM_GRPC_PORT
+              value: {{ .Values.service.llmGrpcPort | default 9093 | quote }}
+            - name: IDENTITY_ADDR
+              value: {{ .Values.service.identityAddr | default "http://astra-identity:8085" | quote }}
+            - name: ACCESS_CONTROL_ADDR
+              value: {{ .Values.service.accessControlAddr | default "http://astra-access-control:8086" | quote }}
+            - name: GOAL_SERVICE_ADDR
+              value: {{ .Values.service.goalServiceAddr | default "http://astra-goal-service:8088" | quote }}
+            - name: WORKER_MANAGER_ADDR
+              value: {{ .Values.service.workerManagerAddr | default "http://astra-worker-manager:8082" | quote }}
+            - name: COST_TRACKER_ADDR
+              value: {{ .Values.service.costTrackerAddr | default "http://astra-cost-tracker:8090" | quote }}
+            - name: LLM_GRPC_ADDR
+              value: {{ .Values.service.llmGrpcAddr | default "astra-llm-router:9093" | quote }}
+            - name: WORKSPACE_ROOT
+              value: {{ .Values.workspace.root | default "/workspace" | quote }}
+            - name: ASTRA_JWT_SECRET
+              value: {{ .Values.jwt.secret | default "astra-dev-secret" | quote }}
+            - name: AUTO_APPROVE_PLANS
+              value: {{ .Values.autoApprovePlans | default "true" | quote }}
+            {{- if .Values.llm }}
+            {{- if .Values.llm.defaultProvider }}
+            - name: LLM_DEFAULT_PROVIDER
+              value: {{ .Values.llm.defaultProvider | quote }}
+            {{- end }}
+            {{- if .Values.llm.openaiKey }}
+            - name: OPENAI_API_KEY
+              value: {{ .Values.llm.openaiKey | quote }}
+            {{- end }}
+            {{- if .Values.llm.geminiKey }}
+            - name: GEMINI_API_KEY
+              value: {{ .Values.llm.geminiKey | quote }}
+            {{- end }}
+            {{- end }}
             - name: ASTRA_TLS_ENABLED
-              value: {{ .Values.tls.enabled | quote }}
-            - name: ASTRA_TLS_CERT_FILE
-              value: {{ .Values.tls.certFile | quote }}
-            - name: ASTRA_TLS_KEY_FILE
-              value: {{ .Values.tls.keyFile | quote }}
-            - name: ASTRA_TLS_CA_FILE
-              value: {{ .Values.tls.caFile | quote }}
-            - name: ASTRA_TLS_SERVER_NAME
-              value: {{ .Values.tls.serverName | quote }}
-            - name: ASTRA_TLS_INSECURE_SKIP_VERIFY
-              value: {{ .Values.tls.insecureSkipVerify | quote }}
-            - name: ASTRA_VAULT_ADDR
-              value: {{ .Values.vault.addr | quote }}
-            - name: ASTRA_VAULT_TOKEN
-              value: {{ .Values.vault.token | quote }}
-            - name: ASTRA_VAULT_PATH
-              value: {{ .Values.vault.path | quote }}
-          {{- if and .Values.tls.enabled .Values.tls.secretName }}
-          volumeMounts:
-            - name: astra-tls
-              mountPath: /etc/astra/tls
-              readOnly: true
-          {{- end }}
+              value: {{ .Values.tls.enabled | default false | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 15
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-      {{- if and .Values.tls.enabled .Values.tls.secretName }}
-      volumes:
-        - name: astra-tls
-          secret:
-            secretName: {{ .Values.tls.secretName | quote }}
-      {{- end }}
