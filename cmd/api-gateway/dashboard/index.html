@@ -90,7 +90,10 @@
   </section>
 
   <section id="section-agents" class="dashboard-card card-agents">
-    <h2 class="section-title">Agents</h2>
+    <div class="section-header-row">
+      <h2 class="section-title">Agents</h2>
+      <button type="button" id="btn-create-agent" class="action-btn approve">Create Agent</button>
+    </div>
     <div class="table-scroll">
     <table id="table-agents" class="data-table">
       <thead><tr><th>ID</th><th>Name</th><th>Status</th><th class="th-actions">Actions</th></tr></thead>
@@ -451,6 +454,38 @@
         <p id="chat-new-loading" class="goal-modal-loading">Loading chat-capable agents…</p>
         <div id="chat-new-agent-list" class="chat-agent-list" hidden></div>
         <p id="chat-new-empty" class="chat-empty-hint" hidden>No chat-capable agents. Set <code>chat_capable = true</code> on an agent in the database.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Agent Modal -->
+  <div id="agent-modal" class="goal-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content" style="max-width:560px">
+      <header class="goal-modal-header">
+        <h2 class="goal-modal-title" id="agent-modal-title">Create Agent</h2>
+        <button type="button" class="goal-modal-close" id="agent-modal-close">&times;</button>
+      </header>
+      <div class="goal-modal-body">
+        <div class="field"><label>Name</label><input type="text" id="agent-create-name" class="modal-input" placeholder="My Python Expert"/></div>
+        <div class="field"><label>Actor Type</label><input type="text" id="agent-create-actor-type" class="modal-input" placeholder="python-expert"/></div>
+        <div class="field"><label>Config (JSON)</label><input type="text" id="agent-create-config" class="modal-input" placeholder='{"model_preference":"code"}'/></div>
+        <div class="field"><label>Visibility</label><select id="agent-create-visibility" class="modal-input"></select></div>
+        <div class="field"><label><input type="checkbox" id="agent-create-chat-capable"/> Chat capable</label></div>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 12px"/>
+        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:10px">Agent Prompt (Markdown)</div>
+        <div class="field"><label>Content Type</label><select id="agent-create-prompt-type" class="modal-input"><option value="full_prompt">Full Prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select></div>
+        <div class="field"><textarea id="agent-create-prompt" class="modal-input agent-prompt-textarea" rows="8" placeholder="# My Agent&#10;You are a senior Python expert..."></textarea></div>
+        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 12px"/>
+        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:10px">Upload Document (optional)</div>
+        <div class="field"><label>Content Type</label><select id="agent-create-upload-type" class="modal-input"><option value="full_prompt">Full Prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select></div>
+        <div class="field agent-upload-row">
+          <input type="file" id="agent-create-file" accept=".md,.txt,.markdown" class="agent-file-input"/>
+          <span id="agent-create-file-info" class="agent-file-info"></span>
+          <button type="button" id="agent-create-file-clear" class="agent-file-clear" hidden>&times;</button>
+        </div>
+        <div id="agent-modal-error" class="modal-error" hidden></div>
+        <button type="button" id="agent-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create Agent</button>
       </div>
     </div>
   </div>

@@ -1418,6 +1418,195 @@ document.addEventListener('DOMContentLoaded', function () {
   var usersNext = document.getElementById('users-next');
   if (usersPrev) usersPrev.addEventListener('click', function() { usersPage = Math.max(1, usersPage - 1); loadUsers(); });
   if (usersNext) usersNext.addEventListener('click', function() { usersPage++; loadUsers(); });
+
+  // ─── Create Agent Modal ─────────────────────────────────
+  var agentModal = document.getElementById('agent-modal');
+  var agentUploadedContent = null;
+  var agentUploadedFilename = '';
+
+  function getJwtClaims() {
+    try {
+      var token = localStorage.getItem('astra_token');
+      if (!token) return {};
+      var parts = token.split('.');
+      if (parts.length < 2) return {};
+      var payload = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+      return JSON.parse(payload);
+    } catch (e) { return {}; }
+  }
+
+  function populateAgentVisibility() {
+    var sel = document.getElementById('agent-create-visibility');
+    if (!sel) return;
+    sel.innerHTML = '';
+    var claims = getJwtClaims();
+    var opts = [];
+    if (claims.is_super_admin) {
+      opts = [{ value: 'global', label: 'Global' }];
+    } else if (claims.org_role === 'admin') {
+      opts = [{ value: 'private', label: 'Private' }, { value: 'team', label: 'Team' }, { value: 'public', label: 'Public' }];
+    } else {
+      opts = [{ value: 'private', label: 'Private' }, { value: 'team', label: 'Team' }];
+    }
+    opts.forEach(function(o) {
+      var opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+  }
+
+  function showAgentError(msg) {
+    var el = document.getElementById('agent-modal-error');
+    if (el) { el.textContent = msg; el.hidden = false; }
+  }
+
+  if (agentModal) {
+    document.getElementById('agent-modal-close').addEventListener('click', function() { agentModal.hidden = true; });
+    agentModal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { agentModal.hidden = true; });
+  }
+
+  var btnCreateAgent = document.getElementById('btn-create-agent');
+  if (btnCreateAgent) btnCreateAgent.addEventListener('click', function() {
+    document.getElementById('agent-create-name').value = '';
+    document.getElementById('agent-create-actor-type').value = '';
+    document.getElementById('agent-create-config').value = '';
+    document.getElementById('agent-create-chat-capable').checked = false;
+    document.getElementById('agent-create-prompt-type').value = 'full_prompt';
+    document.getElementById('agent-create-prompt').value = '';
+    document.getElementById('agent-create-upload-type').value = 'full_prompt';
+    var fileInput = document.getElementById('agent-create-file');
+    if (fileInput) fileInput.value = '';
+    document.getElementById('agent-create-file-info').textContent = '';
+    document.getElementById('agent-create-file-clear').hidden = true;
+    agentUploadedContent = null;
+    agentUploadedFilename = '';
+    document.getElementById('agent-modal-error').hidden = true;
+    document.getElementById('agent-modal-title').textContent = 'Create Agent';
+    populateAgentVisibility();
+    agentModal.hidden = false;
+  });
+
+  var agentFileInput = document.getElementById('agent-create-file');
+  if (agentFileInput) agentFileInput.addEventListener('change', function() {
+    var file = agentFileInput.files[0];
+    if (!file) return;
+    var ext = file.name.split('.').pop().toLowerCase();
+    if (['md', 'txt', 'markdown'].indexOf(ext) === -1) {
+      showAgentError('Only .md, .txt, or .markdown files are allowed');
+      agentFileInput.value = '';
+      return;
+    }
+    if (file.size > 1048576) {
+      showAgentError('File must be 1 MB or smaller');
+      agentFileInput.value = '';
+      return;
+    }
+    document.getElementById('agent-modal-error').hidden = true;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      agentUploadedContent = e.target.result;
+      agentUploadedFilename = file.name;
+      document.getElementById('agent-create-file-info').textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+      document.getElementById('agent-create-file-clear').hidden = false;
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
+
+  var agentFileClear = document.getElementById('agent-create-file-clear');
+  if (agentFileClear) agentFileClear.addEventListener('click', function() {
+    agentUploadedContent = null;
+    agentUploadedFilename = '';
+    var fileInput = document.getElementById('agent-create-file');
+    if (fileInput) fileInput.value = '';
+    document.getElementById('agent-create-file-info').textContent = '';
+    agentFileClear.hidden = true;
+  });
+
+  function docTypeFromContentType(ct) {
+    if (ct === 'rule') return 'rule';
+    if (ct === 'skill') return 'skill';
+    return 'context_doc';
+  }
+
+  var agentSaveBtn = document.getElementById('agent-modal-save');
+  if (agentSaveBtn) agentSaveBtn.addEventListener('click', function() {
+    var name = document.getElementById('agent-create-name').value.trim();
+    var actorType = document.getElementById('agent-create-actor-type').value.trim();
+    var config = document.getElementById('agent-create-config').value.trim();
+    var visibility = document.getElementById('agent-create-visibility').value;
+    var chatCapable = document.getElementById('agent-create-chat-capable').checked;
+    var promptType = document.getElementById('agent-create-prompt-type').value;
+    var promptContent = document.getElementById('agent-create-prompt').value;
+    var uploadType = document.getElementById('agent-create-upload-type').value;
+
+    if (!name) { showAgentError('Name is required'); return; }
+    if (!actorType) { showAgentError('Actor type is required'); return; }
+    if (!promptContent.trim() && !agentUploadedContent) { showAgentError('Provide an agent prompt or upload a document'); return; }
+    if (config) {
+      try { JSON.parse(config); } catch (e) { showAgentError('Config must be valid JSON'); return; }
+    }
+
+    var claims = getJwtClaims();
+    if (claims.is_super_admin && !name.toLowerCase().startsWith('astra-global-')) {
+      name = 'astra-global-' + name;
+    }
+
+    var systemPrompt = '';
+    if (promptContent.trim() && promptType === 'full_prompt') {
+      systemPrompt = promptContent;
+    } else if (agentUploadedContent && uploadType === 'full_prompt' && !systemPrompt) {
+      systemPrompt = agentUploadedContent;
+    }
+
+    agentSaveBtn.disabled = true;
+    agentSaveBtn.textContent = 'Creating...';
+    document.getElementById('agent-modal-error').hidden = true;
+
+    authFetch('/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor_type: actorType, name: name, system_prompt: systemPrompt, config: config || '{}', visibility: visibility, chat_capable: chatCapable })
+    })
+      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+      .then(function(res) {
+        if (!res.ok) { showAgentError(res.data.error || 'Failed to create agent'); agentSaveBtn.disabled = false; agentSaveBtn.textContent = 'Create Agent'; return; }
+        var agentId = res.data.actor_id;
+        var docPromises = [];
+
+        if (promptContent.trim()) {
+          docPromises.push(
+            authFetch('/agents/' + agentId + '/documents', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ doc_type: docTypeFromContentType(promptType), name: name + '-prompt', content: promptContent, priority: promptType === 'full_prompt' ? 10 : 50 })
+            })
+          );
+        }
+
+        if (agentUploadedContent) {
+          docPromises.push(
+            authFetch('/agents/' + agentId + '/documents', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ doc_type: docTypeFromContentType(uploadType), name: agentUploadedFilename || (name + '-upload'), content: agentUploadedContent, priority: uploadType === 'full_prompt' ? 10 : 50 })
+            })
+          );
+        }
+
+        return Promise.all(docPromises).then(function() {
+          agentModal.hidden = true;
+          agentSaveBtn.disabled = false;
+          agentSaveBtn.textContent = 'Create Agent';
+          if (typeof fetchSnapshot === 'function') fetchSnapshot();
+        });
+      })
+      .catch(function(e) {
+        showAgentError(e.message || 'Failed');
+        agentSaveBtn.disabled = false;
+        agentSaveBtn.textContent = 'Create Agent';
+      });
+  });
 });
 
 function showOrgError(msg) {
