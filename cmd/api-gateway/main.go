@@ -1358,6 +1358,13 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") {
+		isSA := r.Header.Get("X-Is-Super-Admin") == "true"
+		if !isSA {
+			http.Error(w, `{"error":"agents with the astra-global- prefix can only be created by super admins"}`, http.StatusForbidden)
+			return
+		}
+	}
 	configBytes := []byte(req.Config)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -2358,6 +2365,10 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") {
+			http.Error(w, `{"error":"agents with the astra-global- prefix can only be created by super admins"}`, http.StatusForbidden)
 			return
 		}
 
