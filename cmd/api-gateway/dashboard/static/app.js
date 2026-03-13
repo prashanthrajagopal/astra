@@ -549,12 +549,12 @@ function fetchSnapshot() {
       renderAgentChart(d.agents || []);
       renderRecentGoals(recentGoals);
       renderAgents(d.agents || []);
-      renderServices(d.services || []);
-      renderWorkers(d.workers || []);
-      renderApprovals(d.approvals || []);
-      renderCost(d.cost || { rows: [] });
-      renderLogs(d.logs || {});
-      renderPids(d.pids || {});
+    renderServices(d.services || []);
+    renderWorkers(d.workers || []);
+    renderApprovals(d.approvals || []);
+    renderCost(d.cost || { rows: [] });
+    renderLogs(d.logs || {});
+    renderPids(d.pids || {});
 
       renderHealthSummary(d.services || []);
       renderTaskQueueSummary(d.jobs && d.jobs.tasks ? d.jobs.tasks : {});
@@ -564,13 +564,13 @@ function fetchSnapshot() {
       fetchChatSessions();
 
       document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toISOString();
-      setStatus('Idle', false);
+    setStatus('Idle', false);
     })
     .catch(function (e) {
       setStatus('Error: ' + (e.message || e), true);
     })
     .finally(function () {
-      inFlight = false;
+    inFlight = false;
     });
 }
 
