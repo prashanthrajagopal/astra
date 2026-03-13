@@ -9,6 +9,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
+export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+export POSTGRES_DB="${POSTGRES_DB:-astra}"
+export POSTGRES_USER="${POSTGRES_USER:-astra}"
+export PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-changeme}}"
+
 if ! command -v jq &>/dev/null; then
   echo "Error: jq is required to run this script. Install with: brew install jq"
   exit 1
@@ -191,8 +202,6 @@ if create_agent "testing" "astra-global-Testing" \
 fi
 
 # 9. Chat Assistant (conversational AI)
-# NOTE: chat_capable must be set to true in the DB after seeding; PATCH /agents does not support it.
-# Run: psql -h localhost -U astra -d astra -c "UPDATE agents SET chat_capable = true WHERE actor_type = 'chat-assistant';"
 if create_agent "chat-assistant" "astra-global-Chat Assistant" \
   'You are Astra, an autonomous agent operating system. You are the built-in assistant for the Astra platform.
 
@@ -262,6 +271,21 @@ TONE:
 - For greetings, be warm but brief.' \
   '{"model_preference":"code"}'; then
   SEEDED="${SEEDED}chat-assistant=$AGENT_ID\n"
+fi
+
+# Post-seed: set chat_capable=true for Chat Assistant so the dashboard chat widget appears.
+# PATCH /agents does not support chat_capable; this UPDATE is idempotent and safe to run on every seed.
+CHAT_UPDATE_CMD="psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB -c \"UPDATE agents SET chat_capable = true WHERE actor_type = 'chat-assistant';\""
+if command -v psql &>/dev/null; then
+  if PGPASSWORD="$PGPASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "UPDATE agents SET chat_capable = true WHERE actor_type = 'chat-assistant';" 2>/dev/null; then
+    echo "Set chat_capable=true for Chat Assistant (chat widget will appear)."
+  else
+    echo "WARNING: Could not set chat_capable for Chat Assistant. Run manually:"
+    echo "  $CHAT_UPDATE_CMD"
+  fi
+else
+  echo "WARNING: psql not found. To enable the chat widget, run manually:"
+  echo "  $CHAT_UPDATE_CMD"
 fi
 
 echo ""
