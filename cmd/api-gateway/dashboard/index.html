@@ -18,6 +18,7 @@
         <button class="nav-tab active" data-tab="overview">Overview</button>
         <button class="nav-tab" data-tab="orgs">Organizations</button>
         <button class="nav-tab" data-tab="users">Users</button>
+        <button class="nav-tab" data-tab="slack">Slack</button>
       </nav>
       <a href="/superadmin/dashboard/swagger.html" class="swagger-link">API Docs</a>
     </div>
@@ -220,6 +221,25 @@
         <button type="button" id="users-prev" class="pagination-btn" disabled>Previous</button>
         <span id="users-page-info" class="pagination-info">Page 1</span>
         <button type="button" id="users-next" class="pagination-btn">Next</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-slack" class="tab-panel" hidden>
+    <section class="dashboard-card">
+      <h2 class="section-title">Slack App Configuration</h2>
+      <p class="section-desc">Enter your Slack app credentials so orgs can connect workspaces. Get these from <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → your app → Basic Information &amp; OAuth.</p>
+      <div class="slack-config-form">
+        <label class="modal-label">Signing Secret</label>
+        <input type="password" id="slack-signing-secret" class="modal-input" placeholder="Leave blank to keep existing" autocomplete="off" />
+        <label class="modal-label">Client ID</label>
+        <input type="text" id="slack-client-id" class="modal-input" placeholder="Slack OAuth Client ID" />
+        <label class="modal-label">Client Secret</label>
+        <input type="password" id="slack-client-secret" class="modal-input" placeholder="Leave blank to keep existing" autocomplete="off" />
+        <label class="modal-label">OAuth Redirect URL</label>
+        <input type="url" id="slack-oauth-redirect" class="modal-input" placeholder="https://your-astra-host/org/api/slack/oauth/callback" />
+        <button type="button" id="btn-save-slack-config" class="action-btn approve">Save</button>
+        <span id="slack-config-status" class="modal-error" style="margin-left:8px"></span>
       </div>
     </section>
   </div>
@@ -467,18 +487,54 @@
         <button type="button" class="goal-modal-close" id="agent-modal-close">&times;</button>
       </header>
       <div class="goal-modal-body">
+        <div class="agent-modal-section">Identity</div>
         <div class="field"><label>Name</label><input type="text" id="agent-create-name" class="modal-input" placeholder="My Python Expert"/></div>
-        <div class="field"><label>Actor Type</label><input type="text" id="agent-create-actor-type" class="modal-input" placeholder="python-expert"/></div>
-        <div class="field"><label>Config (JSON)</label><input type="text" id="agent-create-config" class="modal-input" placeholder='{"model_preference":"code"}'/></div>
+        <div class="field">
+          <label>Actor type</label>
+          <input type="text" id="agent-create-actor-type" class="modal-input" placeholder="python-expert"/>
+          <p class="agent-field-hint">Internal type or ID for this agent (e.g. python-expert).</p>
+        </div>
+        <div class="field">
+          <label>Config (JSON)</label>
+          <input type="text" id="agent-create-config" class="modal-input" placeholder='{"model_preference":"code"}'/>
+          <p class="agent-field-hint">Optional JSON for model preference or behavior.</p>
+        </div>
+
+        <div class="agent-modal-section">Visibility &amp; access</div>
         <div class="field"><label>Visibility</label><select id="agent-create-visibility" class="modal-input"></select></div>
-        <div class="field"><label><input type="checkbox" id="agent-create-chat-capable"/> Chat capable</label></div>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 12px"/>
-        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:10px">Agent Prompt (Markdown)</div>
-        <div class="field"><label>Content Type</label><select id="agent-create-prompt-type" class="modal-input"><option value="full_prompt">Full Prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select></div>
+        <div class="field">
+          <label><input type="checkbox" id="agent-create-chat-capable"/> Chat capable</label>
+          <p class="agent-field-hint">Allow users to chat with this agent in the dashboard.</p>
+        </div>
+        <div class="field">
+          <label><input type="checkbox" id="agent-create-slack-notifications"/> Slack notifications</label>
+          <p class="agent-field-hint">Allow this agent to post to Slack when its instructions say so (e.g. alerts).</p>
+        </div>
+
+        <div class="agent-modal-section">External data (optional)</div>
+        <div class="field">
+          <label>Data source</label>
+          <select id="agent-create-ingest-source-type" class="modal-input"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select>
+          <p class="agent-field-hint">Connects this agent to an external event stream.</p>
+        </div>
+        <div class="field">
+          <label>Data source config (JSON)</label>
+          <input type="text" id="agent-create-ingest-source-config" class="modal-input" placeholder=""/>
+          <p id="agent-create-ingest-hint" class="agent-field-hint agent-ingest-hint" aria-live="polite"></p>
+        </div>
+
+        <div class="agent-modal-section">Instructions</div>
+        <div class="field">
+          <label>Agent prompt (Markdown)</label>
+          <select id="agent-create-prompt-type" class="modal-input"><option value="full_prompt">System prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select>
+          <p class="agent-field-hint">How to store the prompt below: system instructions, rule doc, or skill doc.</p>
+        </div>
         <div class="field"><textarea id="agent-create-prompt" class="modal-input agent-prompt-textarea" rows="8" placeholder="# My Agent&#10;You are a senior Python expert..."></textarea></div>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 12px"/>
-        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:10px">Upload Document (optional)</div>
-        <div class="field"><label>Content Type</label><select id="agent-create-upload-type" class="modal-input"><option value="full_prompt">Full Prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select></div>
+        <div class="field">
+          <label>Upload document (optional)</label>
+          <select id="agent-create-upload-type" class="modal-input"><option value="full_prompt">System prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select>
+          <p class="agent-field-hint">How to store the uploaded file: same options as above.</p>
+        </div>
         <div class="field agent-upload-row">
           <input type="file" id="agent-create-file" accept=".md,.txt,.markdown" class="agent-file-input"/>
           <span id="agent-create-file-info" class="agent-file-info"></span>
@@ -486,6 +542,65 @@
         </div>
         <div id="agent-modal-error" class="modal-error" hidden></div>
         <button type="button" id="agent-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create Agent</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Agent Modal (full profile) -->
+  <div id="agent-edit-modal" class="goal-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content" style="max-width:560px">
+      <header class="goal-modal-header">
+        <h2 class="goal-modal-title">Edit Agent</h2>
+        <button type="button" class="goal-modal-close" id="agent-edit-modal-close">&times;</button>
+      </header>
+      <div class="goal-modal-body">
+        <div class="agent-modal-section">Identity</div>
+        <div class="field">
+          <label>Name</label>
+          <input type="text" id="agent-edit-name" class="modal-input" placeholder="Agent name"/>
+        </div>
+        <div class="field">
+          <label>Actor type</label>
+          <span id="agent-edit-actor-type" class="modal-readonly agent-edit-readonly"></span>
+          <p class="agent-field-hint">Internal type; cannot be changed after creation.</p>
+        </div>
+        <div class="field">
+          <label>Config (JSON)</label>
+          <input type="text" id="agent-edit-config" class="modal-input" placeholder='{"model_preference":"code"}'/>
+          <p class="agent-field-hint">Optional JSON for model preference or behavior.</p>
+        </div>
+
+        <div class="agent-modal-section">Visibility &amp; access</div>
+        <div class="field"><label>Visibility</label><select id="agent-edit-visibility" class="modal-input"></select></div>
+        <div class="field">
+          <label><input type="checkbox" id="agent-edit-chat-capable"/> Chat capable</label>
+          <p class="agent-field-hint">Allow users to chat with this agent in the dashboard.</p>
+        </div>
+        <div class="field">
+          <label><input type="checkbox" id="agent-edit-slack-notifications"/> Slack notifications</label>
+          <p class="agent-field-hint">Allow this agent to post to Slack when its instructions say so (e.g. alerts).</p>
+        </div>
+
+        <div class="agent-modal-section">External data (optional)</div>
+        <div class="field">
+          <label>Data source</label>
+          <select id="agent-edit-ingest-source-type" class="modal-input"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select>
+          <p class="agent-field-hint">Connects this agent to an external event stream.</p>
+        </div>
+        <div class="field">
+          <label>Data source config (JSON)</label>
+          <input type="text" id="agent-edit-ingest-source-config" class="modal-input" placeholder=""/>
+          <p id="agent-edit-ingest-hint" class="agent-field-hint agent-ingest-hint" aria-live="polite"></p>
+        </div>
+
+        <div class="agent-modal-section">Instructions</div>
+        <div class="field">
+          <label>Agent prompt (Markdown)</label>
+          <textarea id="agent-edit-prompt" class="modal-input agent-prompt-textarea" rows="8" placeholder="# My Agent&#10;You are..."></textarea>
+        </div>
+        <div id="agent-edit-modal-error" class="modal-error" hidden></div>
+        <button type="button" id="agent-edit-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Save</button>
       </div>
     </div>
   </div>

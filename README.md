@@ -402,6 +402,216 @@ Agent names are unique (enforced by migration 0015). Seed agents use the `astra-
 
 ---
 
+## Connecting to Slack
+
+You can connect Astra chat agents to Slack so users interact with agents from Slack DMs or channels. One Slack workspace is linked to one Astra organization; tokens can be set via OAuth (“Connect Slack”) or by pasting App Configuration Tokens in the org dashboard.
+
+### 1. Run the Slack migration
+
+Ensure the Slack tables exist (run once):
+
+```bash
+psql "$DATABASE_URL" -f migrations/0019_slack_integration.sql
+psql "$DATABASE_URL" -f migrations/0020_slack_refresh_token.sql
+```
+
+(If you use `./scripts/deploy.sh`, migrations are applied automatically; the above is for manual runs.)
+
+### 2. Get Slack app credentials
+
+Create or open your app at [api.slack.com/apps](https://api.slack.com/apps).
+
+| Field | Where in Slack |
+|-------|----------------|
+| **Signing Secret** | **Basic Information** → **App Credentials** → click **Show** next to Signing Secret |
+| **Client ID** | **Basic Information** → **App Credentials** (or **OAuth & Permissions** → top of page) |
+| **Client Secret** | **Basic Information** → **App Credentials** → click **Show** next to Client Secret |
+| **OAuth Redirect URL** | You define this; add it in **OAuth & Permissions** → **Redirect URLs** (e.g. `http://localhost:8080/org/api/slack/oauth/callback` or `https://your-astra-host/org/api/slack/oauth/callback`), then **Add** and **Save URLs** |
+
+Do not share these credentials or commit them to code.
+
+### 3. Save credentials in Astra (Super-Admin)
+
+1. Log in as **super-admin** and open **Super-Admin Dashboard** → **Slack** tab.
+2. Enter **Signing Secret**, **Client ID**, **Client Secret**, and **OAuth Redirect URL** (the exact URL you added in Slack).
+3. Click **Save**.
+
+These are stored in the database (`slack_app_config`). The slack-adapter and api-gateway read them from there (or from env as fallback).
+
+### 4. Start the slack-adapter
+
+The slack-adapter receives events from Slack and enqueues them; a worker consumes the queue, calls the api-gateway chat API, and posts replies back to Slack.
+
+```bash
+# From repo root; ensure api-gateway, Postgres, and Redis are running
+go run ./cmd/slack-adapter
+```
+
+Set in `.env` (or environment):
+
+| Variable | Purpose |
+|----------|---------|
+| `ASTRA_SLACK_INTERNAL_SECRET` | Shared secret for slack-adapter → api-gateway internal chat endpoint. Set to a random string; same value is not stored in UI. |
+| `GATEWAY_INTERNAL_URL` | URL of api-gateway (e.g. `http://localhost:8080`). |
+| `SLACK_ADAPTER_PORT` | Port for the adapter (default `8095`). |
+| `SLACK_SIGNING_SECRET` | Optional if you saved it in Super-Admin Slack config; otherwise set here so the adapter can verify Slack requests. |
+
+The adapter loads the signing secret from the database at startup if `SLACK_SIGNING_SECRET` is not set.
+
+### 5. Configure Slack: Event Subscriptions and scopes
+
+1. **Event Subscriptions** (in your Slack app):
+   - Turn **Enable Events** **On**.
+   - Set **Request URL** to the URL where the slack-adapter is reachable by Slack:
+     - **Local:** use a tunnel (e.g. [ngrok](https://ngrok.com)): `ngrok http 8095` → use the `https://...` URL, e.g. `https://abc123.ngrok.io/slack/events`.
+     - **Hosted:** use your public base URL, e.g. `https://slack-adapter.your-domain.com/slack/events`.
+   - Slack will send a `url_verification` challenge; the adapter responds automatically. Save when the URL is verified.
+   - Under **Subscribe to bot events**, add e.g. `message.channels`, `message.im`, `message.groups`, `app_mention` (as needed).
+
+2. **OAuth & Permissions**:
+   - Under **Bot Token Scopes**, add at least: `chat:write`, `channels:history`, `im:history`, `app_mentions:read` (and optionally `channels:read`, `groups:read`, `users:read`).
+   - Under **Redirect URLs**, ensure the same URL you entered in Astra (e.g. `http://localhost:8080/org/api/slack/oauth/callback`) is added and saved.
+   - Click **Install to Workspace** (or use **App Configuration Tokens** and paste tokens in Astra as in step 7).
+
+### 6. Connect a workspace in Astra (org dashboard)
+
+As an **org admin**:
+
+1. Go to **Org dashboard**: `http://localhost:8080/{your-org-slug}/dashboard`.
+2. Open the **Overview** tab and scroll to **Integrations**.
+
+Then either **A** or **B**:
+
+**A. Connect via OAuth (recommended)**  
+- Click **Connect Slack**. You’ll be redirected to Slack to authorize the app. After authorizing, Slack redirects back to Astra and the access and refresh tokens are stored automatically.
+- If you see a token-format or “expected pattern” error, use **B** and provide the **Slack Workspace ID** (see below).
+
+**B. Paste tokens manually (e.g. App Configuration Tokens)**  
+- In Slack: **Basic Information** (or **OAuth & Permissions**) → **App Configuration Tokens**. Copy the **Access Token** and **Refresh Token** (and optionally the workspace ID).
+- In Astra Integrations, under “Or paste tokens from Slack…”:
+  - **Slack Workspace ID**: optional but **recommended** for App Configuration Tokens (find it in Slack: **Settings & administration → Workspace settings**, or in the workspace URL). If you leave it blank, Astra will try to detect it via Slack’s `auth.test`; some token types (e.g. `xoxe.xoxp-` / `xoxe-1-`) may not support that and you’ll get an error—in that case, enter the Workspace ID and save again.
+  - **Access Token**: paste the access token (e.g. `xoxb-...` or `xoxe.xoxp-...`).
+  - **Refresh Token**: paste the refresh token (e.g. `xoxe-1-...`).
+- Click **Save tokens**.
+
+3. Set **Default agent for Slack** in the same Integrations section (the agent that will reply to messages in Slack).
+
+### 7. Test in Slack
+
+- Invite the app to a channel: `/invite @YourAppName`, or open a DM with the app.
+- Send a message. The flow is: Slack → slack-adapter (verify signature, enqueue) → worker (call gateway chat API, post reply) → message appears in Slack.
+
+If the access token expires (e.g. 12-hour App Configuration Tokens), the worker will use the refresh token to obtain a new access token and retry posting the reply. Ensure **Client ID** and **Client Secret** are saved in Super-Admin Slack config so token rotation works.
+
+### Proactive posts (agent-initiated messages)
+
+The agent (or goal/approval flow) can **proactively post** to Slack without a prior user message—e.g. “Plan pending approval. Please review in the dashboard.”
+
+The api-gateway exposes an internal-only endpoint:
+
+- **`POST /internal/slack/post`**  
+  - **Header:** `X-Slack-Internal-Secret` — must match `ASTRA_SLACK_INTERNAL_SECRET`.  
+  - **Body (JSON):** `org_id` (required), `channel_id` (optional), `text` (required), `thread_ts` (optional).  
+  - If `channel_id` is omitted, the org’s **default notification channel** is used when set (`slack_workspaces.notification_channel_id`). If both are missing, the request fails with 400.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8080/internal/slack/post \
+  -H "X-Slack-Internal-Secret: $ASTRA_SLACK_INTERNAL_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"org_id":"<org-uuid>","channel_id":"C0123","text":"Test from Astra"}'
+```
+
+Omit `channel_id` to use the org’s default notification channel (if configured). Goal-service or access-control can call this when e.g. a plan is pending approval; they need the gateway base URL and `ASTRA_SLACK_INTERNAL_SECRET` in their environment.
+
+### Troubleshooting
+
+- **“The string did not match the expected pattern”** — Usually from Slack’s `auth.test` when Workspace ID is blank and the token type isn’t supported. **Fix:** Enter your **Slack Workspace ID** in the form and save again (we then skip `auth.test`).
+- **No reply in Slack** — Ensure slack-adapter is running, Event Subscriptions Request URL is correct and verified, and the org has a **Default agent for Slack** set. Check adapter and api-gateway logs.
+- **Token expired** — If you use short-lived tokens, ensure **Refresh Token** is saved and Super-Admin has **Client ID** and **Client Secret** so the adapter can refresh tokens.
+
+Design details: [docs/slack-integration-design.md](docs/slack-integration-design.md).
+
+### External event ingest (agents listening to external sources)
+
+Each **agent** can be configured to listen to **one external data source** (Redis Pub/Sub, GCP Pub/Sub, or WebSocket). Different agents can use different sources. Adapters discover which agent listens to which source via an internal API, then subscribe and forward events to the ingest endpoint.
+
+**1. Per-agent data source (who listens to what)**  
+- Configure in Astra: **`PATCH /agents/{id}`** with `ingest_source_type` and `ingest_source_config`.  
+- **`ingest_source_type`:** `redis_pubsub` | `gcp_pubsub` | `websocket`. Omit or set empty to clear.  
+- **`ingest_source_config`:** JSON for that source, e.g. `{"channel":"events"}` (Redis), `{"project":"p","subscription":"sub"}` (GCP), `{"url":"wss://..."}` (WebSocket).  
+- **Which agent listens** is stored per agent in the DB; no adapter-level default agent ID.
+
+**2. Adapters discover bindings**  
+- **`GET /internal/ingest/bindings`** (header `X-Ingest-Secret`) returns `{"bindings":[{"agent_id":"...", "ingest_source_type":"redis_pubsub", "ingest_source_config":{...}}, ...]}`.  
+- Adapters call this, then for each binding subscribe to that source and **`POST /internal/ingest/event`** with that `agent_id` and the message payload.
+
+**3. Ingest endpoint**  
+- **`POST /internal/ingest/event`** — Header `X-Ingest-Secret`; body: `agent_id`, optional `message_type` (default `ExternalEvent`), optional `payload`. Events are delivered to the agent as `SendMessage`. Rate-limited per agent (default 100/min; set `ASTRA_INGEST_RATE_LIMIT` to override). If `ASTRA_INGEST_SECRET` is empty, the secret check is disabled (suitable for local dev only; in production set a strong secret and do not expose internal URLs).
+
+**4. Optional Slack per agent**  
+- **`PATCH /agents/{id}`** can set **`slack_notifications_enabled`** (boolean). When true, that agent may send messages to Slack (e.g. when the agent prompt instructs it to notify the user). The org must have Slack connected; posting uses the existing **`POST /internal/slack/post`** flow.
+
+**How to configure each agent to connect to a data source**
+
+Use **`PATCH /agents/{id}`** with a JWT in `Authorization: Bearer <token>`. Set **`ingest_source_type`** and **`ingest_source_config`** (and optionally **`slack_notifications_enabled`**).
+
+1. **Get a token** (e.g. from Identity, local dev):
+   ```bash
+   TOKEN=$(curl -s -X POST "http://localhost:8085/tokens" \
+     -H "Content-Type: application/json" \
+     -d '{"subject":"developer","scopes":["admin"],"ttl_seconds":3600}' | jq -r '.token')
+   ```
+
+2. **List agents** to get IDs:
+   ```bash
+   curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/agents" | jq '.agents[] | {id, name}'
+   ```
+
+3. **Set this agent's data source** (use the agent UUID from step 2):
+
+   - **Redis Pub/Sub** (e.g. channel `alerts`):
+     ```bash
+     curl -X PATCH "http://localhost:8080/agents/<agent-uuid>" \
+       -H "Authorization: Bearer $TOKEN" \
+       -H "Content-Type: application/json" \
+       -d '{"ingest_source_type":"redis_pubsub","ingest_source_config":{"channel":"alerts"}}'
+     ```
+
+   - **GCP Pub/Sub**:
+     ```bash
+     curl -X PATCH "http://localhost:8080/agents/<agent-uuid>" \
+       -H "Authorization: Bearer $TOKEN" \
+       -H "Content-Type: application/json" \
+       -d '{"ingest_source_type":"gcp_pubsub","ingest_source_config":{"project":"my-project","subscription":"my-sub"}}'
+     ```
+
+   - **WebSocket**:
+     ```bash
+     curl -X PATCH "http://localhost:8080/agents/<agent-uuid>" \
+       -H "Authorization: Bearer $TOKEN" \
+       -H "Content-Type: application/json" \
+       -d '{"ingest_source_type":"websocket","ingest_source_config":{"url":"wss://events.example.com/stream"}}'
+     ```
+
+   - **Clear** (stop listening): send `{"ingest_source_type":""}`.
+
+4. **Config meanings:**  
+   | Source          | `ingest_source_type` | `ingest_source_config` example                                      |
+   |-----------------|----------------------|----------------------------------------------------------------------|
+   | Redis Pub/Sub   | `redis_pubsub`       | `{"channel": "alerts"}`                                              |
+   | GCP Pub/Sub     | `gcp_pubsub`         | `{"project": "my-project", "subscription": "my-subscription"}`        |
+   | WebSocket       | `websocket`          | `{"url": "wss://example.com/events"}`                                |
+
+   Adapters use **GET /internal/ingest/bindings** to read these and subscribe to the right sources; they then **POST /internal/ingest/event** with the corresponding `agent_id`.
+
+**Dashboard:** In the Super Admin dashboard, you can set these when **creating** an agent (Data source, Data source config, Slack notifications) and when **editing** an agent (click the ✎ Edit button on an agent row to open the Edit Agent modal and change data source and Slack notifications).  
+- **Api-gateway `.env`:** Set **`ASTRA_INGEST_SECRET`** (shared with adapters). In production use a strong random value; empty disables the check. Optional **`ASTRA_INGEST_RATE_LIMIT`** (default 100) = max requests per agent per minute.  
+- **Adapter `.env`:** `ASTRA_INGEST_URL`, `ASTRA_INGEST_SECRET`, plus source-specific vars (e.g. `EXTERNAL_REDIS_ADDR`, `GCP_PROJECT`/`GCP_SUBSCRIPTION`, `EXTERNAL_WS_URL`). Adapters use **bindings** to know which agent_id to use for each source; they do **not** set a single “default” agent.
+
+---
+
 ## Repo Layout
 
 | Path | Contents |
@@ -425,6 +635,7 @@ Agent names are unique (enforced by migration 0015). Seed agents use the `astra-
 - **Multi-tenancy:** [docs/PRD.md](docs/PRD.md) §19 — organizations, teams, users, RBAC, agent visibility hierarchy, super-admin.
 - **Approval system:** [docs/approval-system-extension-spec.md](docs/approval-system-extension-spec.md) — plan vs risky-task approvals, `AUTO_APPROVE_PLANS`, dashboard integration.
 - **Chat agents:** [docs/chat-agents-design.md](docs/chat-agents-design.md) — WebSocket chat, streaming, sessions; [docs/chat-agents-implementation-plan.md](docs/chat-agents-implementation-plan.md) — implementation phases.
+- **Slack integration:** See **Connecting to Slack** above for step-by-step setup; [docs/slack-integration-design.md](docs/slack-integration-design.md) for architecture and token rotation.
 - **Phase history:** [docs/phase-history/](docs/phase-history/) — what was built in each implementation phase (e.g. [phase-0.md](docs/phase-history/phase-0.md)).
 
 ---

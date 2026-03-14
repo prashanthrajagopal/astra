@@ -26,6 +26,8 @@ astra/
 ├── internal/                   # Private implementation packages
 │   ├── actors/                 # Kernel actor runtime (BaseActor, mailbox, supervision)
 │   ├── agent/                  # Agent-level orchestration, AgentActor
+│   ├── kernel/                 # Kernel manager (Spawn, Send, message routing)
+│   ├── kernelserver/           # Kernel gRPC server (SpawnActor, SendMessage, QueryState), wraps kernel + DB
 │   ├── planner/                # Planner orchestration, plan validators
 │   ├── scheduler/              # Scheduling loop, shard management, ready-task detection
 │   ├── tasks/                  # Task model, state machine, transitions, persistence
@@ -78,6 +80,8 @@ astra/
 |---|---|---|
 | `actors` | Actor runtime primitives | `Actor` interface, `BaseActor`, `Message`, `Supervisor` |
 | `agent` | Agent lifecycle orchestration | `Agent`, `AgentActor` |
+| `kernel` | Kernel manager (in-process) | `Kernel`, Spawn, Send, Stop |
+| `kernelserver` | Kernel gRPC server (SpawnActor, SendMessage, QueryState) | `KernelGRPCServer`, reads gRPC metadata (x-org-id, x-is-super-admin) for agent listing |
 | `tasks` | Task state machine and DAG | `Task`, `Graph`, `Status` |
 | `scheduler` | Distributed scheduling | `Scheduler`, shard ownership, ready-set detection |
 | `messaging` | Redis Streams abstraction | `Bus`, consumer groups, publish/subscribe |

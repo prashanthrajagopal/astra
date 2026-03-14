@@ -42,10 +42,23 @@ type Document struct {
 }
 
 type AgentProfile struct {
-	ID           uuid.UUID       `json:"id"`
-	Name         string          `json:"name"`
-	SystemPrompt string          `json:"system_prompt"`
-	Config       json.RawMessage `json:"config"`
+	ID                       uuid.UUID       `json:"id"`
+	Name                     string          `json:"name"`
+	ActorType                string          `json:"actor_type,omitempty"`
+	SystemPrompt             string          `json:"system_prompt"`
+	Config                   json.RawMessage `json:"config"`
+	Visibility               string          `json:"visibility,omitempty"`
+	ChatCapable              bool            `json:"chat_capable,omitempty"`
+	IngestSourceType         string          `json:"ingest_source_type,omitempty"`
+	IngestSourceConfig       json.RawMessage `json:"ingest_source_config,omitempty"`
+	SlackNotificationsEnabled bool          `json:"slack_notifications_enabled,omitempty"`
+}
+
+// IngestBinding is returned by GetIngestBindings for adapters to know which agent listens to which source.
+type IngestBinding struct {
+	AgentID             uuid.UUID       `json:"agent_id"`
+	IngestSourceType    string          `json:"ingest_source_type"`
+	IngestSourceConfig  json.RawMessage `json:"ingest_source_config"`
 }
 
 type ListOptions struct {
@@ -81,12 +94,17 @@ func (s *Store) GetProfile(ctx context.Context, agentID uuid.UUID) (*AgentProfil
 	}
 
 	var p AgentProfile
-	var idStr, name string
+	var idStr, name, actorType sql.NullString
 	var systemPrompt sql.NullString
 	var config []byte
+	var ingestType sql.NullString
+	var ingestConfig []byte
+	var visibility sql.NullString
+	var chatCapable sql.NullBool
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, system_prompt, config FROM agents WHERE id = $1`,
-		agentID).Scan(&idStr, &name, &systemPrompt, &config)
+		`SELECT id, name, COALESCE(actor_type, ''), system_prompt, config, visibility, chat_capable, ingest_source_type, ingest_source_config, slack_notifications_enabled
+		 FROM agents WHERE id = $1`,
+		agentID).Scan(&idStr, &name, &actorType, &systemPrompt, &config, &visibility, &chatCapable, &ingestType, &ingestConfig, &p.SlackNotificationsEnabled)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -94,12 +112,29 @@ func (s *Store) GetProfile(ctx context.Context, agentID uuid.UUID) (*AgentProfil
 		return nil, fmt.Errorf("agentdocs.GetProfile: %w", err)
 	}
 	p.ID = agentID
-	p.Name = name
+	if name.Valid {
+		p.Name = name.String
+	}
+	if actorType.Valid {
+		p.ActorType = actorType.String
+	}
 	if systemPrompt.Valid {
 		p.SystemPrompt = systemPrompt.String
 	}
 	if len(config) > 0 {
 		p.Config = config
+	}
+	if visibility.Valid {
+		p.Visibility = visibility.String
+	}
+	if chatCapable.Valid {
+		p.ChatCapable = chatCapable.Bool
+	}
+	if ingestType.Valid {
+		p.IngestSourceType = ingestType.String
+	}
+	if len(ingestConfig) > 0 {
+		p.IngestSourceConfig = ingestConfig
 	}
 	if s.rdb != nil {
 		data, _ := json.Marshal(&p)
@@ -137,6 +172,127 @@ func (s *Store) UpdateProfile(ctx context.Context, agentID uuid.UUID, systemProm
 		_ = s.rdb.Del(ctx, docsKeyPrefix+agentID.String()).Err()
 	}
 	return nil
+}
+
+// GetAgentOrg returns the org_id of the agent, or nil if the agent has no org (e.g. global) or does not exist.
+func (s *Store) GetAgentOrg(ctx context.Context, agentID uuid.UUID) (*uuid.UUID, error) {
+	var orgID sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT org_id::text FROM agents WHERE id = $1`, agentID).Scan(&orgID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agentdocs.GetAgentOrg: %w", err)
+	}
+	if !orgID.Valid || orgID.String == "" {
+		return nil, nil
+	}
+	u, err := uuid.Parse(orgID.String)
+	if err != nil {
+		return nil, nil
+	}
+	return &u, nil
+}
+
+// GetAgentMeta returns visibility, chat_capable, and org/owner/team IDs for an agent (for use when updating only visibility/chat_capable).
+func (s *Store) GetAgentMeta(ctx context.Context, agentID uuid.UUID) (visibility string, chatCapable bool, orgID, ownerID, teamID *uuid.UUID, err error) {
+	var vis, oID, ownID, tID sql.NullString
+	var chat sql.NullBool
+	err = s.db.QueryRowContext(ctx,
+		`SELECT visibility, chat_capable, org_id::text, owner_id::text, team_id::text FROM agents WHERE id = $1`,
+		agentID).Scan(&vis, &chat, &oID, &ownID, &tID)
+	if err == sql.ErrNoRows {
+		return "", false, nil, nil, nil, nil
+	}
+	if err != nil {
+		return "", false, nil, nil, nil, fmt.Errorf("agentdocs.GetAgentMeta: %w", err)
+	}
+	if vis.Valid {
+		visibility = vis.String
+	}
+	if chat.Valid {
+		chatCapable = chat.Bool
+	}
+	if oID.Valid && oID.String != "" {
+		if u, e := uuid.Parse(oID.String); e == nil {
+			orgID = &u
+		}
+	}
+	if ownID.Valid && ownID.String != "" {
+		if u, e := uuid.Parse(ownID.String); e == nil {
+			ownerID = &u
+		}
+	}
+	if tID.Valid && tID.String != "" {
+		if u, e := uuid.Parse(tID.String); e == nil {
+			teamID = &u
+		}
+	}
+	return visibility, chatCapable, orgID, ownerID, teamID, nil
+}
+
+// GetIngestBindings returns all agents that have an ingest source configured (for adapters to subscribe and forward).
+func (s *Store) GetIngestBindings(ctx context.Context) ([]IngestBinding, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, ingest_source_type, ingest_source_config FROM agents WHERE ingest_source_type IS NOT NULL AND ingest_source_type != ''`)
+	if err != nil {
+		return nil, fmt.Errorf("agentdocs.GetIngestBindings: %w", err)
+	}
+	defer rows.Close()
+	var out []IngestBinding
+	for rows.Next() {
+		var b IngestBinding
+		var idStr string
+		var cfg []byte
+		if err := rows.Scan(&idStr, &b.IngestSourceType, &cfg); err != nil {
+			return nil, fmt.Errorf("agentdocs.GetIngestBindings scan: %w", err)
+		}
+		b.AgentID, _ = uuid.Parse(idStr)
+		if len(cfg) > 0 {
+			b.IngestSourceConfig = cfg
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// UpdateAgentIngestSource sets or clears the external data source for an agent. Empty sourceType clears it.
+func (s *Store) UpdateAgentIngestSource(ctx context.Context, agentID uuid.UUID, sourceType string, sourceConfig json.RawMessage) error {
+	if sourceType == "" {
+		_, err := s.db.ExecContext(ctx, `UPDATE agents SET ingest_source_type = NULL, ingest_source_config = NULL, updated_at = now() WHERE id = $1`, agentID)
+		if err != nil {
+			return fmt.Errorf("agentdocs.UpdateAgentIngestSource: %w", err)
+		}
+	} else {
+		_, err := s.db.ExecContext(ctx, `UPDATE agents SET ingest_source_type = $1, ingest_source_config = $2, updated_at = now() WHERE id = $3`,
+			sourceType, nullJSON(sourceConfig), agentID)
+		if err != nil {
+			return fmt.Errorf("agentdocs.UpdateAgentIngestSource: %w", err)
+		}
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
+// UpdateAgentSlackNotifications sets whether the agent may post to Slack (e.g. when prompt instructs).
+func (s *Store) UpdateAgentSlackNotifications(ctx context.Context, agentID uuid.UUID, enabled bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE agents SET slack_notifications_enabled = $1, updated_at = now() WHERE id = $2`, enabled, agentID)
+	if err != nil {
+		return fmt.Errorf("agentdocs.UpdateAgentSlackNotifications: %w", err)
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Del(ctx, profileKeyPrefix+agentID.String()).Err()
+	}
+	return nil
+}
+
+func nullJSON(b json.RawMessage) interface{} {
+	if b == nil || len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 // UpdateAgentName sets the agent's display name and invalidates profile cache.
