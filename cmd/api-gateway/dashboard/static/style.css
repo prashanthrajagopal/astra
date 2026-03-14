@@ -140,6 +140,11 @@ body {
 }
 .modal-input:focus { outline: none; border-color: var(--md-sys-color-primary); }
 .field label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px; }
+.modal-label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px; margin-top: 12px; }
+.modal-label:first-child { margin-top: 0; }
+.section-desc { font-size: 0.875rem; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px; line-height: 1.4; }
+.section-desc a { color: var(--md-sys-color-primary); }
+.slack-config-form { max-width: 480px; }
 .modal-error { padding: 8px 12px; background: rgba(248,113,113,.1); border: 1px solid var(--md-sys-color-error); border-radius: 6px; color: var(--md-sys-color-error); font-size: 0.8125rem; }
 .badge-super { background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; }
 .badge-active { color: var(--md-ref-success); }
@@ -2008,37 +2013,242 @@ button#btn-refresh:focus-visible {
   display: none !important;
 }
 
-/* ─── Create Agent Modal ─────────────────────────── */
-.agent-prompt-textarea {
+/* ─── Agent modals (Create Agent & Edit Agent) ─────────────────────────── */
+/* Scope: #agent-modal and #agent-edit-modal use .goal-modal and shared body/section/field classes */
+
+#agent-modal .goal-modal-content,
+#agent-edit-modal .goal-modal-content {
+  max-height: 88vh;
+}
+
+#agent-modal .goal-modal-body,
+#agent-edit-modal .goal-modal-body {
+  padding: 24px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Section headers — visual hierarchy */
+.goal-modal .agent-modal-section {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--md-sys-color-on-surface);
+  margin: 0;
+  margin-top: 24px;
+  margin-bottom: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  padding-left: 12px;
+  border-left: 3px solid var(--md-sys-color-primary);
+  background: rgba(168, 199, 250, 0.04);
+  border-radius: 0 6px 6px 0;
+  padding-right: 12px;
+  padding-bottom: 2px;
+}
+
+.goal-modal .agent-modal-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  border-left: 3px solid var(--md-sys-color-primary);
+  padding-top: 2px;
+}
+
+/* Field spacing inside agent modals */
+#agent-modal .goal-modal-body .field,
+#agent-edit-modal .goal-modal-body .field {
+  margin-bottom: 18px;
+}
+
+#agent-modal .goal-modal-body .field:last-of-type,
+#agent-edit-modal .goal-modal-body .field:last-of-type {
+  margin-bottom: 0;
+}
+
+.goal-modal .field label {
+  margin-bottom: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* Inputs — focus ring, shadow, comfortable padding */
+#agent-modal .goal-modal-body .modal-input,
+#agent-edit-modal .goal-modal-body .modal-input {
+  margin-bottom: 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.9375rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, outline 0.15s ease;
+}
+
+#agent-modal .goal-modal-body .modal-input:focus,
+#agent-edit-modal .goal-modal-body .modal-input:focus {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+  border-color: var(--md-sys-color-primary);
+  box-shadow: 0 0 0 4px rgba(168, 199, 250, 0.15);
+}
+
+/* Textarea (agent prompt) — comfortable min-height and padding */
+.goal-modal .agent-prompt-textarea {
   font-family: 'Roboto Mono', 'SF Mono', 'Fira Code', monospace;
   font-size: 0.8125rem;
   line-height: 1.5;
-  min-height: 160px;
+  min-height: 180px;
+  padding: 12px 14px;
   resize: vertical;
   white-space: pre-wrap;
 }
-.agent-upload-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.agent-file-input {
-  flex: 1;
-  font-size: 0.8125rem;
-}
-.agent-file-info {
+
+/* Hints */
+.goal-modal .agent-field-hint {
   font-size: 0.75rem;
   color: var(--md-sys-color-on-surface-variant);
+  margin: 6px 0 0;
+  line-height: 1.45;
 }
-.agent-file-clear {
-  background: transparent;
+
+.goal-modal .agent-ingest-hint:empty {
+  display: none;
+}
+
+/* Checkboxes — larger hit area, accent styling */
+#agent-modal .goal-modal-body .field input[type="checkbox"],
+#agent-edit-modal .goal-modal-body .field input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  margin: 0 10px 0 0;
+  vertical-align: middle;
+  accent-color: var(--md-ref-success);
+  cursor: pointer;
+}
+
+#agent-modal .goal-modal-body .field label:has(input[type="checkbox"]),
+#agent-edit-modal .goal-modal-body .field label:has(input[type="checkbox"]) {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  margin-bottom: 0;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Primary submit button — more prominent */
+#agent-modal .goal-modal-body > .action-btn.approve:last-of-type,
+#agent-edit-modal .goal-modal-body > .action-btn.approve:last-of-type {
+  margin-top: 24px;
+  padding: 12px 24px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+#agent-modal .goal-modal-body > .action-btn.approve:last-of-type:hover,
+#agent-edit-modal .goal-modal-body > .action-btn.approve:last-of-type:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#agent-modal .goal-modal-body > .action-btn.approve:last-of-type:active,
+#agent-edit-modal .goal-modal-body > .action-btn.approve:last-of-type:active {
+  transform: translateY(0);
+}
+
+/* Error message above button */
+#agent-modal .goal-modal-body #agent-modal-error,
+#agent-edit-modal .goal-modal-body #agent-edit-modal-error {
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+/* File upload row — drop-zone style */
+.goal-modal .agent-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 2px dashed var(--md-sys-color-outline-variant);
+  border-radius: 10px;
+  background: var(--md-sys-color-surface-container-high);
+  margin-top: 4px;
+}
+
+.goal-modal .agent-file-input {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.8125rem;
+  padding: 8px 0;
+}
+
+.goal-modal .agent-file-input::file-selector-button {
+  padding: 8px 16px;
+  margin-right: 12px;
   border: 1px solid var(--md-sys-color-outline);
-  border-radius: 4px;
+  border-radius: 8px;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-family: 'Roboto', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.goal-modal .agent-file-input::file-selector-button:hover {
+  background: var(--md-sys-color-surface-container-high);
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-primary);
+}
+
+.goal-modal .agent-file-info {
+  font-size: 0.8125rem;
+  color: var(--md-sys-color-on-surface-variant);
+  flex: 1;
+  min-width: 0;
+}
+
+.goal-modal .agent-file-clear {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 6px;
+  background: var(--md-sys-color-surface-container);
   color: var(--md-sys-color-on-surface);
   cursor: pointer;
   font-size: 0.875rem;
-  padding: 2px 8px;
+  font-weight: 500;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.agent-file-clear:hover {
+
+.goal-modal .agent-file-clear:hover {
   background: var(--md-sys-color-surface-container-high);
+  border-color: var(--md-sys-color-error);
+  color: var(--md-sys-color-error);
+}
+
+/* Read-only agent name / actor type in Edit modal */
+#agent-edit-modal .modal-readonly,
+#agent-edit-modal .agent-edit-readonly {
+  display: inline-block;
+  padding: 10px 14px;
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  color: var(--md-sys-color-on-surface);
+  border: 1px solid var(--md-sys-color-outline-variant);
+}
+#agent-edit-modal .agent-edit-readonly {
+  color: var(--md-sys-color-on-surface-variant);
 }

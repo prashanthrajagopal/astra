@@ -355,6 +355,7 @@ function renderAgentsPage() {
       var status = (pick(a, ['status', 'Status'], '') || '').toLowerCase();
       var isActive = status === 'active';
       var actionsHtml = '<td class="td-actions">' +
+        '<button type="button" class="agent-action-btn agent-action-edit" data-agent-id="' + escapeHtml(id || '') + '" data-action="edit" aria-label="Edit" title="Edit data source &amp; Slack">✎</button>' +
         '<button type="button" class="agent-action-btn agent-action-enable" data-agent-id="' + escapeHtml(id || '') + '" data-action="enable" aria-label="Enable" title="Enable">▶</button>' +
         '<button type="button" class="agent-action-btn agent-action-disable" data-agent-id="' + escapeHtml(id || '') + '" data-action="disable" aria-label="Disable" title="Disable">⏸</button>' +
         '<button type="button" class="agent-action-btn agent-action-delete" data-agent-id="' + escapeHtml(id || '') + '" data-action="delete" aria-label="Delete" title="Delete">🗑</button>' +
@@ -1228,7 +1229,9 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!btn || !btn.dataset || !btn.dataset.agentId) return;
       var agentId = btn.dataset.agentId;
       var action = (btn.dataset.action || '').toLowerCase();
-      if (action === 'enable') {
+      if (action === 'edit') {
+        openEditAgentModal(agentId);
+      } else if (action === 'enable') {
         authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/status', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) })
           .then(function (r) { if (r.ok) fetchSnapshot(); else r.text().then(function (t) { setStatus('Agent enable failed: ' + t, true); }); });
       } else if (action === 'disable') {
@@ -1255,6 +1258,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (panel) panel.hidden = false;
       if (target === 'orgs') loadOrgs();
       if (target === 'users') loadUsers();
+      if (target === 'slack') loadSlackConfig();
     });
   });
 
@@ -1419,7 +1423,193 @@ document.addEventListener('DOMContentLoaded', function () {
   if (usersPrev) usersPrev.addEventListener('click', function() { usersPage = Math.max(1, usersPage - 1); loadUsers(); });
   if (usersNext) usersNext.addEventListener('click', function() { usersPage++; loadUsers(); });
 
+  // ─── Slack config ───────────────────────────────────────
+  function loadSlackConfig() {
+    authFetch('/superadmin/api/slack/config')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        document.getElementById('slack-signing-secret') && (document.getElementById('slack-signing-secret').value = '');
+        document.getElementById('slack-client-id') && (document.getElementById('slack-client-id').value = d.client_id || '');
+        document.getElementById('slack-client-secret') && (document.getElementById('slack-client-secret').value = '');
+        document.getElementById('slack-oauth-redirect') && (document.getElementById('slack-oauth-redirect').value = d.oauth_redirect_url || '');
+        var statusEl = document.getElementById('slack-config-status');
+        if (statusEl) statusEl.textContent = (d.signing_secret === '********' || d.client_secret === '********') ? 'Configured (secrets hidden)' : '';
+      }).catch(function() {});
+  }
+  var btnSaveSlackConfig = document.getElementById('btn-save-slack-config');
+  if (btnSaveSlackConfig) btnSaveSlackConfig.addEventListener('click', function() {
+    var payload = {};
+    var v = document.getElementById('slack-signing-secret').value; if (v) payload.signing_secret = v;
+    v = document.getElementById('slack-client-id').value; if (v) payload.client_id = v;
+    v = document.getElementById('slack-client-secret').value; if (v) payload.client_secret = v;
+    v = document.getElementById('slack-oauth-redirect').value; if (v) payload.oauth_redirect_url = v;
+    var statusEl = document.getElementById('slack-config-status');
+    if (Object.keys(payload).length === 0) { if (statusEl) statusEl.textContent = 'Enter at least one field.'; return; }
+    btnSaveSlackConfig.disabled = true; if (statusEl) statusEl.textContent = 'Saving...';
+    authFetch('/superadmin/api/slack/config', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+      .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
+      .then(function(res) {
+        btnSaveSlackConfig.disabled = false;
+        if (statusEl) statusEl.textContent = res.ok ? 'Saved.' : (res.data.error || 'Save failed');
+        if (res.ok) loadSlackConfig();
+      })
+      .catch(function() { btnSaveSlackConfig.disabled = false; if (statusEl) statusEl.textContent = 'Request failed'; });
+  });
+
+  // ─── Edit Agent Modal (data source & Slack) ───────────────────────────
+  var agentEditModal = document.getElementById('agent-edit-modal');
+  var agentEditId = null;
+
+  function populateEditVisibility() {
+    var sel = document.getElementById('agent-edit-visibility');
+    if (!sel) return;
+    var claims = getJwtClaims();
+    var opts = [];
+    if (claims.is_super_admin) {
+      opts = [{ value: 'global', label: 'Global' }];
+    } else if (claims.org_role === 'admin') {
+      opts = [{ value: 'private', label: 'Private' }, { value: 'team', label: 'Team' }, { value: 'public', label: 'Public' }];
+    } else {
+      opts = [{ value: 'private', label: 'Private' }, { value: 'team', label: 'Team' }];
+    }
+    sel.innerHTML = '';
+    opts.forEach(function(o) {
+      var opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+  }
+
+  function openEditAgentModal(agentId) {
+    agentEditId = agentId;
+    document.getElementById('agent-edit-name').value = 'Loading…';
+    document.getElementById('agent-edit-actor-type').textContent = '';
+    document.getElementById('agent-edit-config').value = '';
+    document.getElementById('agent-edit-ingest-source-type').value = '';
+    document.getElementById('agent-edit-ingest-source-config').value = '';
+    document.getElementById('agent-edit-slack-notifications').checked = false;
+    document.getElementById('agent-edit-chat-capable').checked = false;
+    document.getElementById('agent-edit-prompt').value = '';
+    document.getElementById('agent-edit-modal-error').hidden = true;
+    populateEditVisibility();
+    updateIngestSourceHint('agent-edit');
+    agentEditModal.hidden = false;
+    var errEl = document.getElementById('agent-edit-modal-error');
+    var saveBtn = document.getElementById('agent-edit-modal-save');
+    if (saveBtn) saveBtn.disabled = true;
+    authFetch('/agents/' + encodeURIComponent(agentId) + '/profile', { cache: 'no-store' })
+      .then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(r.status === 404 ? 'Agent not found' : (t || 'Failed to load profile')); });
+        return r.json();
+      })
+      .then(function(p) {
+        document.getElementById('agent-edit-name').value = p.name || '';
+        document.getElementById('agent-edit-actor-type').textContent = p.actor_type || '—';
+        var configVal = p.config;
+        document.getElementById('agent-edit-config').value = (typeof configVal === 'object' && configVal !== null) ? JSON.stringify(configVal) : (typeof configVal === 'string' ? configVal : (configVal ? JSON.stringify(configVal) : ''));
+        var visSel = document.getElementById('agent-edit-visibility');
+        var visVal = (p.visibility || 'private').toLowerCase();
+        // Ensure current profile visibility exists as an option (e.g. global agent edited by org user, or vice versa)
+        var hasOpt = false;
+        for (var i = 0; i < visSel.options.length; i++) { if (visSel.options[i].value === visVal) { hasOpt = true; break; } }
+        if (!hasOpt && visVal) {
+          var opt = document.createElement('option');
+          opt.value = visVal;
+          opt.textContent = visVal.charAt(0).toUpperCase() + visVal.slice(1);
+          visSel.appendChild(opt);
+        }
+        visSel.value = visVal;
+        document.getElementById('agent-edit-chat-capable').checked = !!p.chat_capable;
+        document.getElementById('agent-edit-slack-notifications').checked = !!p.slack_notifications_enabled;
+        document.getElementById('agent-edit-ingest-source-type').value = p.ingest_source_type || '';
+        var cfg = p.ingest_source_config;
+        document.getElementById('agent-edit-ingest-source-config').value = (typeof cfg === 'object' && cfg !== null) ? JSON.stringify(cfg) : (typeof cfg === 'string' ? cfg : '');
+        document.getElementById('agent-edit-prompt').value = p.system_prompt || '';
+        updateIngestSourceHint('agent-edit');
+        if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+        if (saveBtn) saveBtn.disabled = false;
+      })
+      .catch(function(e) {
+        if (errEl) { errEl.textContent = e && e.message ? e.message : 'Failed to load profile'; errEl.hidden = false; }
+        document.getElementById('agent-edit-name').value = '';
+        if (saveBtn) saveBtn.disabled = false;
+      });
+  }
+
+  var editIngestTypeSel = document.getElementById('agent-edit-ingest-source-type');
+  if (editIngestTypeSel) editIngestTypeSel.addEventListener('change', function() { updateIngestSourceHint('agent-edit'); });
+
+  if (agentEditModal) {
+    document.getElementById('agent-edit-modal-close').addEventListener('click', function() { agentEditModal.hidden = true; });
+    agentEditModal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { agentEditModal.hidden = true; });
+    document.getElementById('agent-edit-modal-save').addEventListener('click', function() {
+      if (!agentEditId) return;
+      var errEl = document.getElementById('agent-edit-modal-error');
+      var name = document.getElementById('agent-edit-name').value.trim();
+      var configStr = document.getElementById('agent-edit-config').value.trim();
+      var ingestConfigStr = document.getElementById('agent-edit-ingest-source-config').value.trim();
+      var ingestType = document.getElementById('agent-edit-ingest-source-type').value.trim();
+      if (!name) { errEl.textContent = 'Name is required'; errEl.hidden = false; return; }
+      var configVal = null;
+      if (configStr) {
+        try { configVal = JSON.parse(configStr); } catch (e) { errEl.textContent = 'Config must be valid JSON'; errEl.hidden = false; return; }
+      }
+      var ingestConfigVal = null;
+      if (ingestConfigStr) {
+        try { ingestConfigVal = JSON.parse(ingestConfigStr); } catch (e) { errEl.textContent = 'Data source config must be valid JSON'; errEl.hidden = false; return; }
+      }
+      errEl.hidden = true;
+      var visVal = (document.getElementById('agent-edit-visibility').value || '').trim();
+      if (!visVal) visVal = 'private';
+      var payload = {
+        name: name,
+        system_prompt: document.getElementById('agent-edit-prompt').value,
+        visibility: visVal,
+        chat_capable: document.getElementById('agent-edit-chat-capable').checked,
+        slack_notifications_enabled: document.getElementById('agent-edit-slack-notifications').checked,
+        ingest_source_type: ingestType || '',
+        ingest_source_config: ingestConfigVal
+      };
+      if (configVal !== null) payload.config = configVal;
+      if (payload.ingest_source_type === '') delete payload.ingest_source_config;
+      var btn = document.getElementById('agent-edit-modal-save');
+      btn.disabled = true;
+      authFetch('/agents/' + encodeURIComponent(agentEditId), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        .then(function(r) {
+          return r.text().then(function(t) {
+            var d = {};
+            if (t) { try { d = JSON.parse(t); } catch (e) { d = { error: t }; } }
+            return { ok: r.ok, data: d };
+          });
+        })
+        .then(function(res) {
+          btn.disabled = false;
+          if (res.ok) { agentEditModal.hidden = true; if (typeof fetchSnapshot === 'function') fetchSnapshot(); }
+          else { errEl.textContent = res.data.error || 'Save failed'; errEl.hidden = false; }
+        })
+        .catch(function(e) { btn.disabled = false; errEl.textContent = e && e.message ? e.message : 'Request failed'; errEl.hidden = false; });
+    });
+  }
+
   // ─── Create Agent Modal ─────────────────────────────────
+  var ingestSourceHints = {
+    '': { hint: '', placeholder: '' },
+    redis_pubsub: { hint: 'Redis: channel name. Example: {"channel":"alerts"}', placeholder: '{"channel":"alerts"}' },
+    gcp_pubsub: { hint: 'GCP: project and subscription. Example: {"project":"my-project","subscription":"my-sub"}', placeholder: '{"project":"my-project","subscription":"my-sub"}' },
+    websocket: { hint: 'WebSocket: endpoint URL. Example: {"url":"wss://example.com/events"}', placeholder: '{"url":"wss://example.com/events"}' }
+  };
+  function updateIngestSourceHint(prefix) {
+    var typeEl = document.getElementById(prefix + '-ingest-source-type');
+    var configEl = document.getElementById(prefix + '-ingest-source-config');
+    var hintEl = document.getElementById(prefix + '-ingest-hint');
+    if (!typeEl || !configEl || !hintEl) return;
+    var val = (typeEl.value || '').trim();
+    var rec = ingestSourceHints[val] || ingestSourceHints[''];
+    hintEl.textContent = rec.hint;
+    configEl.placeholder = rec.placeholder;
+  }
+
   var agentModal = document.getElementById('agent-modal');
   var agentUploadedContent = null;
   var agentUploadedFilename = '';
@@ -1472,6 +1662,9 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('agent-create-actor-type').value = '';
     document.getElementById('agent-create-config').value = '';
     document.getElementById('agent-create-chat-capable').checked = false;
+    document.getElementById('agent-create-slack-notifications').checked = false;
+    document.getElementById('agent-create-ingest-source-type').value = '';
+    document.getElementById('agent-create-ingest-source-config').value = '';
     document.getElementById('agent-create-prompt-type').value = 'full_prompt';
     document.getElementById('agent-create-prompt').value = '';
     document.getElementById('agent-create-upload-type').value = 'full_prompt';
@@ -1484,8 +1677,12 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('agent-modal-error').hidden = true;
     document.getElementById('agent-modal-title').textContent = 'Create Agent';
     populateAgentVisibility();
+    updateIngestSourceHint('agent-create');
     agentModal.hidden = false;
   });
+
+  var createIngestTypeSel = document.getElementById('agent-create-ingest-source-type');
+  if (createIngestTypeSel) createIngestTypeSel.addEventListener('change', function() { updateIngestSourceHint('agent-create'); });
 
   var agentFileInput = document.getElementById('agent-create-file');
   if (agentFileInput) agentFileInput.addEventListener('change', function() {
@@ -1563,6 +1760,14 @@ document.addEventListener('DOMContentLoaded', function () {
     agentSaveBtn.textContent = 'Creating...';
     document.getElementById('agent-modal-error').hidden = true;
 
+    var ingestSourceType = document.getElementById('agent-create-ingest-source-type').value.trim();
+    var ingestSourceConfigStr = document.getElementById('agent-create-ingest-source-config').value.trim();
+    var slackNotifications = document.getElementById('agent-create-slack-notifications').checked;
+    var ingestSourceConfig = null;
+    if (ingestSourceConfigStr) {
+      try { ingestSourceConfig = JSON.parse(ingestSourceConfigStr); } catch (e) { showAgentError('Data source config must be valid JSON'); agentSaveBtn.disabled = false; agentSaveBtn.textContent = 'Create Agent'; return; }
+    }
+
     authFetch('/agents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1572,6 +1777,10 @@ document.addEventListener('DOMContentLoaded', function () {
       .then(function(res) {
         if (!res.ok) { showAgentError(res.data.error || 'Failed to create agent'); agentSaveBtn.disabled = false; agentSaveBtn.textContent = 'Create Agent'; return; }
         var agentId = res.data.actor_id;
+        var patchPayload = {};
+        if (ingestSourceType) patchPayload.ingest_source_type = ingestSourceType;
+        if (ingestSourceConfig != null) patchPayload.ingest_source_config = ingestSourceConfig;
+        patchPayload.slack_notifications_enabled = slackNotifications;
         var docPromises = [];
 
         if (promptContent.trim()) {
@@ -1594,7 +1803,10 @@ document.addEventListener('DOMContentLoaded', function () {
           );
         }
 
-        return Promise.all(docPromises).then(function() {
+        var patchPromise = (Object.keys(patchPayload).length > 0)
+          ? authFetch('/agents/' + agentId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchPayload) })
+          : Promise.resolve();
+        return Promise.all(docPromises).then(function() { return patchPromise; }).then(function() {
           agentModal.hidden = true;
           agentSaveBtn.disabled = false;
           agentSaveBtn.textContent = 'Create Agent';
