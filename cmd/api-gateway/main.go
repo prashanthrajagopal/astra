@@ -11,9 +11,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"astra/internal/agentdocs"
@@ -23,6 +25,7 @@ import (
 	"astra/internal/llm"
 	"astra/internal/memory"
 	"astra/internal/orgs"
+	"astra/internal/slack"
 	"astra/pkg/config"
 	"astra/pkg/db"
 	astraGrpc "astra/pkg/grpc"
@@ -35,6 +38,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	gogrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var (
@@ -49,6 +53,13 @@ const (
 	headerContentType = "Content-Type"
 	contentTypeJSON   = "application/json"
 )
+
+// writeJSONError sets Content-Type and writes a JSON body {"error": msg} with the given status code.
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
 
 //go:embed dashboard
 var dashboardFS embed.FS
@@ -589,10 +600,40 @@ code{background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:.75r
       <div class="card"><div class="label">Members</div><div class="value" id="s-mb">&#8212;</div></div>
       <div class="card"><div class="label">Goals</div><div class="value" id="s-gl">&#8212;</div></div>
     </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-hdr"><h2>Integrations</h2></div>
+      <p style="color:var(--text2);font-size:.875rem;margin-bottom:12px">Connect Slack so your org can chat with Astra agents from Slack.</p>
+      <button class="btn btn-sm" id="btn-connect-slack">Connect Slack</button>
+      <span id="slack-connect-status" style="margin-left:12px;font-size:.8125rem;color:var(--text2)"></span>
+      <div style="margin-top:16px" id="slack-default-agent-row">
+        <label style="display:block;font-size:.8125rem;color:var(--text2);margin-bottom:6px">Default agent for Slack</label>
+        <select id="slack-default-agent" class="field" style="max-width:280px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem">
+          <option value="">— Select agent —</option>
+        </select>
+      </div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <p style="color:var(--text2);font-size:.8125rem;margin-bottom:10px">Or paste tokens from Slack → Your App → <strong>App Configuration Tokens</strong> (Access Token + Refresh Token):</p>
+        <p style="color:var(--text2);font-size:.75rem;margin-bottom:10px">If you see a token-format error, enter your <strong>Slack Workspace ID</strong> below (find it in Slack: <strong>Settings &amp; administration → Workspace settings</strong>, or in your workspace URL).</p>
+        <div class="field" style="margin-bottom:10px">
+          <label style="display:block;font-size:.75rem;color:var(--text2);margin-bottom:4px">Slack Workspace ID (recommended for App Configuration Tokens; e.g. T0ABC123)</label>
+          <input id="slack-workspace-id" placeholder="T0ABC123 or leave blank" style="width:100%;max-width:320px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem"/>
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <label style="display:block;font-size:.75rem;color:var(--text2);margin-bottom:4px">Access Token</label>
+          <input id="slack-access-token" type="password" placeholder="e.g. xoxb-... or xoxe.xoxp-..." autocomplete="off" style="width:100%;max-width:320px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem"/>
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <label style="display:block;font-size:.75rem;color:var(--text2);margin-bottom:4px">Refresh Token</label>
+          <input id="slack-refresh-token" type="password" placeholder="..." autocomplete="off" style="width:100%;max-width:320px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem"/>
+        </div>
+        <button class="btn btn-sm" id="btn-save-slack-tokens">Save tokens</button>
+        <span id="slack-tokens-status" style="margin-left:12px;font-size:.8125rem;color:var(--text2)"></span>
+      </div>
+    </div>
   </div>
   <div class="tab" id="tab-agents">
     <div class="panel"><div class="panel-hdr"><h2>Agents</h2></div>
-    <table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Visibility</th><th>ID</th></tr></thead>
+    <table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Visibility</th><th>ID</th><th>Actions</th></tr></thead>
     <tbody id="ag-tb"></tbody></table>
     <div id="ag-e" class="empty" style="display:none">No agents found</div>
     <div class="pag" id="ag-pg"></div></div>
@@ -626,7 +667,14 @@ code{background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:.75r
   <div class="field"><label>Role</label><select id="mf-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
   <div class="mact"><button class="btn btn-ghost" onclick="closeM('mb-mo')">Cancel</button><button class="btn" onclick="mkMember()">Invite</button></div>
 </div></div>
+<div class="mo" id="ag-edit-mo"><div class="modal" style="max-width:520px"><h3>Edit agent — Data source &amp; Slack</h3>
+  <div class="field"><label>Data source</label><select id="ag-edit-source"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select></div>
+  <div class="field"><label>Data source config (JSON)</label><textarea id="ag-edit-config" placeholder='{"channel":"events"}' rows="3" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem;font-family:monospace;resize:vertical"></textarea></div>
+  <div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ag-edit-slack"/> Allow this agent to post to Slack when the prompt says so</label></div>
+  <div class="mact"><button class="btn btn-ghost" onclick="closeM('ag-edit-mo')">Cancel</button><button class="btn" id="ag-edit-save">Save</button></div>
+</div></div>
 <script>
+/* Org dashboard: inline script; could be moved to a static file (e.g. org-dashboard.js) for consistency with super-admin dashboard and easier maintenance. */
 (function(){
 var OID='{{ORG_ID}}',SLG='{{ORG_SLUG}}',tok=localStorage.getItem('astra_token');
 if(!tok){location.href='/'+SLG;return}
@@ -653,12 +701,31 @@ window.ldAg=function(){authFetch('/agents').then(function(d){
   if(!rw.length){em.style.display='block';return}em.style.display='none';
   var st=agPg*agSz,pg=rw.slice(st,st+agSz);
   pg.forEach(function(a){var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+esc(a.name||'\u2014')+'</td><td>'+esc(a.actor_type||'\u2014')+'</td><td><span class="st st-'+(a.status||'unknown')+'">'+esc(a.status||'unknown')+'</span></td><td>'+esc(a.visibility||'\u2014')+'</td><td style="font-family:monospace;font-size:.75rem;color:var(--text2)">'+esc((a.id||'').substring(0,8))+'</td>';
+    tr.innerHTML='<td>'+esc(a.name||'\u2014')+'</td><td>'+esc(a.actor_type||'\u2014')+'</td><td><span class="st st-'+(a.status||'unknown')+'">'+esc(a.status||'unknown')+'</span></td><td>'+esc(a.visibility||'\u2014')+'</td><td style="font-family:monospace;font-size:.75rem;color:var(--text2)">'+esc((a.id||'').substring(0,8))+'</td><td><button class="btn btn-sm btn-ghost" onclick="openEditAgent(\''+esc(a.id||'')+'\')">Edit</button></td>';
     tb.appendChild(tr)});
   var p=$('ag-pg'),pages=Math.ceil(rw.length/agSz);p.innerHTML='';
   for(var i=0;i<pages;i++){var b=document.createElement('button');b.className='btn btn-sm'+(i===agPg?'':' btn-ghost');b.textContent=i+1;b.dataset.p=i;
     b.onclick=function(){agPg=+this.dataset.p;ldAg()};p.appendChild(b)}
 }).catch(function(){})};
+var editAgentId=null;
+window.openEditAgent=function(id){
+  editAgentId=id;
+  authFetch('/agents/'+id+'/profile').then(function(p){
+    $('ag-edit-source').value=p.ingest_source_type||'';
+    var cfg=p.ingest_source_config;
+    $('ag-edit-config').value=typeof cfg==='string'?cfg:(cfg?JSON.stringify(cfg,null,2):'');
+    $('ag-edit-slack').checked=!!p.slack_notifications_enabled;
+    openM('ag-edit-mo');
+  }).catch(function(e){alert('Could not load agent');});
+};
+$('ag-edit-save').onclick=function(){
+  if(!editAgentId)return;
+  var src=$('ag-edit-source').value.trim(),cfgText=$('ag-edit-config').value.trim(),slack=$('ag-edit-slack').checked;
+  var payload={slack_notifications_enabled:slack};
+  if(src){var cfg={};try{if(cfgText)cfg=JSON.parse(cfgText);}catch(e){alert('Invalid JSON in data source config');return;}payload.ingest_source_type=src;payload.ingest_source_config=cfg;}
+  else{payload.ingest_source_type='';payload.ingest_source_config=null;}
+  authFetch('/agents/'+editAgentId,{method:'PATCH',body:JSON.stringify(payload)}).then(function(){closeM('ag-edit-mo');ldAg();}).catch(function(e){alert('Save failed');});
+};
 window.ldTm=function(){authFetch('/org/api/teams?org_id='+OID).then(function(d){
   var rw=d.teams||[],tb=$('tm-tb'),em=$('tm-e');tb.innerHTML='';
   if(!rw.length){em.style.display='block';return}em.style.display='none';
@@ -681,6 +748,37 @@ window.mkMember=function(){var n=$('mf-n').value,e=$('mf-e').value,p=$('mf-p').v
   if(!n||!e||!p)return alert('All fields required');
   authFetch('/org/api/members?org_id='+OID,{method:'POST',body:JSON.stringify({name:n,email:e,password:p,role:r})}).then(function(){
     closeM('mb-mo');$('mf-n').value='';$('mf-e').value='';$('mf-p').value='';ldMb();ldOv()}).catch(function(er){alert('Error: '+er.message)})};
+(function(){
+  var btn=$('btn-connect-slack'),st=$('slack-connect-status'),sel=$('slack-default-agent');
+  if(btn)btn.onclick=function(){
+    if(!tok){st.textContent='Sign in first';return}
+    st.textContent='Redirecting...';btn.disabled=true;
+    fetch('/org/api/slack/connect',{redirect:'manual',headers:{'Authorization':'Bearer '+tok}})
+      .then(function(r){if(r.type==='opaqueredirect'||r.status===302){var loc=r.headers.get('Location');if(loc)window.location.href=loc;else st.textContent='Redirect failed'}else return r.text().then(function(t){st.textContent=t||'Error';btn.disabled=false})})
+      .catch(function(e){st.textContent=e.message||'Error';btn.disabled=false});
+  };
+  if(location.search.indexOf('slack=connected')!==-1&&st)st.textContent='Slack connected.';
+  function loadSlackWorkspace(){authFetch('/org/api/slack/workspace').then(function(ws){if(!ws.connected){if(sel)sel.innerHTML='<option value="">— Connect Slack first —</option>';return}authFetch('/agents').then(function(ag){var list=ag.agents||[];if(!sel)return;sel.innerHTML='<option value="">— Select agent —</option>';list.forEach(function(a){var o=document.createElement('option');o.value=a.id;o.textContent=a.name||a.id;sel.appendChild(o)});if(ws.default_agent_id)sel.value=ws.default_agent_id}).catch(function(){})}).catch(function(){})}
+  loadSlackWorkspace();
+  if(sel)sel.onchange=function(){var v=sel.value;authFetch('/org/api/slack/workspace',{method:'PATCH',body:JSON.stringify({default_agent_id:v||null})}).catch(function(){})};
+  var btnSaveTokens=$('btn-save-slack-tokens'),stTokens=$('slack-tokens-status');
+  if(btnSaveTokens)btnSaveTokens.onclick=function(){
+    var access=$('slack-access-token').value, refresh=$('slack-refresh-token').value, wid=$('slack-workspace-id').value;
+    if(!access){if(stTokens)stTokens.textContent='Access token required';return}
+    if(!tok){if(stTokens)stTokens.textContent='Sign in first';return}
+    btnSaveTokens.disabled=true;if(stTokens)stTokens.textContent='Saving...';
+    var payload={access_token:access,refresh_token:refresh};if(wid)payload.slack_workspace_id=wid;
+    fetch('/org/api/slack/workspace/tokens',{method:'PUT',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(function(r){return r.text().then(function(t){var d;try{d=JSON.parse(t)}catch(e){d={}};return{ok:r.ok,status:r.status,data:d,text:t};});})
+      .then(function(res){
+        btnSaveTokens.disabled=false;
+        var msg=res.ok ? 'Tokens saved.'+(res.data.slack_workspace_id?' Workspace: '+res.data.slack_workspace_id:'') : (res.data.error||res.data.message||res.text||'Save failed');
+        if(stTokens)stTokens.textContent=msg;
+        if(res.ok){$('slack-access-token').value='';$('slack-refresh-token').value='';loadSlackWorkspace();}
+      })
+      .catch(function(e){btnSaveTokens.disabled=false;if(stTokens)stTokens.textContent=e.message||'Request failed';});
+  };
+})();
 })();
 </script>
 </body>
@@ -804,9 +902,10 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		defer cancel()
 		snap := collector.Collect(ctx)
-		// Enrich with agents from agent-service (dashboard only, no auth)
+		// Enrich with agents from agent-service (scoped by org/super-admin via gRPC metadata)
 		if agentClient != nil {
-			resp, err := agentClient.QueryState(ctx, &kernel_pb.QueryStateRequest{EntityType: "agents"})
+			kctx := kernelCtxWithAuth(r, ctx)
+			resp, err := agentClient.QueryState(kctx, &kernel_pb.QueryStateRequest{EntityType: "agents"})
 			if err == nil {
 				for _, b := range resp.Results {
 					var row struct {
@@ -841,6 +940,9 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]bool{"auto_approve_plans": autoApprove})
 	})))
+	slackStore := slack.NewStore(database)
+	mux.Handle("GET /superadmin/api/slack/config", auth.protect(handleSlackConfigGet(slackStore)))
+	mux.Handle("PUT /superadmin/api/slack/config", auth.protect(handleSlackConfigPut(slackStore)))
 	goalServiceBase := fmt.Sprintf("http://localhost:%d", cfg.GoalServicePort)
 	if cfg.GoalServicePort == 0 {
 		goalServiceBase = "http://localhost:8088"
@@ -945,7 +1047,14 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		mux.Handle("GET /superadmin/api/dashboard/chat/sessions/{id}/messages", auth.protect(handleDashboardChatGetMessages(chatStore)))
 		goalServiceAddr := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
 		mux.Handle("POST /superadmin/api/dashboard/chat/sessions/{id}/messages", auth.protect(handleDashboardChatAppendMessage(chatStore, goalServiceAddr, database, llmBackend, memStore)))
+		// Internal endpoint for Slack worker: append message and get assistant reply (auth via X-Slack-Internal-Secret).
+		mux.Handle("POST /internal/slack/chat/message", handleInternalSlackChatMessage(chatStore, goalServiceAddr, database, llmBackend, memStore))
+		mux.Handle("POST /internal/slack/post", handleInternalSlackPost(slackStore))
 	}
+	if agentClient != nil {
+		mux.Handle("POST /internal/ingest/event", handleInternalIngestEvent())
+	}
+	mux.Handle("GET /internal/ingest/bindings", handleInternalIngestBindings())
 }
 
 func handleDashboardAgentStatus(w http.ResponseWriter, r *http.Request, store *agentdocs.Store) {
@@ -1240,6 +1349,342 @@ func handleDashboardChatAppendMessage(chatStore *chat.Store, goalServiceAddr str
 	}
 }
 
+// handleInternalSlackChatMessage is called by the Slack worker. It accepts org_id, agent_id, user_id, optional session_id, and message;
+// appends the user message, runs chat (REST or goal), and returns assistant content. Auth: X-Slack-Internal-Secret header.
+func handleInternalSlackChatMessage(chatStore *chat.Store, goalServiceAddr string, db *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store) http.HandlerFunc {
+	secret := os.Getenv("ASTRA_SLACK_INTERNAL_SECRET")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if secret != "" && r.Header.Get("X-Slack-Internal-Secret") != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			OrgID      string `json:"org_id"`
+			AgentID    string `json:"agent_id"`
+			UserID     string `json:"user_id"`
+			SessionID  string `json:"session_id,omitempty"`
+			Message    string `json:"message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if req.UserID == "" || req.AgentID == "" || req.Message == "" {
+			http.Error(w, "user_id, agent_id, and message required", http.StatusBadRequest)
+			return
+		}
+		agentID, err := uuid.Parse(req.AgentID)
+		if err != nil {
+			http.Error(w, "invalid agent_id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		defer cancel()
+
+		var sessionID uuid.UUID
+		if req.SessionID != "" {
+			sessionID, err = uuid.Parse(req.SessionID)
+			if err != nil {
+				http.Error(w, "invalid session_id", http.StatusBadRequest)
+				return
+			}
+			se, err := chatStore.GetSession(ctx, sessionID, req.UserID)
+			if err != nil || se == nil {
+				http.Error(w, "session not found", http.StatusNotFound)
+				return
+			}
+		} else {
+			se, err := chatStore.CreateSession(ctx, req.UserID, agentID, "")
+			if err != nil {
+				slog.Error("internal slack chat CreateSession failed", "err", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			sessionID = se.ID
+		}
+
+		_, err = chatStore.AppendMessage(ctx, sessionID, req.UserID, "user", req.Message, nil, nil, 0, 0)
+		if err != nil {
+			slog.Error("internal slack chat AppendMessage failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		var assistantMsg *chat.Message
+		if chat.NeedsGoalWorkflow(req.Message) {
+			assistantMsg, err = chat.ProcessGoalMessage(ctx, chatStore, goalServiceAddr, agentID, sessionID, req.UserID, req.Message)
+		} else {
+			directCtx, directCancel := context.WithTimeout(ctx, 60*time.Second)
+			defer directCancel()
+			assistantMsg, err = chat.ProcessRESTMessage(directCtx, chatStore, db, llmBackend, sessionID, req.UserID, memStore)
+		}
+		if err != nil {
+			slog.Error("internal slack chat process failed", "err", err)
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]any{
+				"session_id":        sessionID.String(),
+				"assistant_content": "Sorry, I couldn't process that: " + err.Error(),
+			})
+			return
+		}
+
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]any{
+			"session_id":        sessionID.String(),
+			"assistant_content": assistantMsg.Content,
+		})
+	}
+}
+
+// handleInternalIngestBindings returns GET /internal/ingest/bindings: list of agents with their ingest source (for adapters). Auth: X-Ingest-Secret.
+func handleInternalIngestBindings() http.HandlerFunc {
+	secret := os.Getenv("ASTRA_INGEST_SECRET")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+		if secret != "" && r.Header.Get("X-Ingest-Secret") != secret {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		bindings, err := docStore.GetIngestBindings(ctx)
+		if err != nil {
+			slog.Error("ingest bindings failed", "err", err)
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		if bindings == nil {
+			bindings = []agentdocs.IngestBinding{}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]interface{}{"bindings": bindings})
+	}
+}
+
+// ingestRateLimiter limits POST /internal/ingest/event by agent_id (default 100/min per agent). Configurable via ASTRA_INGEST_RATE_LIMIT (e.g. "100").
+type ingestRateLimiter struct {
+	mu       sync.Mutex
+	perAgent map[string][]time.Time
+	limit    int
+	window   time.Duration
+}
+
+func newIngestRateLimiter() *ingestRateLimiter {
+	limit := 100
+	if s := os.Getenv("ASTRA_INGEST_RATE_LIMIT"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	return &ingestRateLimiter{perAgent: make(map[string][]time.Time), limit: limit, window: time.Minute}
+}
+
+func (rl *ingestRateLimiter) allow(agentID string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+	var kept []time.Time
+	for _, t := range rl.perAgent[agentID] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= rl.limit {
+		return false
+	}
+	kept = append(kept, now)
+	rl.perAgent[agentID] = kept
+	return true
+}
+
+var ingestRL = newIngestRateLimiter()
+
+// handleInternalIngestEvent handles POST /internal/ingest/event for external event ingest (GCP Pub/Sub, external Redis, WebSocket adapters). Auth: X-Ingest-Secret.
+func handleInternalIngestEvent() http.HandlerFunc {
+	secret := os.Getenv("ASTRA_INGEST_SECRET")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+		if secret != "" && r.Header.Get("X-Ingest-Secret") != secret {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		var req struct {
+			AgentID     string          `json:"agent_id"`
+			MessageType string          `json:"message_type,omitempty"`
+			Payload     json.RawMessage `json:"payload,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+			return
+		}
+		if req.AgentID == "" {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "agent_id required"})
+			return
+		}
+		if !ingestRL.allow(req.AgentID) {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded for agent"})
+			return
+		}
+		agentID := req.AgentID
+		messageType := req.MessageType
+		if messageType == "" {
+			messageType = "ExternalEvent"
+		}
+		payload := req.Payload
+		if payload == nil {
+			payload = []byte("{}")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		_, err := agentClient.SendMessage(ctx, &kernel_pb.SendMessageRequest{
+			TargetActorId: agentID,
+			MessageType:   messageType,
+			Source:        "ingest",
+			Payload:       payload,
+		})
+		if err != nil {
+			slog.Error("ingest SendMessage failed", "agent_id", agentID, "err", err)
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}
+}
+
+// handleInternalSlackPost handles POST /internal/slack/post for proactive Slack messages. Auth: X-Slack-Internal-Secret.
+func handleInternalSlackPost(slackStore *slack.Store) http.HandlerFunc {
+	secret := os.Getenv("ASTRA_SLACK_INTERNAL_SECRET")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if secret != "" && r.Header.Get("X-Slack-Internal-Secret") != secret {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		var req struct {
+			OrgID     string `json:"org_id"`
+			ChannelID string `json:"channel_id,omitempty"`
+			Text      string `json:"text"`
+			ThreadTs  string `json:"thread_ts,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+			return
+		}
+		if req.OrgID == "" || req.Text == "" {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "org_id and text required"})
+			return
+		}
+		orgID, err := uuid.Parse(req.OrgID)
+		if err != nil {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid org_id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if err := slack.PostMessage(ctx, slackStore, &http.Client{}, orgID, req.ChannelID, req.Text, req.ThreadTs); err != nil {
+			slog.Error("internal slack post failed", "err", err)
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}
+}
+
+func handleSlackConfigGet(store *slack.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		out := map[string]string{
+			"signing_secret":       "",
+			"client_id":            "",
+			"client_secret":        "",
+			"oauth_redirect_url":   "",
+		}
+		for k := range out {
+			val, _ := store.GetConfig(ctx, k)
+			if val != "" && (k == "client_secret" || k == "signing_secret") {
+				val = "********"
+			}
+			out[k] = val
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+func handleSlackConfigPut(store *slack.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		keys := []string{slack.ConfigKeySigningSecret, slack.ConfigKeyClientID, slack.ConfigKeyClientSecret, slack.ConfigKeyOAuthRedirectURL}
+		for _, k := range keys {
+			if v, ok := body[k]; ok && v != "" {
+				if err := store.SetConfig(ctx, k, v); err != nil {
+					slog.Error("slack config set failed", "key", k, "err", err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}
+}
+
 func handleGetApprovalProxy(w http.ResponseWriter, r *http.Request, client *http.Client, accessControlAddr string) {
 	id := r.PathValue("id")
 	if strings.TrimSpace(id) == "" {
@@ -1314,10 +1759,23 @@ func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *h
 	})
 }
 
+// kernelCtxWithAuth returns a context with gRPC metadata from request headers so the kernel can scope by org/super-admin.
+func kernelCtxWithAuth(r *http.Request, ctx context.Context) context.Context {
+	md := metadata.New(map[string]string{})
+	if v := r.Header.Get("X-Org-Id"); v != "" {
+		md.Set("x-org-id", v)
+	}
+	if r.Header.Get("X-Is-Super-Admin") == "true" {
+		md.Set("x-is-super-admin", "true")
+	}
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
 func handleListAgents(w http.ResponseWriter, r *http.Request) {
 	// Route is registered as "GET /agents" so only GET reaches this handler.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	ctx = kernelCtxWithAuth(r, ctx)
 	resp, err := agentClient.QueryState(ctx, &kernel_pb.QueryStateRequest{EntityType: "agents"})
 	if err != nil {
 		slog.Error("QueryState agents failed", "err", err)
@@ -1455,39 +1913,124 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"actor_id": resp.ActorId})
 }
 
+var validVisibility = map[string]bool{"global": true, "public": true, "team": true, "private": true}
+
 func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	if agentID == "" {
-		http.Error(w, "agent id required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "agent id required")
 		return
 	}
 	var req struct {
-		SystemPrompt *string          `json:"system_prompt"`
-		Config       *json.RawMessage `json:"config"`
-		Status       *string          `json:"status"`
+		Name                     *string          `json:"name"`
+		SystemPrompt             *string          `json:"system_prompt"`
+		Config                   *json.RawMessage `json:"config"`
+		Status                   *string          `json:"status"`
+		Visibility               *string          `json:"visibility"`
+		ChatCapable              *bool            `json:"chat_capable"`
+		IngestSourceType         *string          `json:"ingest_source_type"`
+		IngestSourceConfig       *json.RawMessage `json:"ingest_source_config"`
+		SlackNotificationsEnabled *bool           `json:"slack_notifications_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
 	id, err := uuid.Parse(agentID)
 	if err != nil {
-		http.Error(w, "invalid agent id", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid agent id")
 		return
+	}
+	// Validate visibility when present (DB allows only global, public, team, private).
+	if req.Visibility != nil {
+		v := strings.TrimSpace(*req.Visibility)
+		if v == "" || !validVisibility[v] {
+			writeJSONError(w, http.StatusBadRequest, "invalid visibility: must be one of global, public, team, private")
+			return
+		}
+		*req.Visibility = v
+	}
+	// Any agent creator (org admin/member) can configure ingest/Slack for agents in their org; super admins can edit any agent.
+	isSuperAdmin := r.Header.Get("X-Is-Super-Admin") == "true"
+	orgIDStr := r.Header.Get("X-Org-Id")
+	if !isSuperAdmin && docStore != nil {
+		agentOrg, err := docStore.GetAgentOrg(r.Context(), id)
+		if err != nil {
+			slog.Error("GetAgentOrg failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "authorization check failed")
+			return
+		}
+		if agentOrg == nil {
+			writeJSONError(w, http.StatusForbidden, "only super admins can edit global agents")
+			return
+		}
+		if orgIDStr == "" || agentOrg.String() != orgIDStr {
+			writeJSONError(w, http.StatusForbidden, "you can only edit agents in your organization")
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if req.Name != nil {
+		if err := docStore.UpdateAgentName(ctx, id, *req.Name); err != nil {
+			slog.Error("UpdateAgentName failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "update name failed: "+err.Error())
+			return
+		}
+	}
+	if req.Visibility != nil || req.ChatCapable != nil {
+		vis, chat, oID, ownID, tID, err := docStore.GetAgentMeta(ctx, id)
+		if err != nil {
+			slog.Error("GetAgentMeta failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "authorization check failed")
+			return
+		}
+		if req.Visibility != nil {
+			vis = *req.Visibility
+		}
+		chatVal := chat
+		if req.ChatCapable != nil {
+			chatVal = *req.ChatCapable
+		}
+		if err := docStore.UpdateAgentMeta(ctx, id, vis, chatVal, oID, ownID, tID); err != nil {
+			slog.Error("UpdateAgentMeta failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "update visibility/chat failed: "+err.Error())
+			return
+		}
+	}
 	if req.Status != nil {
 		if err := docStore.UpdateAgentStatus(ctx, id, *req.Status); err != nil {
 			slog.Error("UpdateAgentStatus failed", "err", err)
-			http.Error(w, "update status failed: "+err.Error(), http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "update status failed: "+err.Error())
+			return
+		}
+	}
+	if req.IngestSourceType != nil {
+		sourceType := strings.TrimSpace(*req.IngestSourceType)
+		var cfg json.RawMessage
+		if req.IngestSourceConfig != nil {
+			cfg = *req.IngestSourceConfig
+		}
+		if err := docStore.UpdateAgentIngestSource(ctx, id, sourceType, cfg); err != nil {
+			slog.Error("UpdateAgentIngestSource failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "update ingest source failed: "+err.Error())
+			return
+		}
+	}
+	if req.SlackNotificationsEnabled != nil {
+		if err := docStore.UpdateAgentSlackNotifications(ctx, id, *req.SlackNotificationsEnabled); err != nil {
+			slog.Error("UpdateAgentSlackNotifications failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "update slack notifications failed: "+err.Error())
 			return
 		}
 	}
 	if err := docStore.UpdateProfile(ctx, id, req.SystemPrompt, req.Config); err != nil {
 		slog.Error("UpdateProfile failed", "err", err)
-		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "update failed: "+err.Error())
 		return
+	}
+	if req.SystemPrompt != nil {
+		docStore.SetAgentPromptCache(ctx, id, *req.SystemPrompt)
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -1526,6 +2069,21 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid agent id", http.StatusBadRequest)
 		return
 	}
+	// Org users may only view profiles of agents in their org or global agents.
+	isSuperAdmin := r.Header.Get("X-Is-Super-Admin") == "true"
+	orgIDStr := r.Header.Get("X-Org-Id")
+	if !isSuperAdmin && docStore != nil {
+		agentOrg, err := docStore.GetAgentOrg(r.Context(), id)
+		if err != nil {
+			slog.Error("GetAgentOrg failed", "err", err)
+			http.Error(w, "authorization check failed", http.StatusInternalServerError)
+			return
+		}
+		if agentOrg != nil && (orgIDStr == "" || agentOrg.String() != orgIDStr) {
+			http.Error(w, "agent not found", http.StatusNotFound)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	profile, err := docStore.GetProfile(ctx, id)
@@ -1539,12 +2097,25 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	out := map[string]interface{}{
 		"id":            profile.ID.String(),
 		"name":          profile.Name,
 		"system_prompt": profile.SystemPrompt,
 		"config":        profile.Config,
-	})
+		"visibility":    profile.Visibility,
+		"chat_capable":  profile.ChatCapable,
+		"slack_notifications_enabled": profile.SlackNotificationsEnabled,
+	}
+	if profile.ActorType != "" {
+		out["actor_type"] = profile.ActorType
+	}
+	if profile.IngestSourceType != "" {
+		out["ingest_source_type"] = profile.IngestSourceType
+	}
+	if len(profile.IngestSourceConfig) > 0 {
+		out["ingest_source_config"] = profile.IngestSourceConfig
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 func handleCreateDocument(w http.ResponseWriter, r *http.Request) {
@@ -1809,6 +2380,7 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 
 func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore *orgs.Store, identityStore *identity.Store, client *http.Client, database *sql.DB, auth *authMiddleware) {
 	identityAddr := strings.TrimSuffix(cfg.IdentityAddr, "/")
+	slackStore := slack.NewStore(database)
 
 	// --- Super-Admin Org Routes ---
 
@@ -2690,6 +3262,207 @@ func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore 
 		w.Header().Set(headerContentType, contentTypeJSON)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})))
+
+	// --- Slack OAuth (org connect) ---
+	mux.Handle("GET /org/api/slack/connect", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		clientID, _ := slackStore.GetConfig(ctx, slack.ConfigKeyClientID)
+		redirectURL, _ := slackStore.GetConfig(ctx, slack.ConfigKeyOAuthRedirectURL)
+		if clientID == "" || redirectURL == "" {
+			http.Error(w, "Slack app not configured; set Client ID and OAuth Redirect URL in Super-Admin Slack settings", http.StatusBadRequest)
+			return
+		}
+		scope := "chat:write,channels:history,groups:history,im:history,app_mentions:read,channels:read,groups:read,im:read,users:read"
+		authURL := "https://slack.com/oauth/v2/authorize?client_id=" + clientID + "&scope=" + url.QueryEscape(scope) + "&redirect_uri=" + url.QueryEscape(redirectURL) + "&state=" + orgID.String()
+		http.Redirect(w, r, authURL, http.StatusFound)
+	})))
+
+	mux.Handle("GET /org/api/slack/workspace", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		ws, err := slackStore.GetWorkspaceByOrgID(ctx, orgID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out := map[string]any{"connected": ws != nil}
+		if ws != nil {
+			out["slack_workspace_id"] = ws.SlackWorkspaceID
+			if ws.DefaultAgentID != nil {
+				out["default_agent_id"] = ws.DefaultAgentID.String()
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(out)
+	})))
+
+	mux.Handle("PATCH /org/api/slack/workspace", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			DefaultAgentID *string `json:"default_agent_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if body.DefaultAgentID == nil || *body.DefaultAgentID == "" {
+			_, _ = database.ExecContext(ctx, `UPDATE slack_workspaces SET default_agent_id = NULL, updated_at = now() WHERE org_id = $1`, orgID)
+		} else {
+			agentID, err := uuid.Parse(*body.DefaultAgentID)
+			if err != nil {
+				http.Error(w, "invalid default_agent_id", http.StatusBadRequest)
+				return
+			}
+			if err := slackStore.UpdateWorkspaceDefaultAgent(ctx, orgID, agentID); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})))
+
+	// PUT /org/api/slack/workspace/tokens — manually set access + refresh token (e.g. from Slack App Configuration Tokens page)
+	mux.Handle("PUT /org/api/slack/workspace/tokens", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := extractOrgID(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			SlackWorkspaceID string `json:"slack_workspace_id"` // optional; if empty we get it from auth.test
+			AccessToken      string `json:"access_token"`
+			RefreshToken     string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if body.AccessToken == "" {
+			http.Error(w, "access_token required", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		workspaceID := body.SlackWorkspaceID
+		if workspaceID == "" {
+			// Resolve team_id from Slack auth.test (may not work for App Configuration Tokens)
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://slack.com/api/auth.test", nil)
+			req.Header.Set("Authorization", "Bearer "+body.AccessToken)
+			resp, err := client.Do(req)
+			if err != nil {
+				http.Error(w, "failed to validate token: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			defer resp.Body.Close()
+			var testResult struct {
+				OK    bool   `json:"ok"`
+				Team  string `json:"team_id"`
+				Error string `json:"error"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&testResult)
+			if !testResult.OK || testResult.Team == "" {
+				msg := "invalid token or could not get workspace id"
+				if testResult.Error != "" {
+					msg = "Slack auth.test: " + testResult.Error + " — try entering your Slack Workspace ID above (find it in Slack: Settings & administration → Workspace settings → Workspace ID, or in your Slack app URL)."
+				}
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
+			workspaceID = testResult.Team
+		}
+		if err := slackStore.UpsertWorkspace(ctx, orgID, workspaceID, body.AccessToken, body.RefreshToken, nil); err != nil {
+			slog.Error("slack UpsertWorkspace tokens failed", "err", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "slack_workspace_id": workspaceID})
+	})))
+
+	mux.HandleFunc("GET /org/api/slack/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+		if code == "" || state == "" {
+			http.Error(w, "missing code or state", http.StatusBadRequest)
+			return
+		}
+		orgID, err := uuid.Parse(state)
+		if err != nil {
+			http.Error(w, "invalid state", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		clientID, _ := slackStore.GetConfig(ctx, slack.ConfigKeyClientID)
+		clientSecret, _ := slackStore.GetConfig(ctx, slack.ConfigKeyClientSecret)
+		redirectURL, _ := slackStore.GetConfig(ctx, slack.ConfigKeyOAuthRedirectURL)
+		if clientID == "" || clientSecret == "" || redirectURL == "" {
+			http.Error(w, "Slack app not configured", http.StatusBadRequest)
+			return
+		}
+		form := url.Values{}
+		form.Set("client_id", clientID)
+		form.Set("client_secret", clientSecret)
+		form.Set("code", code)
+		form.Set("redirect_uri", redirectURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/oauth.v2.access", strings.NewReader(form.Encode()))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := client.Do(req)
+		if err != nil {
+			slog.Error("slack oauth exchange failed", "err", err)
+			http.Error(w, "OAuth exchange failed", http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+		var result struct {
+			OK           bool   `json:"ok"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			Team         struct {
+				ID string `json:"id"`
+			} `json:"team"`
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&result)
+		if !result.OK || result.AccessToken == "" {
+			slog.Error("slack oauth response error", "ok", result.OK, "error", result.Error)
+			http.Error(w, "Slack authorization failed: "+result.Error, http.StatusInternalServerError)
+			return
+		}
+		if err := slackStore.UpsertWorkspace(ctx, orgID, result.Team.ID, result.AccessToken, result.RefreshToken, nil); err != nil {
+			slog.Error("slack UpsertWorkspace failed", "err", err)
+			http.Error(w, "failed to save workspace link", http.StatusInternalServerError)
+			return
+		}
+		org, _ := orgStore.GetOrg(ctx, orgID)
+		redirectTo := "/"
+		if org != nil {
+			redirectTo = "/" + org.Slug + "/dashboard?slack=connected"
+		}
+		http.Redirect(w, r, redirectTo, http.StatusFound)
+	})
 }
 
 func proxyToIdentity(w http.ResponseWriter, r *http.Request, client *http.Client, identityAddr, method, path string) {
