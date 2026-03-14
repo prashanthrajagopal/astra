@@ -185,6 +185,12 @@ func resolveModel(modelHint string) string {
 	case "claude", "anthropic":
 		return "anthropic/claude-3-5-sonnet-latest"
 	case "gemini", "google":
+		if m := strings.TrimSpace(os.Getenv("GEMINI_MODEL")); m != "" {
+			if strings.Contains(m, "/") {
+				return m
+			}
+			return "gemini/" + m
+		}
 		return "gemini/gemini-1.5-pro"
 	case "ollama":
 		return ModelLocal

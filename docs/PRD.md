@@ -63,6 +63,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 - **Agents:** Agent names are unique; migration 0015 de-duplicates by name and adds `UNIQUE(agents.name)`. Standalone script `scripts/dedup-agents-by-name.sql` for de-dup without constraint. Seed script is idempotent and resilient to gateway startup.
 - **Codegen:** Task result for `code_generate` includes `generated_files` (path + content) for dashboard display.
 - **Chat agents (design):** WebSocket-based chat agents with streaming, sessions, and optional tool/worker calls. Design: **docs/chat-agents-design.md**; implementation plan: **docs/chat-agents-implementation-plan.md**.
+- **Slack integration (design):** Connect Astra chat agents to Slack; one workspace → one org; slack-adapter service + Redis queue + worker; OAuth and Vault for tokens. Platform Slack app secrets (Signing Secret, Client ID, Client Secret, Redirect URL) configurable from super-admin UI (stored encrypted); env fallback. Design: **docs/slack-integration-design.md**.
 
 ---
 
@@ -1280,6 +1281,16 @@ ALTER TABLE agents ADD CONSTRAINT agents_valid_visibility
   CHECK (visibility IN ('global', 'public', 'team', 'private'));
 UPDATE agents SET visibility = 'global' WHERE org_id IS NULL;
 
+-- agents: per-agent external ingest and Slack (migration 0022)
+-- ingest_source_type: redis_pubsub | gcp_pubsub | websocket (NULL = none)
+-- ingest_source_config: JSONB for channel/project/subscription/url
+-- slack_notifications_enabled: allow agent to post to Slack when instructions say so
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS ingest_source_type TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS ingest_source_config JSONB;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS slack_notifications_enabled BOOLEAN NOT NULL DEFAULT false;
+-- slack_workspaces (migration 0021): notification_channel_id for default proactive post channel
+-- See migrations/0022_agent_ingest_and_slack.sql, migrations/0021_slack_notification_channel.sql
+
 -- goals
 ALTER TABLE goals ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
 ALTER TABLE goals ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
@@ -1646,6 +1657,12 @@ func (a *SimpleAgent) Reflect(ctx AgentContext, outcome Outcome) error {
 Agents that users connect to via **WebSocket** for real-time chat with **streaming** responses (e.g. token-by-token). Chat agents can invoke the same workers and tool runtime as goal-based agents. Design: **docs/chat-agents-design.md** (session model, protocol, auth, tool calls). Implementation plan: **docs/chat-agents-implementation-plan.md**.
 
 **WebSocket protocol:** JSON frames include `chunk`, `message_start`, `message_end`, `tool_call`, `tool_result`, `done`, `error`, `pong`, and `session`. Session model: each chat is a session (user + agent) with a message history; sessions are created via REST and upgraded to WebSocket at `/chat/ws`.
+
+## Slack integration (design)
+
+Users can interact with Astra chat agents from **Slack**. One Slack workspace is linked to one Astra organization via OAuth. **Slack app secrets** (Signing Secret, Client ID, Client Secret, OAuth Redirect URL) are configurable from the **super-admin UI** (stored encrypted in DB; env fallback). A dedicated **slack-adapter** service receives Slack Events API (and optional slash commands), verifies request signature, resolves org/agent/user from workspace and optional channel bindings, and enqueues work to a Redis stream for async processing. A worker consumes the stream, calls existing chat (and optionally goal) APIs with org-scoped identity, and posts replies back to Slack via the Slack API. Data: `slack_workspaces`, `slack_channel_bindings`, `slack_user_mappings`; bot tokens stored in Vault. Design: **docs/slack-integration-design.md**.
+
+**Proactive posting:** Astra supports **proactively posting** to Slack (e.g. “Plan pending approval”) without a prior user message. The api-gateway exposes **`POST /internal/slack/post`** (internal only; auth via header **`X-Slack-Internal-Secret`**). Body: `org_id` (required), optional `channel_id`, `text` (required), optional `thread_ts`. If `channel_id` is omitted, `slack_workspaces.notification_channel_id` is used when set. Token refresh on 401 is handled by `internal/slack`. Callers (e.g. goal-service, access-control) may call this endpoint to notify users in Slack; they need the gateway URL and internal secret in their environment.
 
 ---
 
@@ -2371,6 +2388,26 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 **Acceptance:** Organizations, teams, and users can be managed. Agents have tiered visibility (global/public/team/private) with collaborator support. Org data is strictly isolated. Super-admins see platform-wide metrics (redacted) and manage all users. Org-admins see 100% of their org's data. Private agents are invisible to non-collaborators. Approval routing goes to agent admins.
 
+## Phase 12 (future): Slack integration
+
+**Goal:** Connect Astra chat agents to Slack so users can interact with agents via Slack DMs and channels.
+
+**Dependencies:** Phase 10 (Chat), Phase 11 (Multi-tenancy). Requires internal or org-scoped chat append-message API callable by adapter/worker.
+
+| Order | Deliverable |
+|-------|-------------|
+| 1 | DB migration: `slack_workspaces`, `slack_channel_bindings`, `slack_user_mappings` (optional: `slack_sessions`). |
+| 2 | Internal/org-scoped chat append-message path callable with service or org-scoped auth (if not already). |
+| 3 | **slack-adapter** service: Slack Request URL handler; verify signing secret; resolve org/agent/user; enqueue to Redis stream `astra:slack:incoming`; respond 200 within 3s. |
+| 4 | Slack worker: consume stream; load bot token from Vault; create/resume session; call chat API; post reply to Slack; retries and rate limits. |
+| 5 | **Platform Slack secrets UI:** Super-admin dashboard form to enter and save Slack app Signing Secret, Client ID, Client Secret, OAuth Redirect URL (stored encrypted in DB; env fallback). |
+| 6 | OAuth flow: org dashboard "Connect Slack" → Slack OAuth (using platform config) → store workspace + bot token in Vault; insert/update `slack_workspaces`. |
+| 7 | Org settings: default agent for Slack; per-channel agent binding; Slack user → Astra user mapping. |
+| 8 | Optional: slash command (e.g. `/astra-goal`) → goal submit via goal-service. |
+| 9 | Internal API: **POST /internal/slack/post** for proactive Slack messages; optional **notification_channel_id** per workspace. |
+
+**Acceptance:** Org admin connects a Slack workspace to an org; users in that workspace can message the bot in DMs or channels and receive agent replies. Replies are posted asynchronously; adapter responds to Slack within 3s. Design: **docs/slack-integration-design.md**.
+
 ---
 
 # 27. Build Order & Dependency Graph
@@ -2427,6 +2464,7 @@ Layer 4 (entrypoints — depend on Layer 3):
   cmd/prompt-manager
   cmd/browser-worker
   cmd/goal-service
+  cmd/slack-adapter   (optional; depends on chat, org, Redis)
 ```
 
 ---

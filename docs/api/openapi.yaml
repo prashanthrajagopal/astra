@@ -120,6 +120,8 @@ servers:
 tags:
   - name: Gateway — Agents
     description: Agent lifecycle management (via API Gateway, JWT required)
+  - name: Gateway — Internal
+    description: Internal endpoints for adapters (ingest, Slack); auth via shared secrets in headers
   - name: Gateway — Agent Documents
     description: Attach rules, skills, and context docs to agents
   - name: Gateway — Goals
@@ -231,6 +233,10 @@ paths:
     patch:
       tags: [Gateway — Agents]
       summary: Update agent profile
+      description: |
+        Update agent name, system prompt, config, visibility, chat_capable,
+        ingest source (external event stream), and Slack notifications.
+        Only super-admins can edit global agents; org users can edit only agents in their org.
       security:
         - BearerAuth: []
       parameters:
@@ -241,12 +247,39 @@ paths:
             schema:
               type: object
               properties:
+                name:
+                  type: string
+                  description: Human-readable agent name
                 system_prompt:
                   type: string
+                  description: System instructions / persona
                 config:
+                  type: object
+                  description: Optional JSON for model preference or behavior
+                status:
                   type: string
+                  enum: [active, stopped]
+                visibility:
+                  type: string
+                  enum: [global, public, team, private]
+                chat_capable:
+                  type: boolean
+                  description: Allow users to chat with this agent in the dashboard
+                ingest_source_type:
+                  type: string
+                  enum: [redis_pubsub, gcp_pubsub, websocket]
+                  description: External event stream type (empty = none)
+                ingest_source_config:
+                  type: object
+                  description: JSON config for the selected data source (e.g. channel, project/subscription, url)
+                slack_notifications_enabled:
+                  type: boolean
+                  description: Allow this agent to post to Slack when instructions say so
             example:
               system_prompt: "You are a principal architect. You design systems but never write code."
+              visibility: private
+              chat_capable: true
+              slack_notifications_enabled: false
       responses:
         '200':
           description: Updated
@@ -255,9 +288,11 @@ paths:
               example:
                 status: ok
         '400':
-          description: Invalid agent id or body
+          description: Invalid agent id, body, or visibility
         '401':
           description: Missing or invalid JWT
+        '403':
+          description: Not allowed to edit this agent (e.g. org user editing global agent)
         '404':
           description: Agent not found
 
@@ -265,6 +300,10 @@ paths:
     get:
       tags: [Gateway — Agents]
       summary: Get agent profile
+      description: |
+        Returns full profile including name, actor_type, system_prompt, config,
+        visibility, chat_capable, ingest_source_*, and slack_notifications_enabled.
+        Org users may only load profiles for agents in their org or global agents.
       security:
         - BearerAuth: []
       parameters:
@@ -274,17 +313,124 @@ paths:
           description: Agent profile
           content:
             application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  actor_type: { type: string, description: Internal type (read-only) }
+                  system_prompt: { type: string }
+                  config: { type: object }
+                  visibility: { type: string, enum: [global, public, team, private] }
+                  chat_capable: { type: boolean }
+                  ingest_source_type: { type: string }
+                  ingest_source_config: { type: object }
+                  slack_notifications_enabled: { type: boolean }
               example:
                 id: "a3ed7085-1b3d-4818-90fa-b54616a45721"
                 name: E-Commerce Builder
+                actor_type: ecommerce-builder
                 system_prompt: "You are a senior full-stack developer..."
-                config: '{"model_preference":"code"}'
+                config: {"model_preference":"code"}
+                visibility: private
+                chat_capable: true
+                ingest_source_type: ""
+                slack_notifications_enabled: false
         '400':
           description: Invalid agent id
         '401':
           description: Missing or invalid JWT
         '404':
           description: Agent not found
+
+  # ═══════════════════════════════════════════════════════════════════
+  # API GATEWAY — INTERNAL (adapters; X-Ingest-Secret / X-Slack-Internal-Secret)
+  # ═══════════════════════════════════════════════════════════════════
+
+  /internal/ingest/event:
+    post:
+      tags: [Gateway — Internal]
+      summary: Ingest external event into an agent
+      description: |
+        Called by adapters (GCP Pub/Sub, Redis, WebSocket) to push events to an agent.
+        Requires header X-Ingest-Secret matching ASTRA_INGEST_SECRET (empty = disabled).
+        Rate-limited per agent (default 100/min; ASTRA_INGEST_RATE_LIMIT).
+      security:
+        - IngestSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id: { type: string, format: uuid }
+                message_type: { type: string, default: ExternalEvent }
+                payload: { type: object }
+      responses:
+        '200': { description: Event accepted }
+        '400': { description: Invalid JSON or missing agent_id }
+        '401': { description: Missing or invalid X-Ingest-Secret }
+        '429': { description: Rate limit exceeded for agent }
+
+  /internal/ingest/bindings:
+    get:
+      tags: [Gateway — Internal]
+      summary: List agent ingest bindings
+      description: |
+        Returns agents that have an ingest source configured (for adapters to subscribe).
+        Requires header X-Ingest-Secret matching ASTRA_INGEST_SECRET.
+      security:
+        - IngestSecret: []
+      responses:
+        '200':
+          description: List of agent_id, ingest_source_type, ingest_source_config
+
+  /internal/slack/post:
+    post:
+      tags: [Gateway — Internal]
+      summary: Post message to Slack (proactive)
+      description: |
+        Used by workers/adapters to post to Slack. Requires X-Slack-Internal-Secret.
+      security:
+        - SlackInternalSecret: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                org_id: { type: string }
+                channel_id: { type: string }
+                text: { type: string }
+      responses:
+        '200': { description: Posted }
+        '401': { description: Missing or invalid X-Slack-Internal-Secret }
+
+  /internal/slack/chat/message:
+    post:
+      tags: [Gateway — Internal]
+      summary: Internal Slack chat message (worker)
+      description: |
+        Used by Slack adapter to deliver user messages. Requires X-Slack-Internal-Secret.
+      security:
+        - SlackInternalSecret: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org_id, agent_id, user_id, text]
+              properties:
+                org_id: { type: string }
+                agent_id: { type: string }
+                user_id: { type: string }
+                session_id: { type: string }
+                text: { type: string }
+      responses:
+        '200': { description: Accepted }
+        '401': { description: Missing or invalid X-Slack-Internal-Secret }
 
   # ═══════════════════════════════════════════════════════════════════
   # API GATEWAY — AGENT DOCUMENTS
@@ -1175,6 +1321,16 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: "JWT from POST /tokens on the Identity service"
+    IngestSecret:
+      type: apiKey
+      in: header
+      name: X-Ingest-Secret
+      description: Set to ASTRA_INGEST_SECRET (empty = check disabled)
+    SlackInternalSecret:
+      type: apiKey
+      in: header
+      name: X-Slack-Internal-Secret
+      description: Set to ASTRA_SLACK_INTERNAL_SECRET (empty = check disabled)
 
   parameters:
     AgentId:

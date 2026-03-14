@@ -134,6 +134,10 @@ func evaluatePolicy(req checkReq) checkResp {
 	if resource == "/health" || resource == "health" || action == "health" {
 		return checkResp{Allowed: true}
 	}
+	// Super-admin API routes may only be accessed by super-admins.
+	if strings.HasPrefix(resource, "/superadmin/") && !req.IsSuperAdmin {
+		return checkResp{Allowed: false, Reason: "super-admin access required"}
+	}
 
 	if req.IsSuperAdmin {
 		if isExecutionDetailResource(resource) {
