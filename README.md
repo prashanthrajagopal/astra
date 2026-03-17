@@ -31,6 +31,16 @@ The deploy script:
 - Logs: `logs/*.log`; PIDs: `logs/*.pid`
 - Stop: `for f in logs/*.pid; do kill $(cat $f) 2>/dev/null; done`
 
+### GCP (GKE Autopilot)
+
+```bash
+cp scripts/.env.gcp.example .env.gcp   # edit GCP_PROJECT, POSTGRES_PASSWORD, etc.
+./scripts/gcp-deploy.sh --setup --dev  # first time: Artifact Registry, GKE, Cloud SQL, Redis, Memcached, GCS bucket
+./scripts/gcp-deploy.sh --dev          # later: build, push, migrate, helm deploy
+```
+
+**Object storage on GCP:** use **Google Cloud Storage** (bucket `gs://${GCP_PROJECT}-astra-workspace` created on `--setup`). Do not run MinIO in GCP; local dev may still use MinIO via `docker compose`. Wire pods to GCS with Workload Identity when services need bucket access.
+
 ### Seed agents
 
 ```bash
@@ -415,7 +425,7 @@ psql "$DATABASE_URL" -f migrations/0019_slack_integration.sql
 psql "$DATABASE_URL" -f migrations/0020_slack_refresh_token.sql
 ```
 
-(If you use `./scripts/deploy.sh`, migrations are applied automatically; the above is for manual runs.)
+(If you use `./scripts/deploy.sh` locally, migrations run there. For GCP, `./scripts/gcp-deploy.sh` runs migrations against Cloud SQL.)
 
 ### 2. Get Slack app credentials
 
@@ -621,7 +631,7 @@ Use **`PATCH /agents/{id}`** with a JWT in `Authorization: Bearer <token>`. Set 
 | `pkg/` | Shared packages (db, config, logger, metrics, grpc, models, otel) |
 | `proto/` | Protobuf/gRPC definitions; generated Go in `proto/kernel/`, `proto/tasks/` |
 | `migrations/` | Idempotent SQL migrations (0001–0018; includes approval plan type, agents unique name, chat, agent actor_type, multi-tenant) |
-| `scripts/` | `deploy.sh`, `proto-generate.sh`, `create-python-expert-agent.sh`, `seed-agents.sh`, `dedup-agents-by-name.sql` |
+| `scripts/` | `deploy.sh` (local), `gcp-deploy.sh` (GKE + GCS workspace bucket), `proto-generate.sh`, `create-python-expert-agent.sh`, `seed-agents.sh`, `dedup-agents-by-name.sql` |
 | `deployments/` | Helm charts and K8s manifests |
 | `docs/` | PRD, design docs (approval-system, chat-agents), phase history, runbooks |
 
