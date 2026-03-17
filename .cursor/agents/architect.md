@@ -15,6 +15,8 @@ You are the **Principal Architect** for the Astra Autonomous Agent OS.
 | Database schema, migrations, pgvector | `.cursor/skills/db-schema-reference/SKILL.md` |
 | Kernel internals reference | `.cursor/skills/kernel-reference/SKILL.md` |
 | Redis Streams patterns | `.cursor/skills/messaging-reference/SKILL.md` |
+| Super-admin dashboard UI (pastel dual-theme, contrast) | `.cursor/agents/ui-ux-expert.md` |
+| Local vs GCP deploy | `.cursor/skills/devops-deployment/SKILL.md` |
 
 ## Reports to
 
@@ -58,8 +60,10 @@ You are the **Principal Architect** for the Astra Autonomous Agent OS.
 
 ## Key files you read
 
-- `docs/PRD.md` — The complete PRD
+- `docs/PRD.md` — The complete PRD (includes dashboard UI spec, GCP deployment)
 - `/migrations/*.sql` — DB Architect owns, you review
+- **Dashboard:** `cmd/api-gateway/dashboard/` — single-tenant super-admin; UI-UX Expert owns visual/contrast rules
+- **GCP:** `scripts/gcp-deploy.sh`, GCS workspace bucket (no MinIO on GCP path per PRD)
 
 ## Astra Architecture Principles
 

@@ -707,6 +707,18 @@ The following REST endpoints are added to the `api-gateway` for agent profile an
 
 The platform dashboard is served at `/superadmin/dashboard/`. Dashboard-specific APIs live under `/superadmin/api/dashboard/` and `/superadmin/api/slack/` (snapshot, approvals, goals, tasks, agents, chat sessions, Slack config). Multi-tenant (organizations, teams, org-level APIs) has been removed; the platform is single-tenant.
 
+### Super-admin dashboard UI (implementation spec)
+
+| Area | Requirement |
+|------|-------------|
+| **Assets** | Static files under `cmd/api-gateway/dashboard/` (`index.html`, `static/style.css`, `static/app.js`). Served by api-gateway at `/superadmin/dashboard/`. |
+| **Shell** | Redesign layout (`body.dashboard-redesign`): glass-style topnav; logo with pastel lavender gradient on “Astra”; nav tabs **Overview** and **Slack**; **light/dark theme** toggle (persisted in `localStorage`, `data-theme` on `<html>`); Refresh; API Docs link. |
+| **Visual language** | **Pastel** palette in both themes (lavender accent, mint/sky/butter/rose/peach for status and charts). Soft ambient gradients; avoid harsh saturated primaries. |
+| **Light theme — readability** | Stat values and table content must meet readable contrast: dark numerals on stat cards; table body and mono cells legible; status pills with dark text on tinted backgrounds; agent action controls visible; cost column (`.cell-green`) dark green on white. Logs may retain dark terminal styling. |
+| **Charts** | Chart.js; colors align with pastel tokens; legend and axis colors **follow active theme** (toggle must refresh chart styling). |
+| **Features** | Stats grid; charts (tasks, goals, service health, agents); agents table with pagination and row actions; goals, tasks, workers, approvals, cost, logs; Slack app configuration tab; modals (agent create/edit, approvals); optional chat widget for chat-capable agents. |
+| **Stack** | Vanilla HTML/CSS/JS for this surface (not React/MUI). Fonts: **Inter**, **Roboto Mono**. |
+
 ---
 
 # 10. Protobuf & gRPC Contracts
@@ -1811,7 +1823,7 @@ All org members see: agents they can access (filtered by visibility), recent goa
 | `control-plane` | api-gateway, identity, access-control |
 | `kernel` | scheduler-service, task-service, agent-service, goal-service |
 | `workers` | execution-worker, browser-worker, tool-runtime, worker-manager, llm-router, prompt-manager, evaluation-service |
-| `infrastructure` | postgres (primary + replicas), redis (cluster), memcached (clustered), minio |
+| `infrastructure` | postgres (primary + replicas), redis (cluster), memcached (clustered); **local:** minio optional; **GCP:** Cloud Storage bucket (no MinIO) |
 | `observability` | prometheus, grafana, opentelemetry-collector, loki |
 
 ## Scaling Model
@@ -1850,6 +1862,18 @@ redis:
 memcached:
   addr: memcached.infrastructure:11211
 ```
+
+## GCP deployment (managed services)
+
+| Item | Detail |
+|------|--------|
+| **Entry script** | `scripts/gcp-deploy.sh` (repo root). **Not** `scripts/deploy.sh` (local only). |
+| **Configuration** | Optional `.env.gcp`; template `scripts/.env.gcp.example` (`GCP_PROJECT`, `GCP_REGION`, `GCP_CLUSTER`, `POSTGRES_PASSWORD`, optional `GCS_WORKSPACE_BUCKET`). |
+| **Flags** | `--setup` — first-time provision; `--dev` / `--prod` — tier (`values-gke-dev.yaml` vs `values-gke-prod.yaml`); `--build-only` — images only; `--deploy-only` — migrate + Helm without rebuild. |
+| **Provisioned resources** | GKE Autopilot; Cloud SQL (PostgreSQL 15); Memorystore for Redis; Memorystore for Memcached; Artifact Registry; **Google Cloud Storage** bucket `gs://${GCP_PROJECT}-astra-workspace` (override via `GCS_WORKSPACE_BUCKET`). |
+| **Object storage policy** | On the GCP deploy path, **workspace/artifact storage is GCS**. MinIO is for local/docker-compose only; do not rely on MinIO in production GCP. |
+| **Application deploy** | Per-service `helm upgrade --install astra-<service>` using chart `deployments/helm/astra` with `--set service.name=<service>` and images from Artifact Registry. |
+| **Documentation** | `README.md` (GCP section), `deployments/helm/astra/README.md`, `docs/deployment-design.md`. |
 
 ## Platform & Hardware Acceleration
 

@@ -1,5 +1,7 @@
 # Astra Helm Chart
 
+Deploy to GKE with [`scripts/gcp-deploy.sh`](../../scripts/gcp-deploy.sh) (build/push images, migrate, `helm upgrade --install` per service). **GCP object storage:** use Cloud Storage (`gs://$GCP_PROJECT-astra-workspace`); MinIO is for local compose only.
+
 Phase 5 hardening includes:
 
 - Resource requests/limits via `values.yaml`

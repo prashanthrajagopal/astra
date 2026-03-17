@@ -1,74 +1,77 @@
 # DevOps Deployment Skill
 
-Use this skill when performing **local** or **cloud** deployment for Astra. Only the DevOps agent runs deployments.
+Use when performing **local** or **GCP** deployment for Astra. **Only the DevOps agent** runs these scripts.
 
 ---
 
 ## Local deployment
 
-### Entry point
+| Item | Detail |
+|------|--------|
+| **Script** | `scripts/deploy.sh` (repo root) |
+| **Example** | `./scripts/deploy.sh` |
+| **Env** | `.env` (from `.env.example` if missing) |
 
-- **Single script:** `scripts/deploy.sh`
-- **Run from:** Repo root. Example: `./scripts/deploy.sh`
-- **Who runs it:** Only the DevOps agent (or the user, if they run it themselves). No other agent may run it.
+### Behavior (order)
 
-### What the script does (in order)
+1. **Postgres / Redis / Memcached** — Native-first (detect via `pg_isready`, `redis-cli ping`, TCP). Start **only missing** services with `docker compose` (`postgres`, `redis`, `memcached`). No MinIO required for core local run unless features need it (`docker compose` includes optional MinIO).
+2. **Migrations** — All `migrations/*.sql` in order (`ON_ERROR_STOP`).
+3. **Build** — `go build` all platform binaries into `bin/` (api-gateway, identity, access-control, task-service, agent-service, scheduler-service, execution-worker, worker-manager, tool-runtime, browser-worker, memory-service, llm-router, prompt-manager, planner-service, goal-service, evaluation-service, cost-tracker).
+4. **Start** — Background processes, logs in `logs/*.log`, PIDs in `logs/*.pid`.
+5. **Seed** — Super-admin user (idempotent), then `scripts/seed-agents.sh` when gateway is up.
 
-1. **Load env** — Sources `.env` if present; uses `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `PGPASSWORD` (or `POSTGRES_PASSWORD`), `REDIS_ADDR`, `MEMCACHED_ADDR`.
-2. **Detect infra (native-first)**  
-   - **Postgres:** `pg_isready` or TCP to `POSTGRES_HOST:POSTGRES_PORT`. If available → use native. If not → `docker compose up -d postgres`, wait until ready.  
-   - **Redis:** `redis-cli ping` or TCP to Redis host:port. If available → native. If not → `docker compose up -d redis`, wait.  
-   - **Memcached:** TCP to host:11211. If available → native. If not → `docker compose up -d memcached`, wait.
-3. **Migrations** — If Postgres is Docker: run each `migrations/*.sql` via `docker compose exec -T postgres psql ...`. If Postgres is native: run with host `psql` (script requires `psql` in PATH when using native Postgres).
-4. **Build** — `go mod tidy`, then `go build -o bin/api-gateway ./cmd/api-gateway`, `go build -o bin/scheduler-service ./cmd/scheduler-service`. Requires Go in PATH.
-5. **Start** — Run `bin/api-gateway` and `bin/scheduler-service` in background with `.env` loaded; stdout/stderr to `logs/api-gateway.log`, `logs/scheduler-service.log`; PIDs to `logs/*.pid`.
-6. **Summary** — Print for each of Postgres, Redis, Memcached whether **native** or **Docker**; log paths; PIDs; how to stop (e.g. `kill $(cat logs/api-gateway.pid) $(cat logs/scheduler-service.pid)`).
+### Stop
 
-### When to use native vs Docker
+`for f in logs/*.pid; do kill $(cat $f) 2>/dev/null; done`
 
-- Use **native** when the service is already reachable at the configured host:port (e.g. user has Postgres/Redis/Memcached installed and running).
-- Use **Docker** only for services that are **not** available. Do not start all infra in Docker if some are already running.
-
-### Prerequisites
-
-- **Go** in PATH (for build).
-- **psql** in PATH if Postgres is native (for migrations).
-- **Docker** (and daemon running) only if any service is missing and will be started via Docker.
+**Full detail:** [`docs/deployment-design.md`](docs/deployment-design.md), [`README.md`](README.md) Quick Start.
 
 ---
 
-## Cloud deployment
+## GCP deployment (GKE + managed data)
 
-### Entry point
+| Item | Detail |
+|------|--------|
+| **Script** | `scripts/gcp-deploy.sh` (repo root) |
+| **Config** | Optional `.env.gcp` in repo root; template [`scripts/.env.gcp.example`](scripts/.env.gcp.example) |
+| **Docs** | [`README.md`](README.md) section “GCP (GKE Autopilot)”, [`deployments/helm/astra/README.md`](deployments/helm/astra/README.md) |
 
-- **Helm chart:** `deployments/helm/astra`
-- **Who runs it:** Only the DevOps agent.
+### Flags
 
-### Commands (runbook)
+| Flag | Purpose |
+|------|---------|
+| `--setup` | First-time: Artifact Registry, GKE Autopilot, Cloud SQL (Postgres 15), Memorystore Redis, Memorystore Memcached, **GCS bucket** for workspace objects |
+| `--dev` / `--prod` | Values tier: `values-gke-dev.yaml` vs `values-gke-prod.yaml` (SQL/Redis sizing) |
+| `--build-only` | Build + push images; skip Helm/migrations |
+| `--deploy-only` | Skip image build; migrate + Helm |
 
-- **Install or upgrade:**  
-  `helm upgrade --install astra ./deployments/helm/astra -f deployments/helm/astra/values.yaml -n <namespace> --create-namespace`
-- **Namespace:** Use PRD namespaces (e.g. `control-plane`, `kernel`, `workers`, `infrastructure`, `observability`) or a single namespace for a minimal cloud deploy.
-- **Values:** Use env-specific values files (e.g. `values-staging.yaml`, `values-production.yaml`) when they exist; override image tag, replicas, and secrets as needed.
-- **Secrets:** Never put connection strings or secrets in values; use Vault, external secrets, or k8s Secrets and reference them in the chart.
+Typical first run: `./scripts/gcp-deploy.sh --setup --dev`  
+Iterative: `./scripts/gcp-deploy.sh --dev`
 
-### Rollback
+### GCP stack (native managed)
 
-- `helm rollback astra <revision> -n <namespace>`
-- Identify revision with `helm history astra -n <namespace>`.
+- **Compute:** GKE Autopilot  
+- **DB:** Cloud SQL PostgreSQL  
+- **Cache / streams:** Memorystore Redis  
+- **LLM cache:** Memorystore Memcached  
+- **Images:** Artifact Registry  
+- **Object storage:** **Google Cloud Storage** — bucket `gs://${GCP_PROJECT}-astra-workspace` (override with `GCS_WORKSPACE_BUCKET` in `.env.gcp`). **Do not deploy MinIO on GCP** for this path; MinIO remains local/docker-compose only.
 
-### Staging vs production
+### Helm
 
-- **Staging:** Deploy with staging values; run integration/smoke tests after deploy.
-- **Production:** Use production values and namespace; canary or phased rollout per PRD; monitor before full rollout.
+Script runs **per-service** `helm upgrade --install astra-<service> deployments/helm/astra` with `--set service.name=...` and image from Artifact Registry. Not a single umbrella release name `astra`.
+
+### Secrets
+
+Production: prefer **Secret Manager** + Workload Identity; do not commit DB passwords. Values files in repo may contain placeholders for dev tiers only.
 
 ---
 
 ## Summary
 
-| Environment | Action | Entry |
-|-------------|--------|--------|
-| Local (dev) | Run single script | `./scripts/deploy.sh` (from repo root) |
-| Cloud (K8s) | Helm upgrade/install | `helm upgrade --install astra ./deployments/helm/astra ...` |
+| Environment | Entry |
+|-------------|--------|
+| Local | `./scripts/deploy.sh` |
+| GCP | `./scripts/gcp-deploy.sh` |
 
-Only the **DevOps agent** performs these actions. Other agents delegate deployment requests to DevOps (or the user runs the script/Helm themselves).
+Other agents **delegate** deployment to DevOps (or user runs scripts themselves).

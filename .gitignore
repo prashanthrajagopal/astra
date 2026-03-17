@@ -21,6 +21,7 @@
 .env
 .env.*
 !.env.example
+!scripts/.env.gcp.example
 credentials.json
 
 coverage.out
