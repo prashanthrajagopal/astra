@@ -91,15 +91,15 @@ var goalChart = null;
 var serviceChart = null;
 var agentChart = null;
 
-/* M3 theme palette for Chart.js (aligned with style.css tokens) */
+/* Pastel palette for Chart.js (aligned with dashboard style.css) */
 var chartColors = {
-  created: '#8e9099',
-  pending: '#c8b8ff',
-  queued: '#a8c7fa',
+  created: '#a8a4b8',
+  pending: '#c4b5fd',
+  queued: '#a8d4ef',
   scheduled: '#9ecbf5',
-  running: '#e6c547',
-  completed: '#7dd87d',
-  failed: '#f2b8b5'
+  running: '#f5e6a8',
+  completed: '#9dd9c4',
+  failed: '#f0b8c8'
 };
 
 function renderTaskChart(tasks) {
@@ -107,7 +107,7 @@ function renderTaskChart(tasks) {
   if (!ctx) return;
   var labels = ['created', 'pending', 'queued', 'scheduled', 'running', 'completed', 'failed'];
   var values = labels.map(function (l) { return tasks[l] || 0; });
-  var colors = labels.map(function (l) { return chartColors[l] || '#8e9099'; });
+  var colors = labels.map(function (l) { return chartColors[l] || '#a8a4b8'; });
 
   if (taskChart) {
     taskChart.data.datasets[0].data = values;
@@ -124,7 +124,7 @@ function renderTaskChart(tasks) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { color: '#e6e1e5', font: { size: 11, family: 'Roboto, sans-serif' } } }
+        legend: { position: 'right', labels: { color: getChartTheme().legend, font: { size: 11, family: 'Roboto, sans-serif' } } }
       }
     }
   });
@@ -135,7 +135,7 @@ function renderGoalChart(goals) {
   if (!ctx) return;
   var labels = ['active', 'completed', 'failed', 'pending'];
   var values = labels.map(function (l) { return goals[l] || 0; });
-  var colors = ['#e6c547', '#7dd87d', '#f2b8b5', '#c8b8ff'];
+  var colors = ['#f5e6a8', '#9dd9c4', '#f0b8c8', '#c4b5fd'];
 
   if (goalChart) {
     goalChart.data.datasets[0].data = values;
@@ -152,8 +152,8 @@ function renderGoalChart(goals) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { ticks: { color: '#c4c6d0', font: { family: 'Roboto, sans-serif' } }, grid: { color: '#44474e' } },
-        y: { beginAtZero: true, ticks: { color: '#c4c6d0', stepSize: 1, font: { family: 'Roboto, sans-serif' } }, grid: { color: '#44474e' } }
+        x: { ticks: { color: getChartTheme().tick, font: { family: 'Roboto, sans-serif' } }, grid: { color: getChartTheme().grid } },
+        y: { beginAtZero: true, ticks: { color: getChartTheme().tick, stepSize: 1, font: { family: 'Roboto, sans-serif' } }, grid: { color: getChartTheme().grid } }
       },
       plugins: { legend: { display: false } }
     }
@@ -180,8 +180,8 @@ function renderServiceChart(services) {
     data: {
       labels: labels,
       datasets: [
-        { label: 'Healthy', data: healthy, backgroundColor: '#7dd87d', borderWidth: 0 },
-        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#f2b8b5', borderWidth: 0 }
+        { label: 'Healthy', data: healthy, backgroundColor: '#9dd9c4', borderWidth: 0 },
+        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#f0b8c8', borderWidth: 0 }
       ]
     },
     options: {
@@ -189,10 +189,10 @@ function renderServiceChart(services) {
       maintainAspectRatio: false,
       indexAxis: 'y',
       scales: {
-        x: { stacked: true, max: 1, ticks: { display: false }, grid: { color: '#44474e' } },
-        y: { stacked: true, ticks: { color: '#c4c6d0', font: { size: 10, family: 'Roboto, sans-serif' } }, grid: { display: false } }
+        x: { stacked: true, max: 1, ticks: { display: false }, grid: { color: getChartTheme().grid } },
+        y: { stacked: true, ticks: { color: getChartTheme().tick, font: { size: 10, family: 'Roboto, sans-serif' } }, grid: { display: false } }
       },
-      plugins: { legend: { labels: { color: '#e6e1e5', font: { size: 11, family: 'Roboto, sans-serif' } } } }
+      plugins: { legend: { labels: { color: getChartTheme().legend, font: { size: 11, family: 'Roboto, sans-serif' } } } }
     }
   });
 }
@@ -208,9 +208,9 @@ function renderAgentChart(agents) {
   });
   var labels = Object.keys(byStatus).length ? Object.keys(byStatus) : ['none'];
   var values = labels.map(function (l) { return byStatus[l] || 0; });
-  var colors = ['#7dd87d', '#e6c547', '#8e9099', '#c8b8ff', '#f2b8b5'];
+  var colors = ['#9dd9c4', '#f5e6a8', '#a8a4b8', '#c4b5fd', '#f0b8c8'];
   labels.forEach(function (_, i) {
-    if (!colors[i]) colors[i] = '#8e9099';
+    if (!colors[i]) colors[i] = '#a8a4b8';
   });
 
   if (agentChart) {
@@ -230,10 +230,48 @@ function renderAgentChart(agents) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { color: '#e6e1e5', font: { size: 11, family: 'Roboto, sans-serif' } } }
+        legend: { position: 'right', labels: { color: getChartTheme().legend, font: { size: 11, family: 'Roboto, sans-serif' } } }
       }
     }
   });
+}
+
+function getChartTheme() {
+  var light = document.documentElement.getAttribute('data-theme') === 'light';
+  return {
+    legend: light ? '#6b6580' : '#d8cef0',
+    tick: light ? '#7a7494' : '#c8bcd8',
+    grid: light ? 'rgba(120,110,150,0.12)' : 'rgba(180,160,220,0.14)'
+  };
+}
+
+function syncDashboardChartsTheme() {
+  var t = getChartTheme();
+  if (taskChart && taskChart.options && taskChart.options.plugins && taskChart.options.plugins.legend) {
+    taskChart.options.plugins.legend.labels.color = t.legend;
+    taskChart.update('none');
+  }
+  if (goalChart && goalChart.options && goalChart.options.scales) {
+    var x = goalChart.options.scales.x;
+    var y = goalChart.options.scales.y;
+    if (x && x.ticks) x.ticks.color = t.tick;
+    if (x && x.grid) x.grid.color = t.grid;
+    if (y && y.ticks) y.ticks.color = t.tick;
+    if (y && y.grid) y.grid.color = t.grid;
+    goalChart.update('none');
+  }
+  if (serviceChart && serviceChart.options && serviceChart.options.scales) {
+    var sx = serviceChart.options.scales.x;
+    var sy = serviceChart.options.scales.y;
+    if (sx && sx.grid) sx.grid.color = t.grid;
+    if (sy && sy.ticks) sy.ticks.color = t.tick;
+    if (serviceChart.options.plugins && serviceChart.options.plugins.legend) serviceChart.options.plugins.legend.labels.color = t.legend;
+    serviceChart.update('none');
+  }
+  if (agentChart && agentChart.options && agentChart.options.plugins && agentChart.options.plugins.legend) {
+    agentChart.options.plugins.legend.labels.color = t.legend;
+    agentChart.update('none');
+  }
 }
 
 // ─── Sidebar widgets ─────────────────────────────────────────────────
@@ -264,7 +302,7 @@ function renderHealthSummary(services) {
       labels: ['Healthy', 'Unhealthy'],
       datasets: [{
         data: [healthy, unhealthy],
-        backgroundColor: ['#7dd87d', '#f2b8b5'],
+        backgroundColor: ['#9dd9c4', '#f0b8c8'],
         borderWidth: 0
       }]
     },
@@ -488,7 +526,7 @@ function renderCost(cost) {
     var costCell = r.cost_dollars != null ? r.cost_dollars : '';
     tr.innerHTML = '<td class="mono">' + (r.day || '') + '</td><td style="color:var(--text-primary);font-weight:500">' + escapeHtml(r.agent_id || '') + '</td><td class="mono">' + (r.model || '') + '</td>' +
       '<td class="mono">' + (r.tokens_in != null ? Number(r.tokens_in).toLocaleString() : '') + '</td><td class="mono">' + (r.tokens_out != null ? Number(r.tokens_out).toLocaleString() : '') + '</td>' +
-      '<td class="mono" style="text-align:right;color:var(--green)">' + costCell + '</td>';
+      '<td class="mono cell-green" style="text-align:right">' + costCell + '</td>';
     tbody.appendChild(tr);
   });
 }
@@ -1128,6 +1166,7 @@ function applyDashboardTheme(theme) {
   var moonEl = document.querySelector('.theme-icon-moon');
   if (sunEl) sunEl.hidden = t === 'light';
   if (moonEl) moonEl.hidden = t !== 'light';
+  syncDashboardChartsTheme();
 }
 
 function toggleDashboardTheme() {
