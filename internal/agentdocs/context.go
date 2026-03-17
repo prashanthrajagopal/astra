@@ -74,6 +74,10 @@ func (s *Store) AssembleContext(ctx context.Context, agentID uuid.UUID, goalID *
 		return ac.ContextDocs[i].CreatedAt.Before(ac.ContextDocs[j].CreatedAt)
 	})
 
+	if revPayload, err := s.effectiveRevisionPayload(ctx, agentID); err == nil && len(revPayload) > 0 {
+		mergeRevisionIntoContext(ac, revPayload)
+	}
+
 	return ac, nil
 }
 

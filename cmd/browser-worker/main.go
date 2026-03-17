@@ -58,7 +58,7 @@ func main() {
 
 	slog.Info("browser worker started", "worker_id", w.ID, "hostname", hostname)
 
-	bus.Consume(ctx, "astra:tasks:browser", "browser-worker-group", w.ID.String(), func(msg redis.XMessage) error {
+	_ = bus.Consume(ctx, "astra:tasks:browser", "browser-worker-group", w.ID.String(), func(msg redis.XMessage) error {
 		taskIDVal, ok := msg.Values["task_id"]
 		if !ok {
 			slog.Warn("message missing task_id", "msg_id", msg.ID)

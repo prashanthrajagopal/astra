@@ -38,11 +38,12 @@ import (
 )
 
 var (
-	agentConn    *gogrpc.ClientConn
-	taskConn     *gogrpc.ClientConn
-	agentClient  kernel_pb.KernelServiceClient
-	taskClient   tasks_pb.TaskServiceClient
-	docStore     *agentdocs.Store
+	agentConn   *gogrpc.ClientConn
+	taskConn    *gogrpc.ClientConn
+	agentClient kernel_pb.KernelServiceClient
+	taskClient  tasks_pb.TaskServiceClient
+	docStore    *agentdocs.Store
+	gatewayDB   *sql.DB
 )
 
 const (
@@ -100,6 +101,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
+	gatewayDB = database
 	docStore = agentdocs.NewStore(database, rdb)
 	chatStore := chat.NewStore(database)
 	llmBackend := llm.NewEndpointBackendFromEnv()
@@ -130,15 +132,15 @@ func main() {
 			memoryStore = nil
 		}
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth)
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth, rdb)
 	mux.HandleFunc("GET /login", handleLoginPage)
 	mux.HandleFunc("POST /login", makeLoginProxyHandler(dashboardClient, cfg.IdentityAddr))
 	if cfg.ChatEnabled {
 		wsHandler := chat.NewWebSocketHandler(chatStore, database, llmBackend, &chat.HandlerConfig{
 			MaxMsgLength: cfg.ChatMaxMsgLength,
 			RateLimit:    cfg.ChatRateLimit,
-			TokenCap:    cfg.ChatTokenCap,
-			MemoryStore: memoryStore,
+			TokenCap:     cfg.ChatTokenCap,
+			MemoryStore:  memoryStore,
 		})
 		mux.HandleFunc("GET /chat/ws", wsHandler)
 	}
@@ -175,7 +177,6 @@ func initMemoryStore(db *sql.DB) (*memory.Store, error) {
 }
 
 type authMiddleware struct {
-
 	identityAddr      string
 	accessControlAddr string
 	client            *http.Client
@@ -258,7 +259,10 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			ApprovalRequired bool   `json:"approval_required"`
 			Reason           string `json:"reason"`
 		}
-		json.NewDecoder(checkResp.Body).Decode(&checkRes)
+		if err := json.NewDecoder(checkResp.Body).Decode(&checkRes); err != nil {
+			http.Error(w, "access control response invalid", http.StatusBadGateway)
+			return
+		}
 		if !checkRes.Allowed {
 			http.Error(w, "forbidden: "+checkRes.Reason, http.StatusForbidden)
 			return
@@ -288,7 +292,7 @@ func extractBearer(r *http.Request) string {
 
 func handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(loginPageHTML))
+	_, _ = w.Write([]byte(loginPageHTML))
 }
 
 func makeLoginProxyHandler(client *http.Client, identityAddr string) http.HandlerFunc {
@@ -310,7 +314,7 @@ func makeLoginProxyHandler(client *http.Client, identityAddr string) http.Handle
 		defer resp.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		_, _ = io.Copy(w, resp.Body)
 	}
 }
 
@@ -414,12 +418,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 </body>
 </html>`
 
-
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware, rdb *redis.Client) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -501,10 +504,10 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		w.Header().Set(headerContentType, contentTypeJSON)
 		if resp.StatusCode != http.StatusOK {
 			w.WriteHeader(resp.StatusCode)
-			io.Copy(w, resp.Body)
+			_, _ = io.Copy(w, resp.Body)
 			return
 		}
-		io.Copy(w, resp.Body)
+		_, _ = io.Copy(w, resp.Body)
 	})))
 	mux.Handle("POST /superadmin/api/dashboard/goals/{id}/cancel", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -587,6 +590,7 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		mux.Handle("POST /internal/ingest/event", handleInternalIngestEvent())
 	}
 	mux.Handle("GET /internal/ingest/bindings", handleInternalIngestBindings())
+	registerAgentPlatformRoutes(mux, auth, store, database, rdb)
 }
 
 func handleDashboardAgentStatus(w http.ResponseWriter, r *http.Request, store *agentdocs.Store) {
@@ -895,11 +899,11 @@ func handleInternalSlackChatMessage(chatStore *chat.Store, goalServiceAddr strin
 			return
 		}
 		var req struct {
-			OrgID      string `json:"org_id"`
-			AgentID    string `json:"agent_id"`
-			UserID     string `json:"user_id"`
-			SessionID  string `json:"session_id,omitempty"`
-			Message    string `json:"message"`
+			OrgID     string `json:"org_id"`
+			AgentID   string `json:"agent_id"`
+			UserID    string `json:"user_id"`
+			SessionID string `json:"session_id,omitempty"`
+			Message   string `json:"message"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
@@ -1164,10 +1168,10 @@ func handleSlackConfigGet(store *slack.Store) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		out := map[string]string{
-			"signing_secret":       "",
-			"client_id":            "",
-			"client_secret":        "",
-			"oauth_redirect_url":   "",
+			"signing_secret":     "",
+			"client_id":          "",
+			"client_secret":      "",
+			"oauth_redirect_url": "",
 		}
 		for k := range out {
 			val, _ := store.GetConfig(ctx, k)
@@ -1236,10 +1240,10 @@ func handleGetApprovalProxy(w http.ResponseWriter, r *http.Request, client *http
 	}
 	if resp.StatusCode >= 300 {
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		_, _ = io.Copy(w, resp.Body)
 		return
 	}
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *http.Client, accessControlAddr, action string) {
@@ -1318,10 +1322,10 @@ func handleListAgents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		agents = append(agents, map[string]interface{}{
-			"id":          row.ID,
-			"actor_type":  row.ActorType,
-			"name":        row.Name,
-			"status":      row.Status,
+			"id":         row.ID,
+			"actor_type": row.ActorType,
+			"name":       row.Name,
+			"status":     row.Status,
 		})
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
@@ -1381,14 +1385,14 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name                     *string          `json:"name"`
-		SystemPrompt             *string          `json:"system_prompt"`
-		Config                   *json.RawMessage `json:"config"`
-		Status                   *string          `json:"status"`
-		ChatCapable              *bool            `json:"chat_capable"`
-		IngestSourceType         *string          `json:"ingest_source_type"`
-		IngestSourceConfig       *json.RawMessage `json:"ingest_source_config"`
-		SlackNotificationsEnabled *bool           `json:"slack_notifications_enabled"`
+		Name                      *string          `json:"name"`
+		SystemPrompt              *string          `json:"system_prompt"`
+		Config                    *json.RawMessage `json:"config"`
+		Status                    *string          `json:"status"`
+		ChatCapable               *bool            `json:"chat_capable"`
+		IngestSourceType          *string          `json:"ingest_source_type"`
+		IngestSourceConfig        *json.RawMessage `json:"ingest_source_config"`
+		SlackNotificationsEnabled *bool            `json:"slack_notifications_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -1501,12 +1505,12 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	out := map[string]interface{}{
-		"id":                           profile.ID.String(),
-		"name":                         profile.Name,
-		"system_prompt":                profile.SystemPrompt,
-		"config":                       profile.Config,
-		"chat_capable":                 profile.ChatCapable,
-		"slack_notifications_enabled":  profile.SlackNotificationsEnabled,
+		"id":                          profile.ID.String(),
+		"name":                        profile.Name,
+		"system_prompt":               profile.SystemPrompt,
+		"config":                      profile.Config,
+		"chat_capable":                profile.ChatCapable,
+		"slack_notifications_enabled": profile.SlackNotificationsEnabled,
 	}
 	if profile.ActorType != "" {
 		out["actor_type"] = profile.ActorType
@@ -1516,6 +1520,26 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(profile.IngestSourceConfig) > 0 {
 		out["ingest_source_config"] = profile.IngestSourceConfig
+	}
+	if gatewayDB != nil {
+		var drain bool
+		var maxC, budget sql.NullInt64
+		var pri int
+		var allowed []byte
+		_ = gatewayDB.QueryRowContext(ctx,
+			`SELECT drain_mode, max_concurrent_goals, daily_token_budget, priority, allowed_tools FROM agents WHERE id = $1`, id).
+			Scan(&drain, &maxC, &budget, &pri, &allowed)
+		out["drain_mode"] = drain
+		if maxC.Valid {
+			out["max_concurrent_goals"] = maxC.Int64
+		}
+		if budget.Valid {
+			out["daily_token_budget"] = budget.Int64
+		}
+		out["priority"] = pri
+		if len(allowed) > 0 {
+			out["allowed_tools"] = json.RawMessage(allowed)
+		}
 	}
 	json.NewEncoder(w).Encode(out)
 }
@@ -1561,13 +1585,13 @@ func handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 		req.Priority = 100
 	}
 	doc := &agentdocs.Document{
-		AgentID:   agentUUID,
-		DocType:   dt,
-		Name:      req.Name,
-		Content:   req.Content,
-		URI:       req.URI,
-		Metadata:  req.Metadata,
-		Priority:  req.Priority,
+		AgentID:  agentUUID,
+		DocType:  dt,
+		Name:     req.Name,
+		Content:  req.Content,
+		URI:      req.URI,
+		Metadata: req.Metadata,
+		Priority: req.Priority,
 	}
 	if req.GoalID != nil {
 		g, err := uuid.Parse(*req.GoalID)
@@ -1712,7 +1736,10 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Result []byte `json:"result"`
 		}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		_, err := taskClient.CompleteTask(ctx, &tasks_pb.CompleteTaskRequest{
 			TaskId: taskID,
 			Result: req.Result,
@@ -1775,68 +1802,3 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 		"dependencies": resp.Dependencies,
 	})
 }
-
-
-func proxyToIdentity(w http.ResponseWriter, r *http.Request, client *http.Client, identityAddr, method, path string) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	var bodyReader io.Reader
-	if r.Body != nil && method != http.MethodGet {
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "failed to read request body", http.StatusBadRequest)
-			return
-		}
-		bodyReader = bytes.NewReader(data)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, identityAddr+path, bodyReader)
-	if err != nil {
-		http.Error(w, "request build failed", http.StatusInternalServerError)
-		return
-	}
-	if bodyReader != nil {
-		req.Header.Set(headerContentType, contentTypeJSON)
-	}
-	if method == http.MethodGet {
-		req.URL.RawQuery = r.URL.RawQuery
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		slog.Warn("identity proxy failed", "method", method, "path", path, "err", err)
-		http.Error(w, "identity service unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	w.Header().Set(headerContentType, contentTypeJSON)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-func proxyToIdentityWithBody(w http.ResponseWriter, client *http.Client, identityAddr, method, path string, body []byte, parentCtx context.Context) {
-	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, method, identityAddr+path, bytes.NewReader(body))
-	if err != nil {
-		http.Error(w, "request build failed", http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set(headerContentType, contentTypeJSON)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		slog.Warn("identity proxy failed", "method", method, "path", path, "err", err)
-		http.Error(w, "identity service unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	w.Header().Set(headerContentType, contentTypeJSON)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-

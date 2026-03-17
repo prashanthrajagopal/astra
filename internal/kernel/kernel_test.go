@@ -34,8 +34,8 @@ func TestKernel_SpawnAndSend(t *testing.T) {
 	defer func() { _ = k.Stop("actor-1") }()
 
 	msg := actors.Message{
-		ID:   uuid.New().String(),
-		Type: "test",
+		ID:     uuid.New().String(),
+		Type:   "test",
 		Source: "caller",
 		Target: "actor-1",
 	}

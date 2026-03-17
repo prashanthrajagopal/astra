@@ -133,7 +133,7 @@ func handleSlackEvents(signingSecret string, store *slack.Store, bus *messaging.
 
 		if envelope.Type == "url_verification" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"challenge": envelope.Challenge})
+			_ = json.NewEncoder(w).Encode(map[string]string{"challenge": envelope.Challenge})
 			return
 		}
 
@@ -201,15 +201,15 @@ func handleSlackEvents(signingSecret string, store *slack.Store, bus *messaging.
 		}
 
 		payload := map[string]interface{}{
-			"workspace_id":       evt.TeamID,
-			"channel_id":         evt.ChannelID,
-			"user_id":            evt.UserID,
-			"thread_ts":          evt.ThreadTs,
-			"text":               evt.Text,
-			"agent_id":           agentID.String(),
-			"astra_user_id":      userID,
-			"bot_token_ref":      workspace.BotTokenRef,
-			"refresh_token_ref":  workspace.RefreshTokenRef,
+			"workspace_id":      evt.TeamID,
+			"channel_id":        evt.ChannelID,
+			"user_id":           evt.UserID,
+			"thread_ts":         evt.ThreadTs,
+			"text":              evt.Text,
+			"agent_id":          agentID.String(),
+			"astra_user_id":     userID,
+			"bot_token_ref":     workspace.BotTokenRef,
+			"refresh_token_ref": workspace.RefreshTokenRef,
 		}
 		if sessionID != "" {
 			payload["session_id"] = sessionID

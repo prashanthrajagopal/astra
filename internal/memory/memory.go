@@ -76,7 +76,8 @@ func (s *Store) Search(ctx context.Context, agentID uuid.UUID, queryEmbedding []
 
 func (s *Store) searchByCreatedAt(ctx context.Context, agentID uuid.UUID, topK int) ([]Memory, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, agent_id, memory_type, content, embedding FROM memories WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2`,
+		`SELECT id, agent_id, memory_type, content, embedding FROM memories WHERE agent_id = $1
+		 AND (expires_at IS NULL OR expires_at > now()) ORDER BY created_at DESC LIMIT $2`,
 		agentID, topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory.Search: %w", err)
@@ -88,7 +89,8 @@ func (s *Store) searchByCreatedAt(ctx context.Context, agentID uuid.UUID, topK i
 func (s *Store) searchByVector(ctx context.Context, agentID uuid.UUID, queryEmbedding []float32, topK int) ([]Memory, error) {
 	vecStr := formatVector(queryEmbedding)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, agent_id, memory_type, content, embedding FROM memories WHERE agent_id = $1 AND embedding IS NOT NULL ORDER BY embedding <=> $2::vector LIMIT $3`,
+		`SELECT id, agent_id, memory_type, content, embedding FROM memories WHERE agent_id = $1 AND embedding IS NOT NULL
+		 AND (expires_at IS NULL OR expires_at > now()) ORDER BY embedding <=> $2::vector LIMIT $3`,
 		agentID, vecStr, topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory.Search: %w", err)

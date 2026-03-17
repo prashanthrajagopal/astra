@@ -35,7 +35,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("POST /evaluate", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -85,6 +85,6 @@ func main() {
 	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(shutdownCtx)
+	_ = srv.Shutdown(shutdownCtx)
 	slog.Info("evaluation service stopped")
 }

@@ -50,14 +50,14 @@ type AgentProfile struct {
 	ChatCapable               bool            `json:"chat_capable,omitempty"`
 	IngestSourceType          string          `json:"ingest_source_type,omitempty"`
 	IngestSourceConfig        json.RawMessage `json:"ingest_source_config,omitempty"`
-	SlackNotificationsEnabled bool           `json:"slack_notifications_enabled,omitempty"`
+	SlackNotificationsEnabled bool            `json:"slack_notifications_enabled,omitempty"`
 }
 
 // IngestBinding is returned by GetIngestBindings for adapters to know which agent listens to which source.
 type IngestBinding struct {
-	AgentID             uuid.UUID       `json:"agent_id"`
-	IngestSourceType    string          `json:"ingest_source_type"`
-	IngestSourceConfig  json.RawMessage `json:"ingest_source_config"`
+	AgentID            uuid.UUID       `json:"agent_id"`
+	IngestSourceType   string          `json:"ingest_source_type"`
+	IngestSourceConfig json.RawMessage `json:"ingest_source_config"`
 }
 
 type ListOptions struct {
@@ -227,7 +227,7 @@ func (s *Store) UpdateAgentSlackNotifications(ctx context.Context, agentID uuid.
 }
 
 func nullJSON(b json.RawMessage) interface{} {
-	if b == nil || len(b) == 0 {
+	if len(b) == 0 {
 		return nil
 	}
 	return b
@@ -374,7 +374,6 @@ func (s *Store) ListDocuments(ctx context.Context, agentID uuid.UUID, opts ListO
 	if opts.GoalID != nil {
 		query += fmt.Sprintf(" AND goal_id = $%d", argIdx)
 		args = append(args, *opts.GoalID)
-		argIdx++
 	}
 	query += " ORDER BY priority ASC, created_at ASC"
 

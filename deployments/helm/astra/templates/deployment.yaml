@@ -88,6 +88,18 @@ spec:
             {{- end }}
             - name: ASTRA_TLS_ENABLED
               value: {{ .Values.tls.enabled | default false | quote }}
+            {{- if .Values.gcsBucket }}
+            - name: GCS_BUCKET
+              value: {{ .Values.gcsBucket | quote }}
+            {{- end }}
+            {{- if .Values.artifactDir }}
+            - name: ARTIFACT_DIR
+              value: {{ .Values.artifactDir | quote }}
+            {{- end }}
+            {{- if .Values.llmMaxInflight }}
+            - name: ASTRA_LLM_MAX_INFLIGHT
+              value: {{ .Values.llmMaxInflight | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:

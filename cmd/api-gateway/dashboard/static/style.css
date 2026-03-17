@@ -4026,3 +4026,17 @@ html[data-theme="light"] .agent-create-panel .goal-modal-backdrop,
 html[data-theme="light"] .agent-create-panel .approval-modal-backdrop {
   background: rgba(0,0,0,0.25);
 }
+
+.llm-sat-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(230, 197, 71, 0.15);
+  border: 1px solid var(--md-ref-warning);
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.9rem;
+}
+.agent-rev-list { list-style: none; padding: 0; margin: 8px 0; max-height: 140px; overflow-y: auto; }
+.agent-rev-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); font-size: 0.85rem; }
+.agent-rev-list button { font-size: 0.75rem; padding: 4px 8px; }
+#agent-edit-tools-wrap label { display: block; margin: 4px 0; font-size: 0.85rem; }

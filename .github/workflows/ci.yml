@@ -15,8 +15,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
-          cache: dependency
+          go-version-file: go.mod
+          cache: true
 
       - name: Verify deps
         run: go mod download && go mod verify
@@ -24,10 +24,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Prebuilt golangci-lint binaries lag Go; go.mod is 1.25 — compile linter with same toolchain
       - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          install-mode: goinstall
 
       - name: Test
         run: go test ./... -count=1

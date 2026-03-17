@@ -1293,6 +1293,61 @@ paths:
                     tokens_out: 4500
                     cost_dollars: 0.0
 
+  /superadmin/api/dashboard/agents/{id}/revisions:
+    get:
+      tags: [Gateway — Superadmin]
+      summary: List agent config revisions
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+    post:
+      tags: [Gateway — Superadmin]
+      summary: Create config revision (body payload JSON)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+  /superadmin/api/dashboard/agents/{id}/revisions/{rev}/activate:
+    post:
+      tags: [Gateway — Superadmin]
+      summary: Activate a revision for planning context
+      security: [{ BearerAuth: [] }]
+  /superadmin/api/dashboard/agents/{id}/platform:
+    patch:
+      tags: [Gateway — Superadmin]
+      summary: Update drain_mode, quotas, priority, allowed_tools
+      security: [{ BearerAuth: [] }]
+  /superadmin/api/dashboard/tools:
+    get:
+      tags: [Gateway — Superadmin]
+      summary: Tool catalog (registry)
+      security: [{ BearerAuth: [] }]
+  /superadmin/api/dashboard/agents/{id}/events:
+    get:
+      tags: [Gateway — Superadmin]
+      summary: Agent-scoped events
+      security: [{ BearerAuth: [] }]
+  /superadmin/api/dashboard/audit.ndjson:
+    get:
+      tags: [Gateway — Superadmin]
+      summary: Audit export NDJSON (PII warning)
+      security: [{ BearerAuth: [] }]
+  /superadmin/api/dashboard/agents/{id}/forget:
+    post:
+      tags: [Gateway — Superadmin]
+      summary: Delete agent memories and chat (GDPR-style)
+      security: [{ BearerAuth: [] }]
+  /superadmin/api/dashboard/llm-saturation:
+    get:
+      tags: [Gateway — Superadmin]
+      summary: LLM inflight vs cap (banner signal)
+      security: [{ BearerAuth: [] }]
+
   # ═══════════════════════════════════════════════════════════════════
   # HEALTH CHECKS (all services)
   # ═══════════════════════════════════════════════════════════════════

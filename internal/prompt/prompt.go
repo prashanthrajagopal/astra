@@ -11,13 +11,13 @@ import (
 
 // Prompt is a stored prompt template.
 type Prompt struct {
-	ID               uuid.UUID
-	Name             string
-	Version          string
-	Body             string
-	VariablesSchema  []byte // JSON
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID              uuid.UUID
+	Name            string
+	Version         string
+	Body            string
+	VariablesSchema []byte // JSON
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // Store persists and retrieves prompts.

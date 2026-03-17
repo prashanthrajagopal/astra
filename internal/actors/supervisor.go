@@ -69,6 +69,6 @@ func (s *Supervisor) StopAll() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, a := range s.children {
-		a.Stop()
+		_ = a.Stop()
 	}
 }

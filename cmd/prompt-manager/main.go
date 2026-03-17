@@ -64,7 +64,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // handlePromptsPath serves GET /prompts/:name/:version (cache-aside).
@@ -88,7 +88,7 @@ func (s *server) handlePromptsPath(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			w.Header().Set(headerContentType, contentTypeJSON)
 			w.WriteHeader(http.StatusOK)
-			w.Write(item.Value)
+			_, _ = w.Write(item.Value)
 			return
 		}
 		if err != memcache.ErrCacheMiss {
@@ -120,7 +120,7 @@ func (s *server) handlePromptsPath(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
-	w.Write(body)
+	_, _ = w.Write(body)
 }
 
 // handlePromptsPost serves POST /prompts (write-through: DB then cache).

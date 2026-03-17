@@ -46,6 +46,12 @@ var (
 		Help: "Total LLM cost in dollars by agent and model",
 	}, []string{"agent_id", "model"})
 
+	LLMCompletionSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "astra_llm_completion_seconds",
+		Help:    "LLM completion latency",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"agent_id", "model"})
+
 	WorkerHeartbeatTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "astra_worker_heartbeat_total",
 		Help: "Total worker heartbeats published",
@@ -67,6 +73,7 @@ func Register() {
 		LLMTokenUsageTotal,
 		LLMCostDollars,
 		LLMCostByAgentModel,
+		LLMCompletionSeconds,
 		WorkerHeartbeatTotal,
 		EventsProcessedTotal,
 	)
