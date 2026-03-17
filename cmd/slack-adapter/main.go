@@ -179,7 +179,7 @@ func handleSlackEvents(signingSecret string, store *slack.Store, bus *messaging.
 
 		agentID := workspace.DefaultAgentID
 		if agentID == nil {
-			chAgent, _ := store.GetChannelBinding(ctx, workspace.OrgID, evt.ChannelID)
+			chAgent, _ := store.GetChannelBinding(ctx, evt.ChannelID)
 			if chAgent != nil {
 				agentID = chAgent
 			}
@@ -191,7 +191,7 @@ func handleSlackEvents(signingSecret string, store *slack.Store, bus *messaging.
 		}
 
 		userID := "slack:" + evt.UserID
-		if astraUser, _ := store.GetUserMapping(ctx, workspace.OrgID, evt.UserID); astraUser != nil {
+		if astraUser, _ := store.GetUserMapping(ctx, evt.UserID); astraUser != nil {
 			userID = astraUser.String()
 		}
 
@@ -201,16 +201,15 @@ func handleSlackEvents(signingSecret string, store *slack.Store, bus *messaging.
 		}
 
 		payload := map[string]interface{}{
-			"workspace_id":     evt.TeamID,
-			"channel_id":      evt.ChannelID,
-			"user_id":         evt.UserID,
-			"thread_ts":       evt.ThreadTs,
-			"text":            evt.Text,
-			"org_id":          workspace.OrgID.String(),
-			"agent_id":        agentID.String(),
-			"astra_user_id":   userID,
-			"bot_token_ref":   workspace.BotTokenRef,
-			"refresh_token_ref": workspace.RefreshTokenRef,
+			"workspace_id":       evt.TeamID,
+			"channel_id":         evt.ChannelID,
+			"user_id":            evt.UserID,
+			"thread_ts":          evt.ThreadTs,
+			"text":               evt.Text,
+			"agent_id":           agentID.String(),
+			"astra_user_id":      userID,
+			"bot_token_ref":      workspace.BotTokenRef,
+			"refresh_token_ref":  workspace.RefreshTokenRef,
 		}
 		if sessionID != "" {
 			payload["session_id"] = sessionID
@@ -266,7 +265,6 @@ func runWorker(ctx context.Context, rdb *redis.Client, store *slack.Store, gatew
 }
 
 func processMessage(ctx context.Context, store *slack.Store, client *http.Client, gatewayURL, internalSecret string, msg redis.XMessage) error {
-	orgID := getStr(msg.Values, "org_id")
 	agentID := getStr(msg.Values, "agent_id")
 	astraUserID := getStr(msg.Values, "astra_user_id")
 	sessionID := getStr(msg.Values, "session_id")
@@ -275,12 +273,12 @@ func processMessage(ctx context.Context, store *slack.Store, client *http.Client
 	threadTs := getStr(msg.Values, "thread_ts")
 	botTokenRef := getStr(msg.Values, "bot_token_ref")
 
-	if orgID == "" || agentID == "" || astraUserID == "" || text == "" {
+	if agentID == "" || astraUserID == "" || text == "" {
 		return fmt.Errorf("missing fields")
 	}
 
 	reqBody := map[string]interface{}{
-		"org_id": orgID, "agent_id": agentID, "user_id": astraUserID, "message": text,
+		"agent_id": agentID, "user_id": astraUserID, "message": text,
 	}
 	if sessionID != "" {
 		reqBody["session_id"] = sessionID
@@ -309,9 +307,8 @@ func processMessage(ctx context.Context, store *slack.Store, client *http.Client
 
 	// Persist session link for thread continuity
 	if result.SessionID != "" {
-		orgUUID, _ := uuid.Parse(orgID)
 		chatSessionUUID, _ := uuid.Parse(result.SessionID)
-		_ = store.CreateSlackSession(ctx, chatSessionUUID, orgUUID, getStr(msg.Values, "workspace_id"), channelID, getStr(msg.Values, "user_id"), threadTs)
+		_ = store.CreateSlackSession(ctx, chatSessionUUID, getStr(msg.Values, "workspace_id"), channelID, getStr(msg.Values, "user_id"), threadTs)
 	}
 
 	// Post reply to Slack; on 401/token_expired refresh token and retry once
@@ -319,7 +316,7 @@ func processMessage(ctx context.Context, store *slack.Store, client *http.Client
 	workspaceID := getStr(msg.Values, "workspace_id")
 	refreshTokenRef := getStr(msg.Values, "refresh_token_ref")
 	if botToken == "" {
-		slog.Warn("slack worker no bot token", "org_id", orgID)
+		slog.Warn("slack worker no bot token")
 		return nil
 	}
 	postURL := "https://slack.com/api/chat.postMessage"

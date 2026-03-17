@@ -22,7 +22,6 @@ import (
 
 	llmpb "astra/proto/llm"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -173,9 +172,6 @@ func executeCodeGen(ctx context.Context, task *tasks.Task, wsRuntime *tools.Work
 	if task.Payload != nil {
 		_ = json.Unmarshal(task.Payload, &payload)
 	}
-	if payload.OrgID == "" && task.OrgID != uuid.Nil {
-		payload.OrgID = task.OrgID.String()
-	}
 	result, err := codegen.Process(ctx, payload, wsRuntime, llmClient)
 	if err != nil {
 		return nil, err
@@ -188,9 +184,6 @@ func executeShellExec(ctx context.Context, task *tasks.Task, wsRuntime *tools.Wo
 	var payload codegen.TaskPayload
 	if task.Payload != nil {
 		_ = json.Unmarshal(task.Payload, &payload)
-	}
-	if payload.OrgID == "" && task.OrgID != uuid.Nil {
-		payload.OrgID = task.OrgID.String()
 	}
 	result, err := codegen.ProcessShellExec(ctx, payload, wsRuntime)
 	if err != nil {

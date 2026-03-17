@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -18,19 +16,18 @@ const (
 	oauthAccessURL     = "https://slack.com/api/oauth.v2.access"
 )
 
-// PostMessage posts a message to Slack on behalf of the org. If channelID is empty,
-// workspace.NotificationChannelID is used. On 401 or token_expired/invalid_auth, refreshes
-// the token and retries once.
-func PostMessage(ctx context.Context, store *Store, client *http.Client, orgID uuid.UUID, channelID, text, threadTs string) error {
+// PostMessage posts a message to Slack (single-platform: uses default workspace). If channelID is empty,
+// workspace.NotificationChannelID is used. On 401 or token_expired/invalid_auth, refreshes token and retries once.
+func PostMessage(ctx context.Context, store *Store, client *http.Client, channelID, text, threadTs string) error {
 	if text == "" {
 		return fmt.Errorf("text is required")
 	}
-	workspace, err := store.GetWorkspaceByOrgID(ctx, orgID)
+	workspace, err := store.GetDefaultWorkspace(ctx)
 	if err != nil {
 		return fmt.Errorf("get workspace: %w", err)
 	}
 	if workspace == nil || workspace.BotTokenRef == "" {
-		return fmt.Errorf("no Slack workspace or bot token for org")
+		return fmt.Errorf("no Slack workspace or bot token configured")
 	}
 	if channelID == "" {
 		channelID = workspace.NotificationChannelID

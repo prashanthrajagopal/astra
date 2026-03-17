@@ -53,23 +53,18 @@ type validateResp struct {
 	Scopes       []string `json:"scopes"`
 	UserID       string   `json:"user_id,omitempty"`
 	Email        string   `json:"email,omitempty"`
-	OrgID        string   `json:"org_id,omitempty"`
-	OrgRole      string   `json:"org_role,omitempty"`
-	TeamIDs      []string `json:"team_ids,omitempty"`
 	IsSuperAdmin bool     `json:"is_super_admin,omitempty"`
 }
 
 type loginReq struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	OrgID    string `json:"org_id,omitempty"`
 }
 
 type loginResp struct {
 	Token     string    `json:"token"`
 	ExpiresAt int64     `json:"expires_at"`
 	User      loginUser `json:"user"`
-	Org       *loginOrg `json:"org,omitempty"`
 }
 
 type loginUser struct {
@@ -77,12 +72,6 @@ type loginUser struct {
 	Email        string `json:"email"`
 	Name         string `json:"name"`
 	IsSuperAdmin bool   `json:"is_super_admin"`
-}
-
-type loginOrg struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Role string `json:"role"`
 }
 
 type createUserReq struct {
@@ -101,26 +90,6 @@ type userJSON struct {
 	LastLoginAt  *string `json:"last_login_at,omitempty"`
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
-}
-
-type userDetailJSON struct {
-	userJSON
-	OrgMemberships  []orgMembershipJSON  `json:"org_memberships"`
-	TeamMemberships []teamMembershipJSON `json:"team_memberships"`
-}
-
-type orgMembershipJSON struct {
-	OrgID   string `json:"org_id"`
-	OrgName string `json:"org_name"`
-	OrgSlug string `json:"org_slug"`
-	Role    string `json:"role"`
-}
-
-type teamMembershipJSON struct {
-	TeamID   string `json:"team_id"`
-	TeamName string `json:"team_name"`
-	OrgID    string `json:"org_id"`
-	Role     string `json:"role"`
 }
 
 type updateUserReq struct {
@@ -231,9 +200,6 @@ func handleValidate(secret string) http.HandlerFunc {
 			Scopes:       result.Scopes,
 			UserID:       result.UserID,
 			Email:        result.Email,
-			OrgID:        result.OrgID,
-			OrgRole:      result.OrgRole,
-			TeamIDs:      result.TeamIDs,
 			IsSuperAdmin: result.IsSuperAdmin,
 		})
 	}
@@ -266,12 +232,6 @@ func handleLogin(secret string, store *identity.Store) http.HandlerFunc {
 		}
 		claims.Subject = user.ID.String()
 
-		org, err := resolveOrgContext(ctx, store, user, req.OrgID, &claims)
-		if err != nil {
-			writeLoginOrgError(w, err)
-			return
-		}
-
 		signed, expiresAt, err := identity.IssueToken(secret, claims, 86400)
 		if err != nil {
 			slog.Error("issue token failed", "err", err)
@@ -292,7 +252,6 @@ func handleLogin(secret string, store *identity.Store) http.HandlerFunc {
 				Name:         user.Name,
 				IsSuperAdmin: user.IsSuperAdmin,
 			},
-			Org: org,
 		})
 	}
 }
@@ -318,69 +277,6 @@ type loginError struct {
 }
 
 func (e *loginError) Error() string { return e.msg }
-
-func resolveOrgContext(ctx context.Context, store *identity.Store, user *identity.User, rawOrgID string, claims *identity.Claims) (*loginOrg, error) {
-	if rawOrgID == "" {
-		if !user.IsSuperAdmin {
-			return nil, &loginError{msg: "org_id required for non-super-admin users", status: http.StatusBadRequest}
-		}
-		return nil, nil
-	}
-
-	orgUUID, err := uuid.Parse(rawOrgID)
-	if err != nil {
-		return nil, &loginError{msg: "invalid org_id", status: http.StatusBadRequest}
-	}
-
-	memberships, err := store.GetOrgMemberships(ctx, user.ID)
-	if err != nil {
-		slog.Error("get org memberships failed", "err", err)
-		return nil, &loginError{msg: errInternalError, status: http.StatusInternalServerError}
-	}
-
-	found := findOrgMembership(memberships, orgUUID)
-	if found == nil && !user.IsSuperAdmin {
-		return nil, &loginError{msg: "not a member of this organization", status: http.StatusForbidden}
-	}
-
-	claims.OrgID = orgUUID.String()
-	var org *loginOrg
-	if found != nil {
-		claims.OrgRole = found.Role
-		org = &loginOrg{ID: orgUUID.String(), Name: found.OrgName, Role: found.Role}
-	} else {
-		claims.OrgRole = "admin"
-		org = &loginOrg{ID: orgUUID.String(), Name: "", Role: "admin"}
-	}
-
-	teams, err := store.GetTeamMemberships(ctx, user.ID, &orgUUID)
-	if err != nil {
-		slog.Error("get team memberships failed", "err", err)
-		return nil, &loginError{msg: errInternalError, status: http.StatusInternalServerError}
-	}
-	for _, t := range teams {
-		claims.TeamIDs = append(claims.TeamIDs, t.TeamID.String())
-	}
-	return org, nil
-}
-
-func findOrgMembership(memberships []identity.OrgMembership, orgID uuid.UUID) *identity.OrgMembership {
-	for i := range memberships {
-		if memberships[i].OrgID == orgID {
-			return &memberships[i]
-		}
-	}
-	return nil
-}
-
-func writeLoginOrgError(w http.ResponseWriter, err error) {
-	le, ok := err.(*loginError)
-	if !ok {
-		jsonError(w, errInternalError, http.StatusInternalServerError)
-		return
-	}
-	jsonError(w, le.msg, le.status)
-}
 
 func handleCreateUser(store *identity.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -414,17 +310,7 @@ func handleListUsers(store *identity.Store) http.HandlerFunc {
 		}
 		offset := (page - 1) * perPage
 
-		var orgID *uuid.UUID
-		if raw := q.Get("org_id"); raw != "" {
-			parsed, err := uuid.Parse(raw)
-			if err != nil {
-				jsonError(w, "invalid org_id", http.StatusBadRequest)
-				return
-			}
-			orgID = &parsed
-		}
-
-		users, total, err := store.ListUsers(r.Context(), orgID, q.Get("status"), q.Get("q"), perPage, offset)
+		users, total, err := store.ListUsers(r.Context(), q.Get("status"), q.Get("q"), perPage, offset)
 		if err != nil {
 			slog.Error("list users failed", "err", err)
 			jsonError(w, errInternalError, http.StatusInternalServerError)
@@ -447,8 +333,7 @@ func handleGetUser(store *identity.Store) http.HandlerFunc {
 			return
 		}
 
-		ctx := r.Context()
-		user, err := store.GetUserByID(ctx, id)
+		user, err := store.GetUserByID(r.Context(), id)
 		if err != nil {
 			slog.Error("get user failed", "err", err)
 			jsonError(w, errInternalError, http.StatusInternalServerError)
@@ -458,35 +343,7 @@ func handleGetUser(store *identity.Store) http.HandlerFunc {
 			jsonError(w, "user not found", http.StatusNotFound)
 			return
 		}
-
-		orgs, err := store.GetOrgMemberships(ctx, id)
-		if err != nil {
-			slog.Error("get org memberships failed", "err", err)
-			jsonError(w, errInternalError, http.StatusInternalServerError)
-			return
-		}
-
-		teams, err := store.GetTeamMemberships(ctx, id, nil)
-		if err != nil {
-			slog.Error("get team memberships failed", "err", err)
-			jsonError(w, errInternalError, http.StatusInternalServerError)
-			return
-		}
-
-		detail := userDetailJSON{userJSON: toUserJSON(user)}
-		detail.OrgMemberships = make([]orgMembershipJSON, 0, len(orgs))
-		for _, o := range orgs {
-			detail.OrgMemberships = append(detail.OrgMemberships, orgMembershipJSON{
-				OrgID: o.OrgID.String(), OrgName: o.OrgName, OrgSlug: o.OrgSlug, Role: o.Role,
-			})
-		}
-		detail.TeamMemberships = make([]teamMembershipJSON, 0, len(teams))
-		for _, t := range teams {
-			detail.TeamMemberships = append(detail.TeamMemberships, teamMembershipJSON{
-				TeamID: t.TeamID.String(), TeamName: t.TeamName, OrgID: t.OrgID.String(), Role: t.Role,
-			})
-		}
-		writeJSON(w, http.StatusOK, detail)
+		writeJSON(w, http.StatusOK, toUserJSON(user))
 	}
 }
 

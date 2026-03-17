@@ -12,13 +12,10 @@ const (
 	RoleAgentAdmin Role = "agent_admin"
 )
 
-// Claims carries multi-tenant JWT claims through the authorization layer.
+// Claims carries JWT claims through the authorization layer (single-platform: no org/team).
 type Claims struct {
 	UserID       string
 	Email        string
-	OrgID        string
-	OrgRole      string // "admin" or "member"
-	TeamIDs      []string
 	IsSuperAdmin bool
 	Scopes       []string
 }
@@ -33,40 +30,6 @@ type Decision struct {
 // IsSuperAdmin returns true when the claims carry super-admin privilege.
 func IsSuperAdmin(c Claims) bool {
 	return c.IsSuperAdmin
-}
-
-// IsOrgAdmin returns true when the claims carry org-admin privilege.
-func IsOrgAdmin(c Claims) bool {
-	return c.OrgRole == "admin"
-}
-
-// CanManageOrg returns true when the caller may perform admin operations on the
-// given organization. Super-admins can manage any org; org-admins only their own.
-func CanManageOrg(c Claims, orgID string) bool {
-	if c.IsSuperAdmin {
-		return true
-	}
-	return c.OrgRole == "admin" && c.OrgID == orgID
-}
-
-// CanManageTeam returns true when the caller may perform admin operations on a
-// team within the given org. Org-admins of the target org always qualify.
-func CanManageTeam(c Claims, orgID, teamID string) bool {
-	_ = teamID // team-role lookup deferred; org-admin check suffices for now
-	if c.IsSuperAdmin {
-		return true
-	}
-	return c.OrgRole == "admin" && c.OrgID == orgID
-}
-
-// CanViewOrgData returns true when the caller may read data scoped to the given
-// org. Super-admins may view (with redaction applied elsewhere); org members and
-// admins may view their own org's data.
-func CanViewOrgData(c Claims, orgID string) bool {
-	if c.IsSuperAdmin {
-		return true
-	}
-	return c.OrgID == orgID
 }
 
 // redactedKeys is the set of keys stripped from data visible to super-admins.

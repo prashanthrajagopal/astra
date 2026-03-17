@@ -264,6 +264,16 @@ if [[ -n "${MEMCACHED_ADDR:-}" ]]; then
   [[ "$MEMCACHED_PORT" == "$MEMCACHED_ADDR" ]] && MEMCACHED_PORT="11211"
 fi
 
+# Resolve psql (PATH or common install locations so deploy works outside interactive shell)
+PSQL=""
+if command -v psql &>/dev/null; then
+  PSQL="psql"
+elif [[ -x /opt/homebrew/bin/psql ]]; then
+  PSQL="/opt/homebrew/bin/psql"
+elif [[ -x /usr/local/bin/psql ]]; then
+  PSQL="/usr/local/bin/psql"
+fi
+
 # --- Detection helpers (portable: nc or /dev/tcp) ---
 tcp_ok() {
   if command -v nc &>/dev/null; then
@@ -352,44 +362,44 @@ if [[ "$POSTGRES_SOURCE" == "native" ]]; then
     fi
   fi
 
-  if command -v psql &>/dev/null; then
+  if [[ -n "$PSQL" ]]; then
     # Check/create role
-    ROLE_EXISTS=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -tAc \
+    ROLE_EXISTS=$("$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -tAc \
       "SELECT 1 FROM pg_roles WHERE rolname = '$POSTGRES_USER'" postgres 2>/dev/null || true)
     if [[ "$ROLE_EXISTS" != "1" ]]; then
       echo "Creating Postgres role '$POSTGRES_USER'..."
-      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
+      "$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
         "CREATE ROLE $POSTGRES_USER WITH LOGIN SUPERUSER PASSWORD '$PGPASSWORD';" postgres 2>/dev/null \
         && echo "  Role '$POSTGRES_USER' created (superuser)." \
         || echo "  WARNING: Could not create role '$POSTGRES_USER'. Create it manually: CREATE ROLE $POSTGRES_USER WITH LOGIN SUPERUSER PASSWORD '\$PGPASSWORD';"
     else
       # Ensure existing role has superuser (required for CREATE EXTENSION vector)
-      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
+      "$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
         "ALTER ROLE $POSTGRES_USER WITH SUPERUSER;" postgres 2>/dev/null \
         && echo "  Role '$POSTGRES_USER' granted superuser." \
         || true
     fi
 
     # Check/create database
-    DB_EXISTS=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -tAc \
+    DB_EXISTS=$("$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -tAc \
       "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" postgres 2>/dev/null || true)
     if [[ "$DB_EXISTS" != "1" ]]; then
       echo "Creating Postgres database '$POSTGRES_DB'..."
-      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
+      "$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$PG_SUPERUSER" -c \
         "CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;" postgres 2>/dev/null \
         && echo "  Database '$POSTGRES_DB' created." \
         || echo "  WARNING: Could not create database '$POSTGRES_DB'. Create it manually: CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;"
     fi
   else
-    echo "  psql not in PATH — cannot verify role/database exist. If migrations fail, create them manually:"
+    echo "  psql not found (checked PATH, /opt/homebrew/bin/psql, /usr/local/bin/psql). Cannot verify role/database. If migrations fail, create them manually:"
     echo "    CREATE ROLE $POSTGRES_USER WITH LOGIN PASSWORD '\$PGPASSWORD';"
     echo "    CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;"
   fi
 fi
 
 # --- Ensure pgvector extension is available (native only) ---
-if [[ "$POSTGRES_SOURCE" == "native" ]] && command -v psql &>/dev/null; then
-  VECTOR_AVAILABLE=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+if [[ "$POSTGRES_SOURCE" == "native" ]] && [[ -n "$PSQL" ]]; then
+  VECTOR_AVAILABLE=$("$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
     "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'" 2>/dev/null || true)
   if [[ "$VECTOR_AVAILABLE" != "1" ]]; then
     echo "pgvector extension not found — attempting install..."
@@ -413,7 +423,7 @@ if [[ "$POSTGRES_SOURCE" == "native" ]] && command -v psql &>/dev/null; then
       fi
     fi
     # Re-check after install attempt
-    VECTOR_AVAILABLE=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+    VECTOR_AVAILABLE=$("$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
       "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'" 2>/dev/null || true)
     if [[ "$VECTOR_AVAILABLE" == "1" ]]; then
       echo "  pgvector: installed and available."
@@ -440,20 +450,40 @@ else
   echo "Redis: Docker (ready)"
 fi
 
-# --- Memcached ---
+# --- Memcached (prefer local binary if installed; otherwise Docker) ---
 if memcached_ok; then
   MEMCACHED_SOURCE="native"
   echo "Memcached: native (already running)"
 else
-  if ! command -v docker &>/dev/null || ! docker info &>/dev/null; then
-    echo "Memcached not running and Docker unavailable. Start Memcached or Docker and re-run."
-    exit 1
+  if command -v memcached &>/dev/null; then
+    echo "Memcached: starting local memcached..."
+    memcached -d -p "${MEMCACHED_PORT:-11211}" -l "${MEMCACHED_HOST:-127.0.0.1}" 2>/dev/null || true
+    sleep 1
+    if memcached_ok; then
+      MEMCACHED_SOURCE="native"
+      echo "Memcached: native (started locally)"
+    else
+      if ! command -v docker &>/dev/null || ! docker info &>/dev/null; then
+        echo "Memcached: local start failed and Docker unavailable. Start memcached manually or run Docker."
+        exit 1
+      fi
+      echo "Memcached: local start failed, starting with Docker..."
+      docker compose up -d memcached
+      until tcp_ok "localhost" "${MEMCACHED_PORT:-11211}"; do sleep 1; done
+      MEMCACHED_SOURCE="Docker"
+      echo "Memcached: Docker (ready)"
+    fi
+  else
+    if ! command -v docker &>/dev/null || ! docker info &>/dev/null; then
+      echo "Memcached not installed and Docker unavailable. Install memcached (e.g. brew install memcached) or Docker and re-run."
+      exit 1
+    fi
+    echo "Memcached: not found, starting with Docker..."
+    docker compose up -d memcached
+    until tcp_ok "localhost" "${MEMCACHED_PORT:-11211}"; do sleep 1; done
+    MEMCACHED_SOURCE="Docker"
+    echo "Memcached: Docker (ready)"
   fi
-  echo "Memcached: not found, starting with Docker..."
-  docker compose up -d memcached
-  until tcp_ok "localhost" "11211"; do sleep 1; done
-  MEMCACHED_SOURCE="Docker"
-  echo "Memcached: Docker (ready)"
 fi
 
 echo ""
@@ -464,14 +494,14 @@ run_migration() {
   if [[ "$POSTGRES_SOURCE" == "Docker" ]]; then
     docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f - -v ON_ERROR_STOP=1 < "$f"
   else
-    if command -v psql &>/dev/null; then
-      psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$f" -v ON_ERROR_STOP=1
+    if [[ -n "$PSQL" ]]; then
+      "$PSQL" -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$f" -v ON_ERROR_STOP=1
     elif command -v docker &>/dev/null && docker info &>/dev/null; then
       docker run --rm -i --add-host=host.docker.internal:host-gateway \
         -e PGPASSWORD="$PGPASSWORD" \
         postgres:17-alpine psql -h host.docker.internal -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f - -v ON_ERROR_STOP=1 < "$f"
     else
-      echo "Native Postgres in use but psql not in PATH and Docker unavailable. Install PostgreSQL client (psql) or Docker."
+      echo "Native Postgres in use but psql not found (PATH, /opt/homebrew/bin/psql, /usr/local/bin/psql) and Docker unavailable. Install PostgreSQL client (psql) or Docker."
       exit 1
     fi
   fi

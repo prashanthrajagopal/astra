@@ -23,14 +23,11 @@ import (
 var dangerousSubstrings = []string{"delete", "prod", "kubectl", "terraform"}
 
 type checkReq struct {
-	Subject       string `json:"subject"`
-	Action        string `json:"action"`
-	Resource      string `json:"resource"`
-	ToolName      string `json:"tool_name"`
-	OrgID         string `json:"org_id"`
-	OrgRole       string `json:"org_role"`
-	IsSuperAdmin  bool   `json:"is_super_admin"`
-	ResourceOrgID string `json:"resource_org_id"`
+	Subject      string `json:"subject"`
+	Action       string `json:"action"`
+	Resource     string `json:"resource"`
+	ToolName     string `json:"tool_name"`
+	IsSuperAdmin bool   `json:"is_super_admin"`
 }
 
 type checkResp struct {
@@ -54,7 +51,6 @@ type approvalRequest struct {
 	GraphID       *string    `json:"graph_id,omitempty"`
 	Summary       string     `json:"summary,omitempty"`
 	Status        string     `json:"status"`
-	OrgID         *string    `json:"org_id,omitempty"`
 	RequestedBy   *string    `json:"requested_by,omitempty"`
 	AssignedTo    *string    `json:"assigned_to,omitempty"`
 	RequestedAt   time.Time  `json:"requested_at"`
@@ -134,10 +130,6 @@ func evaluatePolicy(req checkReq) checkResp {
 	if resource == "/health" || resource == "health" || action == "health" {
 		return checkResp{Allowed: true}
 	}
-	// Super-admin API routes may only be accessed by super-admins.
-	if strings.HasPrefix(resource, "/superadmin/") && !req.IsSuperAdmin {
-		return checkResp{Allowed: false, Reason: "super-admin access required"}
-	}
 
 	if req.IsSuperAdmin {
 		if isExecutionDetailResource(resource) {
@@ -146,33 +138,15 @@ func evaluatePolicy(req checkReq) checkResp {
 		return checkResp{Allowed: true}
 	}
 
-	if req.ResourceOrgID != "" && req.OrgID != "" && req.ResourceOrgID != req.OrgID {
-		return checkResp{Allowed: false, Reason: "cross-org access denied"}
-	}
-
-	if req.OrgRole == "admin" {
-		if action == "tool.execute" && toolName != "" {
-			for _, sub := range dangerousSubstrings {
-				if strings.Contains(toolName, sub) {
-					return checkResp{Allowed: false, ApprovalRequired: true, Reason: "dangerous tool requires approval"}
-				}
+	// Any authenticated user (subject set) can access; dangerous tools may require approval.
+	if action == "tool.execute" && toolName != "" {
+		for _, sub := range dangerousSubstrings {
+			if strings.Contains(toolName, sub) {
+				return checkResp{Allowed: false, ApprovalRequired: true, Reason: "dangerous tool requires approval"}
 			}
 		}
-		return checkResp{Allowed: true}
 	}
-
-	if req.OrgID != "" {
-		if action == "tool.execute" && toolName != "" {
-			for _, sub := range dangerousSubstrings {
-				if strings.Contains(toolName, sub) {
-					return checkResp{Allowed: false, ApprovalRequired: true, Reason: "dangerous tool requires approval"}
-				}
-			}
-		}
-		return checkResp{Allowed: true}
-	}
-
-	return checkResp{Allowed: false, Reason: "authentication required"}
+	return checkResp{Allowed: true}
 }
 
 func isExecutionDetailResource(resource string) bool {
@@ -211,11 +185,11 @@ func (s *server) handleApprovalAction(w http.ResponseWriter, r *http.Request, st
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	if callerUserID != "" {
-		var assignedTo, orgID sql.NullString
+	if callerUserID != "" && r.Header.Get("X-Is-Super-Admin") != "true" {
+		var assignedTo sql.NullString
 		err := s.db.QueryRowContext(ctx,
-			`SELECT assigned_to, org_id FROM approval_requests WHERE id::text = $1`,
-			idStr).Scan(&assignedTo, &orgID)
+			`SELECT assigned_to FROM approval_requests WHERE id::text = $1`,
+			idStr).Scan(&assignedTo)
 		if err == sql.ErrNoRows {
 			http.Error(w, "approval not found", http.StatusNotFound)
 			return
@@ -225,20 +199,7 @@ func (s *server) handleApprovalAction(w http.ResponseWriter, r *http.Request, st
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		allowed := false
-		if assignedTo.Valid && assignedTo.String == callerUserID {
-			allowed = true
-		}
-		if !allowed && orgID.Valid {
-			var cnt int
-			s.db.QueryRowContext(ctx,
-				`SELECT count(*) FROM org_memberships WHERE user_id::text = $1 AND org_id::text = $2 AND role = 'admin'`,
-				callerUserID, orgID.String).Scan(&cnt)
-			if cnt > 0 {
-				allowed = true
-			}
-		}
-		if !allowed {
+		if !assignedTo.Valid || assignedTo.String != callerUserID {
 			http.Error(w, "forbidden: not authorized to act on this approval", http.StatusForbidden)
 			return
 		}
@@ -287,20 +248,19 @@ func (s *server) handlePending(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	callerUserID := r.Header.Get("X-User-Id")
-	callerOrgID := r.Header.Get("X-Org-Id")
+
+	baseCols := `SELECT id, COALESCE(request_type, 'risky_task'), task_id, worker_id, tool_name, action_summary,
+		 goal_id, graph_id, LEFT(COALESCE(plan_payload->>'goal_text',''), 200), status,
+		 requested_by, assigned_to, requested_at, decided_at, decided_by
+		 FROM approval_requests`
 
 	var rows *sql.Rows
 	var err error
-	baseCols := `SELECT id, COALESCE(request_type, 'risky_task'), task_id, worker_id, tool_name, action_summary,
-		 goal_id, graph_id, LEFT(COALESCE(plan_payload->>'goal_text',''), 200), status,
-		 org_id, requested_by, assigned_to, requested_at, decided_at, decided_by
-		 FROM approval_requests`
-
-	if callerUserID != "" || callerOrgID != "" {
+	if callerUserID != "" {
 		rows, err = s.db.QueryContext(ctx,
-			baseCols+` WHERE status='pending' AND (assigned_to::text = $1 OR org_id::text = $2 OR assigned_to IS NULL)
+			baseCols+` WHERE status='pending' AND (assigned_to::text = $1 OR assigned_to IS NULL)
 			 ORDER BY requested_at ASC`,
-			callerUserID, callerOrgID)
+			callerUserID)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
 			baseCols+` WHERE status='pending' ORDER BY requested_at ASC`)
@@ -328,13 +288,13 @@ func scanApprovalRows(rows *sql.Rows) []approvalRequest {
 	for rows.Next() {
 		var ar approvalRequest
 		var taskID, workerID, goalID, graphID sql.NullString
-		var orgID, requestedBy, assignedTo sql.NullString
+		var requestedBy, assignedTo sql.NullString
 		var decidedAt sql.NullTime
 		var decidedBy sql.NullString
 		var summary sql.NullString
 		err := rows.Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary,
 			&goalID, &graphID, &summary, &ar.Status,
-			&orgID, &requestedBy, &assignedTo, &ar.RequestedAt, &decidedAt, &decidedBy)
+			&requestedBy, &assignedTo, &ar.RequestedAt, &decidedAt, &decidedBy)
 		if err != nil {
 			slog.Error("scan approval row failed", "err", err)
 			continue
@@ -350,9 +310,6 @@ func scanApprovalRows(rows *sql.Rows) []approvalRequest {
 		}
 		if graphID.Valid {
 			ar.GraphID = &graphID.String
-		}
-		if orgID.Valid {
-			ar.OrgID = &orgID.String
 		}
 		if requestedBy.Valid {
 			ar.RequestedBy = &requestedBy.String
@@ -385,16 +342,16 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 
 	var ar approvalRequest
 	var taskID, workerID, goalID, graphID sql.NullString
-	var orgID, requestedBy, assignedTo sql.NullString
+	var requestedBy, assignedTo sql.NullString
 	var decidedAt sql.NullTime
 	var decidedBy sql.NullString
 	var planPayload []byte
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, COALESCE(request_type, 'risky_task'), task_id, worker_id, tool_name, action_summary,
-		 goal_id, graph_id, status, org_id, requested_by, assigned_to, requested_at, decided_at, decided_by, plan_payload
+		 goal_id, graph_id, status, requested_by, assigned_to, requested_at, decided_at, decided_by, plan_payload
 		 FROM approval_requests WHERE id::text = $1`,
 		idStr).Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary,
-		&goalID, &graphID, &ar.Status, &orgID, &requestedBy, &assignedTo, &ar.RequestedAt, &decidedAt, &decidedBy, &planPayload)
+		&goalID, &graphID, &ar.Status, &requestedBy, &assignedTo, &ar.RequestedAt, &decidedAt, &decidedBy, &planPayload)
 	if err == sql.ErrNoRows {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
@@ -415,9 +372,6 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if graphID.Valid {
 		ar.GraphID = &graphID.String
-	}
-	if orgID.Valid {
-		ar.OrgID = &orgID.String
 	}
 	if requestedBy.Valid {
 		ar.RequestedBy = &requestedBy.String
@@ -441,7 +395,6 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		"goal_id":         ar.GoalID,
 		"graph_id":        ar.GraphID,
 		"status":          ar.Status,
-		"org_id":          ar.OrgID,
 		"requested_by":    ar.RequestedBy,
 		"assigned_to":     ar.AssignedTo,
 		"requested_at":    ar.RequestedAt,

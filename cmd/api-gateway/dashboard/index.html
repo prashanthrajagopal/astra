@@ -6,471 +6,376 @@
   <title>Astra Platform Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/superadmin/dashboard/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
-<body>
-  <header id="dashboard-header" class="dashboard-header">
-    <div class="header-row">
-      <h1 id="dashboard-title">Astra Super-Admin Dashboard</h1>
-      <nav class="header-nav">
+<body class="dashboard-redesign">
+  <nav id="dashboard-header" class="topnav">
+    <div class="topnav-left">
+      <div class="logo"><span>Astra</span> Platform</div>
+      <div class="nav-tabs">
         <button class="nav-tab active" data-tab="overview">Overview</button>
-        <button class="nav-tab" data-tab="orgs">Organizations</button>
-        <button class="nav-tab" data-tab="users">Users</button>
         <button class="nav-tab" data-tab="slack">Slack</button>
-      </nav>
-      <a href="/superadmin/dashboard/swagger.html" class="swagger-link">API Docs</a>
-    </div>
-    <div id="dashboard-meta" class="dashboard-meta">
-      <span id="last-updated" class="meta-item">Last updated: never</span>
-      <span id="refresh-status" class="meta-item">Idle</span>
-      <button id="btn-refresh" class="meta-item">Refresh now</button>
-    </div>
-  </header>
-
-  <div class="dashboard-wrapper">
-    <div class="dashboard-main">
-  <div id="tab-overview" class="tab-panel">
-  <section id="section-summary" class="summary-grid">
-    <div class="summary-card card-accent-blue">
-      <div class="summary-value" id="sum-active-goals">0</div>
-      <div class="summary-label">Active Goals</div>
-    </div>
-    <div class="summary-card card-accent-green">
-      <div class="summary-value" id="sum-completed-tasks">0</div>
-      <div class="summary-label">Completed Tasks</div>
-    </div>
-    <div class="summary-card card-accent-yellow">
-      <div class="summary-value" id="sum-running-tasks">0</div>
-      <div class="summary-label">Running Tasks</div>
-    </div>
-    <div class="summary-card card-accent-red">
-      <div class="summary-value" id="sum-failed-tasks">0</div>
-      <div class="summary-label">Failed Tasks</div>
-    </div>
-    <div class="summary-card card-accent-purple">
-      <div class="summary-value" id="sum-workers">0</div>
-      <div class="summary-label">Active Workers</div>
-    </div>
-    <div class="summary-card card-accent-orange">
-      <div class="summary-value" id="sum-approvals">0</div>
-      <div class="summary-label">Pending Approvals</div>
-    </div>
-    <div class="summary-card card-accent-cyan">
-      <div class="summary-value" id="sum-agents">0</div>
-      <div class="summary-label">Agents</div>
-    </div>
-    <div class="summary-card card-accent-teal">
-      <div class="summary-value" id="sum-tokens-in">0</div>
-      <div class="summary-label">Tokens In</div>
-    </div>
-    <div class="summary-card card-accent-slate">
-      <div class="summary-value" id="sum-tokens-out">0</div>
-      <div class="summary-label">Tokens Out</div>
-    </div>
-  </section>
-
-  <section id="section-charts" class="charts-grid">
-    <div class="dashboard-card chart-container">
-      <h2 class="section-title">Task Status Distribution</h2>
-      <canvas id="chart-tasks"></canvas>
-    </div>
-    <div class="dashboard-card chart-container">
-      <h2 class="section-title">Goal Status</h2>
-      <canvas id="chart-goals"></canvas>
-    </div>
-    <div class="dashboard-card chart-container">
-      <h2 class="section-title">Service Health</h2>
-      <canvas id="chart-services"></canvas>
-    </div>
-    <div class="dashboard-card chart-container">
-      <h2 class="section-title">Agents</h2>
-      <canvas id="chart-agents"></canvas>
-    </div>
-  </section>
-
-  <section id="section-agents" class="dashboard-card card-agents">
-    <div class="section-header-row">
-      <h2 class="section-title">Agents</h2>
-      <button type="button" id="btn-create-agent" class="action-btn approve">Create Agent</button>
-    </div>
-    <div class="table-scroll">
-    <table id="table-agents" class="data-table">
-      <thead><tr><th>ID</th><th>Name</th><th>Status</th><th class="th-actions">Actions</th></tr></thead>
-      <tbody id="tbody-agents"></tbody>
-    </table>
-    </div>
-    <div class="pagination-row">
-      <button type="button" id="agents-prev" class="pagination-btn" disabled>Previous</button>
-      <span id="agents-page-info" class="pagination-info">Page 1</span>
-      <button type="button" id="agents-next" class="pagination-btn">Next</button>
-    </div>
-  </section>
-
-  <section id="section-recent-goals" class="dashboard-card card-goals">
-    <h2 class="section-title">Recent Goals</h2>
-    <div class="table-scroll">
-    <table id="table-goals" class="data-table">
-      <thead><tr><th>ID</th><th>Agent</th><th>Goal</th><th>Status</th><th>Created</th><th class="th-actions">Actions</th></tr></thead>
-      <tbody id="tbody-goals"></tbody>
-    </table>
-    </div>
-  </section>
-
-  <section id="section-services" class="dashboard-card card-services">
-    <h2 class="section-title">Services</h2>
-    <div class="table-scroll">
-    <table id="table-services" class="data-table">
-      <thead><tr><th>Name</th><th>Port</th><th>Type</th><th>Status</th><th>Latency (ms)</th></tr></thead>
-      <tbody id="tbody-services"></tbody>
-    </table>
-    </div>
-  </section>
-
-  <section id="section-workers" class="dashboard-card card-workers">
-    <h2 class="section-title">Workers</h2>
-    <div class="table-scroll">
-    <table id="table-workers" class="data-table">
-      <thead><tr><th>ID</th><th>Hostname</th><th>Status</th><th>Capabilities</th><th>Last Heartbeat</th></tr></thead>
-      <tbody id="tbody-workers"></tbody>
-    </table>
-    </div>
-  </section>
-
-  <section id="section-approvals" class="dashboard-card card-approvals">
-    <h2 class="section-title">Pending Approvals</h2>
-    <div class="approvals-toolbar">
-      <label class="toggle-label"><input type="checkbox" id="toggle-auto-approve-plans" /> Auto-approve implementation plans</label>
-      <span id="auto-approve-note" class="auto-approve-note"></span>
-    </div>
-    <div class="table-scroll">
-    <table id="table-approvals" class="data-table">
-      <thead><tr><th>Type</th><th>ID</th><th>Tool / Summary</th><th>Action Summary</th><th>Status</th><th>Requested At</th><th>Actions</th></tr></thead>
-      <tbody id="tbody-approvals"></tbody>
-    </table>
-    </div>
-  </section>
-
-  <section id="section-cost" class="dashboard-card card-cost">
-    <h2 class="section-title">Cost (7 days)</h2>
-    <div class="table-scroll">
-    <table id="table-cost" class="data-table">
-      <thead><tr><th>Day</th><th>Agent ID</th><th>Model</th><th>Tokens In</th><th>Tokens Out</th><th>Cost ($)</th></tr></thead>
-      <tbody id="tbody-cost"></tbody>
-    </table>
-    </div>
-  </section>
-
-  <section id="section-logs" class="dashboard-card card-logs">
-    <h2 class="section-title">Log Tails</h2>
-    <div id="logs-container"></div>
-  </section>
-
-  <section id="section-pids" class="dashboard-card card-pids">
-    <h2 class="section-title">Process IDs</h2>
-    <div class="table-scroll">
-    <table id="table-pids" class="data-table">
-      <thead><tr><th>Service</th><th>PID</th></tr></thead>
-      <tbody id="tbody-pids"></tbody>
-    </table>
-    </div>
-  </section>
-
-  </div><!-- end tab-overview -->
-
-  <div id="tab-orgs" class="tab-panel" hidden>
-    <section class="dashboard-card">
-      <div class="section-header-row">
-        <h2 class="section-title">Organizations</h2>
-        <button type="button" id="btn-create-org" class="action-btn approve">Create Organization</button>
-      </div>
-      <div class="table-scroll">
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
-        <tbody id="tbody-orgs"></tbody>
-      </table>
-      </div>
-      <div id="orgs-empty" class="empty-message" hidden>No organizations yet.</div>
-    </section>
-  </div>
-
-  <div id="tab-users" class="tab-panel" hidden>
-    <section class="dashboard-card">
-      <div class="section-header-row">
-        <h2 class="section-title">Platform Users</h2>
-        <button type="button" id="btn-create-user" class="action-btn approve">Create User</button>
-      </div>
-      <div class="search-row">
-        <input type="text" id="users-search" class="search-input" placeholder="Search by name or email..." />
-        <select id="users-org-filter" class="search-select"><option value="">All orgs</option></select>
-        <select id="users-status-filter" class="search-select">
-          <option value="">All statuses</option>
-          <option value="active">Active</option>
-          <option value="suspended">Suspended</option>
-          <option value="deactivated">Deactivated</option>
-        </select>
-      </div>
-      <div class="table-scroll">
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Email</th><th>Org(s)</th><th>Status</th><th>Super Admin</th><th>Last Login</th><th>Actions</th></tr></thead>
-        <tbody id="tbody-users"></tbody>
-      </table>
-      </div>
-      <div class="pagination-row">
-        <button type="button" id="users-prev" class="pagination-btn" disabled>Previous</button>
-        <span id="users-page-info" class="pagination-info">Page 1</span>
-        <button type="button" id="users-next" class="pagination-btn">Next</button>
-      </div>
-    </section>
-  </div>
-
-  <div id="tab-slack" class="tab-panel" hidden>
-    <section class="dashboard-card">
-      <h2 class="section-title">Slack App Configuration</h2>
-      <p class="section-desc">Enter your Slack app credentials so orgs can connect workspaces. Get these from <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → your app → Basic Information &amp; OAuth.</p>
-      <div class="slack-config-form">
-        <label class="modal-label">Signing Secret</label>
-        <input type="password" id="slack-signing-secret" class="modal-input" placeholder="Leave blank to keep existing" autocomplete="off" />
-        <label class="modal-label">Client ID</label>
-        <input type="text" id="slack-client-id" class="modal-input" placeholder="Slack OAuth Client ID" />
-        <label class="modal-label">Client Secret</label>
-        <input type="password" id="slack-client-secret" class="modal-input" placeholder="Leave blank to keep existing" autocomplete="off" />
-        <label class="modal-label">OAuth Redirect URL</label>
-        <input type="url" id="slack-oauth-redirect" class="modal-input" placeholder="https://your-astra-host/org/api/slack/oauth/callback" />
-        <button type="button" id="btn-save-slack-config" class="action-btn approve">Save</button>
-        <span id="slack-config-status" class="modal-error" style="margin-left:8px"></span>
-      </div>
-    </section>
-  </div>
-
-  <!-- Org Detail/Edit Modal -->
-  <div id="org-detail-modal" class="goal-modal" hidden>
-    <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content" style="max-width:560px">
-      <header class="goal-modal-header">
-        <h2 class="goal-modal-title" id="org-detail-title">Organization</h2>
-        <button type="button" class="goal-modal-close" id="org-detail-close">&times;</button>
-      </header>
-      <div class="goal-modal-body" id="org-detail-body">
-        <input type="hidden" id="org-detail-id"/>
-        <div class="field"><label>Name</label><input type="text" id="org-detail-name" class="modal-input"/></div>
-        <div class="field"><label>Slug</label><input type="text" id="org-detail-slug" class="modal-input"/></div>
-        <div class="field"><label>Status</label>
-          <select id="org-detail-status" class="modal-input">
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="archived">Archived</option>
-          </select>
-        </div>
-        <div id="org-detail-error" class="modal-error" hidden></div>
-        <button type="button" id="org-detail-save" class="action-btn approve" style="margin-top:8px;width:100%">Save Changes</button>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:20px 0 12px"/>
-        <div style="font-size:.875rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:8px">Members</div>
-        <div class="table-scroll" style="max-height:200px">
-          <table class="data-table" style="font-size:.8125rem">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
-            <tbody id="org-detail-members"></tbody>
-          </table>
-        </div>
-        <div id="org-detail-members-empty" class="empty-message" style="font-size:.8125rem;margin-top:4px" hidden>No members yet.</div>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 10px"/>
-        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:6px">Add Member</div>
-        <div style="display:flex;gap:6px;align-items:end">
-          <select id="org-detail-add-user" class="modal-input" style="flex:1;margin-bottom:0"><option value="">Select user...</option></select>
-          <select id="org-detail-add-role" class="modal-input" style="width:100px;margin-bottom:0"><option value="member">Member</option><option value="admin">Admin</option></select>
-          <button type="button" id="org-detail-add-btn" class="action-btn approve" style="white-space:nowrap">Add</button>
-        </div>
       </div>
     </div>
-  </div>
+    <div class="topnav-right" id="dashboard-meta">
+      <span id="last-updated" class="meta-text">Last updated: never</span>
+      <span id="refresh-status" class="meta-text" aria-live="polite">Idle</span>
+      <button type="button" id="btn-theme-toggle" class="btn-sm" title="Toggle light/dark mode" aria-label="Toggle theme">
+        <span class="theme-icon-sun" aria-hidden="true">☀</span>
+        <span class="theme-icon-moon" aria-hidden="true" hidden>🌙</span>
+      </button>
+      <button type="button" id="btn-refresh" class="btn-sm">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Refresh
+      </button>
+      <a href="/superadmin/dashboard/swagger.html" class="btn-sm primary">API Docs</a>
+    </div>
+  </nav>
 
-  <!-- User Detail/Edit Modal -->
-  <div id="user-detail-modal" class="goal-modal" hidden>
-    <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content" style="max-width:560px">
-      <header class="goal-modal-header">
-        <h2 class="goal-modal-title" id="user-detail-title">User</h2>
-        <button type="button" class="goal-modal-close" id="user-detail-close">&times;</button>
-      </header>
-      <div class="goal-modal-body">
-        <input type="hidden" id="user-detail-id"/>
-        <div class="field"><label>Name</label><input type="text" id="user-detail-name" class="modal-input"/></div>
-        <div class="field"><label>Email</label><input type="email" id="user-detail-email" class="modal-input"/></div>
-        <div class="field"><label>Status</label>
-          <select id="user-detail-status" class="modal-input">
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="deactivated">Deactivated</option>
-          </select>
+  <div class="layout">
+    <div class="main">
+      <div id="tab-overview" class="tab-panel">
+        <div class="stats-grid" id="section-summary">
+          <div class="stat-card">
+            <div class="stat-label">Active Goals</div>
+            <div class="stat-value" id="sum-active-goals">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Completed Tasks</div>
+            <div class="stat-value" id="sum-completed-tasks">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Running Tasks</div>
+            <div class="stat-value stat-accent" id="sum-running-tasks">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Failed Tasks</div>
+            <div class="stat-value" id="sum-failed-tasks">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Active Workers</div>
+            <div class="stat-value stat-green" id="sum-workers">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Pending Approvals</div>
+            <div class="stat-value" id="sum-approvals">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Agents</div>
+            <div class="stat-value stat-blue" id="sum-agents">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Tokens In</div>
+            <div class="stat-value" id="sum-tokens-in">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Tokens Out</div>
+            <div class="stat-value" id="sum-tokens-out">0</div>
+          </div>
         </div>
-        <div class="field"><label><input type="checkbox" id="user-detail-superadmin"/> Super Admin</label></div>
-        <div id="user-detail-error" class="modal-error" hidden></div>
-        <button type="button" id="user-detail-save" class="action-btn approve" style="margin-top:8px;width:100%">Save Changes</button>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 10px"/>
-        <div style="display:flex;gap:12px;margin-bottom:16px">
-          <button type="button" id="user-detail-reset-pw" class="action-btn" style="flex:1">Reset Password</button>
+
+        <div class="charts-grid" id="section-charts">
+          <div class="chart-card">
+            <div class="chart-title">Task Status Distribution</div>
+            <div class="chart-body">
+              <canvas id="chart-tasks"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Goal Status</div>
+            <div class="chart-body">
+              <canvas id="chart-goals"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Service Health</div>
+            <div class="chart-body">
+              <canvas id="chart-services"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Agents</div>
+            <div class="chart-body">
+              <canvas id="chart-agents"></canvas>
+            </div>
+          </div>
         </div>
-        <div id="user-detail-pw-row" hidden style="display:flex;gap:6px;margin-bottom:16px">
-          <input type="password" id="user-detail-new-pw" class="modal-input" placeholder="New password" style="flex:1;margin-bottom:0"/>
-          <button type="button" id="user-detail-pw-confirm" class="action-btn approve">Set</button>
-          <button type="button" id="user-detail-pw-cancel" class="action-btn reject">Cancel</button>
+
+        <div class="section" id="section-agents">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-purple">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M16 14H8a4 4 0 0 0-4 4v2h16v-2a4 4 0 0 0-4-4z"/></svg>
+              </div>
+              <span class="section-name">Agents</span>
+              <span class="badge badge-purple" id="agents-badge">0</span>
+            </div>
+            <button type="button" id="btn-create-agent" class="green-btn">+ Create Agent</button>
+          </div>
+          <div class="table-wrap">
+            <table id="table-agents">
+              <thead><tr><th>ID</th><th>Name</th><th>Agent ID</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead>
+              <tbody id="tbody-agents"></tbody>
+            </table>
+            <div class="table-footer">
+              <span id="agents-page-info">Page 1</span>
+              <div class="pagination">
+                <button type="button" id="agents-prev" class="page-btn" disabled>‹ Prev</button>
+                <button type="button" id="agents-next" class="page-btn">Next ›</button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div style="font-size:.875rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:8px">Organization Memberships</div>
-        <div class="table-scroll" style="max-height:180px">
-          <table class="data-table" style="font-size:.8125rem">
-            <thead><tr><th>Organization</th><th>Role</th><th>Actions</th></tr></thead>
-            <tbody id="user-detail-orgs"></tbody>
-          </table>
+
+        <div class="section" id="section-recent-goals">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <span class="section-name">Recent Goals</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="table-goals">
+              <thead><tr><th>ID</th><th>Agent</th><th>Goal</th><th>Status</th><th>Created</th><th style="text-align:right">Actions</th></tr></thead>
+              <tbody id="tbody-goals"></tbody>
+            </table>
+          </div>
         </div>
-        <div id="user-detail-orgs-empty" class="empty-message" style="font-size:.8125rem;margin-top:4px" hidden>Not a member of any org.</div>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:12px 0 8px"/>
-        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:6px">Add to Organization</div>
-        <div style="display:flex;gap:6px;align-items:end">
-          <select id="user-detail-add-org" class="modal-input" style="flex:1;margin-bottom:0"><option value="">Select org...</option></select>
-          <select id="user-detail-add-org-role" class="modal-input" style="width:100px;margin-bottom:0"><option value="member">Member</option><option value="admin">Admin</option></select>
-          <button type="button" id="user-detail-add-org-btn" class="action-btn approve" style="white-space:nowrap">Add</button>
+
+        <div class="section" id="section-services">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-cyan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
+              </div>
+              <span class="section-name">Services</span>
+              <span class="badge badge-green" id="services-badge">—</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="table-services">
+              <thead><tr><th>Service</th><th>Port</th><th>Type</th><th>Status</th><th>Latency (ms)</th></tr></thead>
+              <tbody id="tbody-services"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section" id="section-workers">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-orange">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              </div>
+              <span class="section-name">Workers</span>
+              <span class="badge badge-green" id="workers-badge">0</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="table-workers">
+              <thead><tr><th>ID</th><th>Hostname</th><th>Status</th><th>Capabilities</th><th>Last Heartbeat</th></tr></thead>
+              <tbody id="tbody-workers"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section" id="section-approvals">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-yellow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+              </div>
+              <span class="section-name">Pending Approvals</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <div class="checkbox-row">
+              <input type="checkbox" id="toggle-auto-approve-plans" />
+              <span style="color:var(--text-muted)">Auto-approve implementation plans</span>
+              <span id="auto-approve-note" class="meta-text" style="margin-left:auto;font-size:11px"></span>
+            </div>
+            <table id="table-approvals">
+              <thead><tr><th>Type</th><th>ID</th><th>Tool / Summary</th><th>Action Summary</th><th>Status</th><th>Requested At</th><th>Actions</th></tr></thead>
+              <tbody id="tbody-approvals"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section" id="section-cost">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+              <span class="section-name">Cost (7 Days)</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="table-cost">
+              <thead><tr><th>Day</th><th>Agent ID</th><th>Model</th><th>Tokens In</th><th>Tokens Out</th><th style="text-align:right">Cost ($)</th></tr></thead>
+              <tbody id="tbody-cost"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section" id="section-logs">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-red">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              </div>
+              <span class="section-name">Log Tails</span>
+            </div>
+          </div>
+          <div id="logs-container"></div>
+        </div>
+
+        <div class="section" id="section-pids">
+          <div class="section-head">
+            <div class="section-head-left">
+              <div class="section-icon section-icon-purple">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+              </div>
+              <span class="section-name">Process IDs</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="table-pids">
+              <thead><tr><th>Service</th><th style="text-align:right">PID</th></tr></thead>
+              <tbody id="tbody-pids"></tbody>
+            </table>
+          </div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Create Org Modal -->
-  <div id="org-modal" class="goal-modal" hidden>
-    <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content">
-      <header class="goal-modal-header">
-        <h2 class="goal-modal-title" id="org-modal-title">Create Organization</h2>
-        <button type="button" class="goal-modal-close" id="org-modal-close">&times;</button>
-      </header>
-      <div class="goal-modal-body">
-        <div class="field"><label>Name</label><input type="text" id="org-name" class="modal-input" placeholder="Acme Corp"/></div>
-        <div class="field"><label>Slug</label><input type="text" id="org-slug" class="modal-input" placeholder="acme-corp"/></div>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:16px 0 12px"/>
-        <div style="font-size:.8125rem;font-weight:600;color:var(--md-sys-color-on-surface);margin-bottom:10px">Org Admin (required)</div>
-        <div class="field"><label>Admin — select existing user or create new</label>
-          <select id="org-admin-select" class="modal-input" style="margin-bottom:8px"><option value="">-- Create new user --</option></select>
-        </div>
-        <div id="org-admin-new-fields">
-          <div class="field"><label>Admin Name</label><input type="text" id="org-admin-name" class="modal-input" placeholder="Jane Doe"/></div>
-          <div class="field"><label>Admin Email</label><input type="email" id="org-admin-email" class="modal-input" placeholder="jane@acme.com"/></div>
-          <div class="field"><label>Admin Password</label><input type="password" id="org-admin-password" class="modal-input" placeholder="Password"/></div>
-        </div>
-        <div id="org-modal-error" class="modal-error" hidden></div>
-        <button type="button" id="org-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create Organization</button>
+      <div id="tab-slack" class="tab-panel" hidden>
+        <section class="section">
+          <div class="section-head">
+            <div class="section-head-left">
+              <span class="section-name">Slack App Configuration</span>
+            </div>
+          </div>
+          <p class="section-desc">Enter your Slack app credentials to connect a workspace. Get these from <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → your app → Basic Information &amp; OAuth.</p>
+          <div class="slack-config-form">
+            <label class="modal-label">Signing Secret</label>
+            <input type="password" id="slack-signing-secret" class="modal-input" placeholder="Leave blank to keep existing" autocomplete="off" />
+            <label class="modal-label">Client ID</label>
+            <input type="text" id="slack-client-id" class="modal-input" placeholder="Slack OAuth Client ID" />
+            <label class="modal-label">Client Secret</label>
+            <input type="password" id="slack-client-secret" class="modal-input" placeholder="Leave blank to keep existing" autocomplete="off" />
+            <label class="modal-label">OAuth Redirect URL</label>
+            <input type="url" id="slack-oauth-redirect" class="modal-input" placeholder="https://your-astra-host/api/slack/oauth/callback" />
+            <button type="button" id="btn-save-slack-config" class="green-btn">Save</button>
+            <span id="slack-config-status" class="modal-error" style="margin-left:8px"></span>
+          </div>
+        </section>
       </div>
     </div>
-  </div>
 
-  <!-- Create User Modal -->
-  <div id="user-modal" class="goal-modal" hidden>
-    <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content">
-      <header class="goal-modal-header">
-        <h2 class="goal-modal-title" id="user-modal-title">Create User</h2>
-        <button type="button" class="goal-modal-close" id="user-modal-close">&times;</button>
-      </header>
-      <div class="goal-modal-body">
-        <div class="field"><label>Name</label><input type="text" id="user-name" class="modal-input" placeholder="Jane Doe"/></div>
-        <div class="field"><label>Email</label><input type="email" id="user-email" class="modal-input" placeholder="jane@acme.com"/></div>
-        <div class="field"><label>Password</label><input type="password" id="user-password" class="modal-input" placeholder="Password"/></div>
-        <div class="field"><label><input type="checkbox" id="user-superadmin"/> Super Admin</label></div>
-        <hr style="border-color:var(--md-sys-color-outline-variant);margin:12px 0 8px"/>
-        <div class="field"><label>Add to Organization (optional)</label>
-          <select id="user-org-select" class="modal-input"><option value="">-- None --</option></select>
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-card" id="sidebar-health">
+          <div class="sidebar-card-title">Health at a Glance</div>
+          <div id="health-summary-text">—</div>
+          <div class="health-ring-wrap">
+            <canvas id="chart-health-donut"></canvas>
+          </div>
         </div>
-        <div class="field" id="user-org-role-field" hidden><label>Role in Org</label>
-          <select id="user-org-role" class="modal-input"><option value="member">Member</option><option value="admin">Admin</option></select>
+        <div class="sidebar-card" id="sidebar-task-queue">
+          <div class="sidebar-card-title">Task Queue</div>
+          <div class="sidebar-stat-row">
+            <span class="sidebar-stat-label">Waiting</span>
+            <span class="sidebar-stat-value" id="task-queue-waiting">0</span>
+          </div>
+          <div class="sidebar-stat-row">
+            <span class="sidebar-stat-label">Running</span>
+            <span class="sidebar-stat-value" id="task-queue-running">0</span>
+          </div>
         </div>
-        <div id="user-modal-error" class="modal-error" hidden></div>
-        <button type="button" id="user-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create User</button>
+        <div class="sidebar-card" id="sidebar-cost">
+          <div class="sidebar-card-title">Cost (7d)</div>
+          <div class="sidebar-stat-row">
+            <span class="sidebar-stat-label">Total</span>
+            <span class="sidebar-stat-value" id="cost-summary-total">$0.00</span>
+          </div>
+        </div>
+        <div class="sidebar-card" id="sidebar-workers">
+          <div class="sidebar-card-title">Worker Utilization</div>
+          <div id="worker-util-summary">—</div>
+        </div>
+        <div class="sidebar-card" id="sidebar-approvals">
+          <div class="sidebar-card-title">Pending Approvals</div>
+          <div id="approvals-summary-text">—</div>
+          <ul id="approvals-summary-list"></ul>
+        </div>
       </div>
-    </div>
-  </div>
-
-    </div>
-    <aside class="dashboard-sidebar">
-      <section class="dashboard-card sidebar-card" id="sidebar-health">
-        <h3 class="section-title">Health at a glance</h3>
-        <div id="health-summary-text">—</div>
-        <canvas id="chart-health-donut" style="max-height: 100px;"></canvas>
-      </section>
-      <section class="dashboard-card sidebar-card" id="sidebar-task-queue">
-        <h3 class="section-title">Task queue</h3>
-        <div class="task-queue-row">
-          <span>Waiting: <strong id="task-queue-waiting">0</strong></span>
-          <span>Running: <strong id="task-queue-running">0</strong></span>
-        </div>
-      </section>
-      <section class="dashboard-card sidebar-card" id="sidebar-cost">
-        <h3 class="section-title">Cost (7d)</h3>
-        <div id="cost-summary-total">Total: $0.00</div>
-      </section>
-      <section class="dashboard-card sidebar-card" id="sidebar-workers">
-        <h3 class="section-title">Worker utilization</h3>
-        <div id="worker-util-summary">—</div>
-      </section>
-      <section class="dashboard-card sidebar-card" id="sidebar-approvals">
-        <h3 class="section-title">Pending approvals</h3>
-        <div id="approvals-summary-text">—</div>
-        <ul id="approvals-summary-list"></ul>
-      </section>
     </aside>
   </div>
 
   <!-- Approval detail modal -->
-  <div id="approval-modal" class="approval-modal" role="dialog" aria-labelledby="approval-modal-title" aria-modal="true" hidden>
+  <div id="approval-modal" class="approval-modal astra-glass-modal agent-create-panel" role="dialog" aria-labelledby="approval-modal-title" aria-modal="true" hidden>
     <div class="approval-modal-backdrop"></div>
-    <div class="approval-modal-content">
-      <header class="approval-modal-header">
-        <h2 id="approval-modal-title" class="approval-modal-title">Approval details</h2>
-        <button type="button" class="approval-modal-close" id="approval-modal-close" aria-label="Close">&times;</button>
-      </header>
-      <div id="approval-modal-body" class="approval-modal-body">
-        <p class="approval-modal-loading">Loading…</p>
+    <div class="approval-modal-content astra-modal-shell agent-create-content">
+      <div class="agent-create-header">
+        <h2 id="approval-modal-title" class="agent-create-title">Approval details</h2>
+        <button type="button" class="agent-create-close" id="approval-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
       </div>
-      <footer class="approval-modal-footer">
-        <button type="button" class="action-btn approve" id="approval-dialog-approve">Approve</button>
-        <button type="button" class="action-btn reject" id="approval-dialog-reject">Reject</button>
-      </footer>
+      <div id="approval-modal-body" class="approval-modal-body agent-create-body">
+        <p class="approval-modal-loading goal-modal-loading">Loading…</p>
+      </div>
+      <div class="agent-create-submit astra-modal-footer">
+        <button type="button" class="astra-modal-btn-secondary" id="approval-dialog-reject">Reject</button>
+        <button type="button" class="submit-btn astra-modal-btn-inline" id="approval-dialog-approve">Approve</button>
+      </div>
     </div>
   </div>
 
   <!-- Goal detail modal -->
-  <div id="goal-modal" class="goal-modal" role="dialog" aria-labelledby="goal-modal-title" aria-modal="true" hidden>
+  <div id="goal-modal" class="goal-modal astra-glass-modal agent-create-panel" role="dialog" aria-labelledby="goal-modal-title" aria-modal="true" hidden>
     <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content">
-      <header class="goal-modal-header">
-        <h2 id="goal-modal-title" class="goal-modal-title">Goal details</h2>
-        <button type="button" class="goal-modal-close" id="goal-modal-close" aria-label="Close">&times;</button>
-      </header>
-      <div id="goal-modal-body" class="goal-modal-body">
+    <div class="goal-modal-content astra-modal-shell agent-create-content astra-modal-wide">
+      <div class="agent-create-header">
+        <h2 id="goal-modal-title" class="agent-create-title">Goal details</h2>
+        <button type="button" class="agent-create-close" id="goal-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
+      </div>
+      <div id="goal-modal-body" class="goal-modal-body agent-create-body">
         <p class="goal-modal-loading">Loading…</p>
       </div>
     </div>
   </div>
 
   <!-- Generated code modal (when clicking a code_generate action in goal details) -->
-  <div id="code-modal" class="goal-modal code-modal" role="dialog" aria-labelledby="code-modal-title" aria-modal="true" hidden>
+  <div id="code-modal" class="goal-modal code-modal astra-glass-modal agent-create-panel" role="dialog" aria-labelledby="code-modal-title" aria-modal="true" hidden>
     <div class="goal-modal-backdrop" id="code-modal-backdrop"></div>
-    <div class="goal-modal-content">
-      <header class="goal-modal-header">
-        <h2 id="code-modal-title" class="goal-modal-title">Generated code</h2>
-        <button type="button" class="goal-modal-close" id="code-modal-close" aria-label="Close">&times;</button>
-      </header>
-      <div id="code-modal-body" class="goal-modal-body code-modal-body"></div>
+    <div class="goal-modal-content astra-modal-shell agent-create-content astra-modal-code">
+      <div class="agent-create-header">
+        <h2 id="code-modal-title" class="agent-create-title">Generated code</h2>
+        <button type="button" class="agent-create-close" id="code-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
+      </div>
+      <div id="code-modal-body" class="goal-modal-body code-modal-body agent-create-body"></div>
     </div>
   </div>
 
   <!-- New chat modal (pick chat-capable agent) -->
-  <div id="chat-new-modal" class="goal-modal" role="dialog" aria-labelledby="chat-new-modal-title" aria-modal="true" hidden>
+  <div id="chat-new-modal" class="goal-modal astra-glass-modal agent-create-panel" role="dialog" aria-labelledby="chat-new-modal-title" aria-modal="true" hidden>
     <div class="goal-modal-backdrop" id="chat-new-modal-backdrop"></div>
-    <div class="goal-modal-content">
-      <header class="goal-modal-header">
-        <h2 id="chat-new-modal-title" class="goal-modal-title">New chat</h2>
-        <button type="button" class="goal-modal-close" id="chat-new-modal-close" aria-label="Close">&times;</button>
-      </header>
-      <div id="chat-new-modal-body" class="goal-modal-body">
+    <div class="goal-modal-content astra-modal-shell agent-create-content">
+      <div class="agent-create-header">
+        <h2 id="chat-new-modal-title" class="agent-create-title">New chat</h2>
+        <button type="button" class="agent-create-close" id="chat-new-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
+      </div>
+      <div id="chat-new-modal-body" class="goal-modal-body agent-create-body">
         <p id="chat-new-loading" class="goal-modal-loading">Loading chat-capable agents…</p>
         <div id="chat-new-agent-list" class="chat-agent-list" hidden></div>
         <p id="chat-new-empty" class="chat-empty-hint" hidden>No chat-capable agents. Set <code>chat_capable = true</code> on an agent in the database.</p>
@@ -478,129 +383,247 @@
     </div>
   </div>
 
-  <!-- Create Agent Modal -->
-  <div id="agent-modal" class="goal-modal" hidden>
+  <!-- Create Agent Modal (redesigned) -->
+  <div id="agent-modal" class="goal-modal agent-create-panel astra-glass-modal" hidden>
     <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content" style="max-width:560px">
-      <header class="goal-modal-header">
-        <h2 class="goal-modal-title" id="agent-modal-title">Create Agent</h2>
-        <button type="button" class="goal-modal-close" id="agent-modal-close">&times;</button>
-      </header>
-      <div class="goal-modal-body">
-        <div class="agent-modal-section">Identity</div>
-        <div class="field"><label>Name</label><input type="text" id="agent-create-name" class="modal-input" placeholder="My Python Expert"/></div>
-        <div class="field">
-          <label>Actor type</label>
-          <input type="text" id="agent-create-actor-type" class="modal-input" placeholder="python-expert"/>
-          <p class="agent-field-hint">Internal type or ID for this agent (e.g. python-expert).</p>
-        </div>
-        <div class="field">
-          <label>Config (JSON)</label>
-          <input type="text" id="agent-create-config" class="modal-input" placeholder='{"model_preference":"code"}'/>
-          <p class="agent-field-hint">Optional JSON for model preference or behavior.</p>
-        </div>
-
-        <div class="agent-modal-section">Visibility &amp; access</div>
-        <div class="field"><label>Visibility</label><select id="agent-create-visibility" class="modal-input"></select></div>
-        <div class="field">
-          <label><input type="checkbox" id="agent-create-chat-capable"/> Chat capable</label>
-          <p class="agent-field-hint">Allow users to chat with this agent in the dashboard.</p>
-        </div>
-        <div class="field">
-          <label><input type="checkbox" id="agent-create-slack-notifications"/> Slack notifications</label>
-          <p class="agent-field-hint">Allow this agent to post to Slack when its instructions say so (e.g. alerts).</p>
-        </div>
-
-        <div class="agent-modal-section">External data (optional)</div>
-        <div class="field">
-          <label>Data source</label>
-          <select id="agent-create-ingest-source-type" class="modal-input"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select>
-          <p class="agent-field-hint">Connects this agent to an external event stream.</p>
-        </div>
-        <div class="field">
-          <label>Data source config (JSON)</label>
-          <input type="text" id="agent-create-ingest-source-config" class="modal-input" placeholder=""/>
-          <p id="agent-create-ingest-hint" class="agent-field-hint agent-ingest-hint" aria-live="polite"></p>
-        </div>
-
-        <div class="agent-modal-section">Instructions</div>
-        <div class="field">
-          <label>Agent prompt (Markdown)</label>
-          <select id="agent-create-prompt-type" class="modal-input"><option value="full_prompt">System prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select>
-          <p class="agent-field-hint">How to store the prompt below: system instructions, rule doc, or skill doc.</p>
-        </div>
-        <div class="field"><textarea id="agent-create-prompt" class="modal-input agent-prompt-textarea" rows="8" placeholder="# My Agent&#10;You are a senior Python expert..."></textarea></div>
-        <div class="field">
-          <label>Upload document (optional)</label>
-          <select id="agent-create-upload-type" class="modal-input"><option value="full_prompt">System prompt</option><option value="rule">Rule</option><option value="skill">Skill</option></select>
-          <p class="agent-field-hint">How to store the uploaded file: same options as above.</p>
-        </div>
-        <div class="field agent-upload-row">
-          <input type="file" id="agent-create-file" accept=".md,.txt,.markdown" class="agent-file-input"/>
-          <span id="agent-create-file-info" class="agent-file-info"></span>
-          <button type="button" id="agent-create-file-clear" class="agent-file-clear" hidden>&times;</button>
-        </div>
-        <div id="agent-modal-error" class="modal-error" hidden></div>
-        <button type="button" id="agent-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Create Agent</button>
+    <div class="goal-modal-content agent-create-content">
+      <div class="agent-create-header">
+        <h1 class="agent-create-title" id="agent-modal-title">Create Agent</h1>
+        <button type="button" class="agent-create-close" id="agent-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
+      </div>
+      <div class="agent-create-body">
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <span class="agent-create-section-title">Identity</span>
+          </div>
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="agent-create-name" placeholder="Give your agent a name…"/>
+          </div>
+          <div class="agent-create-row-2">
+            <div class="form-group">
+              <label>Actor type</label>
+              <input type="text" id="agent-create-actor-type" placeholder="e.g. python-expert"/>
+              <div class="hint">Internal type or ID for this agent</div>
+            </div>
+            <div class="form-group">
+              <label>Config <span class="optional">(JSON)</span></label>
+              <input type="text" id="agent-create-config" class="json-input" placeholder='{"key":"value"}'/>
+              <div class="hint">Model preference or behavior</div>
+            </div>
+          </div>
+        </section>
+        <div class="agent-create-divider"></div>
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <span class="agent-create-section-title">Access</span>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Chat capable</span>
+              <span class="toggle-desc">Allow users to chat with this agent in the dashboard</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="agent-create-chat-capable"/>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Slack notifications</span>
+              <span class="toggle-desc">Allow this agent to post to Slack when its instructions say so</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="agent-create-slack-notifications"/>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </section>
+        <div class="agent-create-divider"></div>
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            </div>
+            <span class="agent-create-section-title">External Data <span class="optional-inline">— optional</span></span>
+          </div>
+          <div class="form-group">
+            <label>Data source</label>
+            <div class="select-wrapper">
+              <select id="agent-create-ingest-source-type">
+                <option value="">None</option>
+                <option value="redis_pubsub">Redis Pub/Sub</option>
+                <option value="gcp_pubsub">GCP Pub/Sub</option>
+                <option value="websocket">WebSocket</option>
+              </select>
+            </div>
+            <div class="hint">Connects this agent to an external event stream</div>
+          </div>
+          <div class="form-group">
+            <label>Data source config <span class="optional">(JSON)</span></label>
+            <input type="text" id="agent-create-ingest-source-config" class="json-input" placeholder='{"endpoint":"https://…"}'/>
+            <p id="agent-create-ingest-hint" class="hint agent-ingest-hint" aria-live="polite"></p>
+          </div>
+        </section>
+        <div class="agent-create-divider"></div>
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </div>
+            <span class="agent-create-section-title">Instructions</span>
+          </div>
+          <div class="form-group">
+            <div class="inline-field">
+              <label>Agent prompt</label>
+              <div class="select-wrapper">
+                <select id="agent-create-prompt-type">
+                  <option value="full_prompt">System prompt</option>
+                  <option value="rule">Rule doc</option>
+                  <option value="skill">Skill doc</option>
+                </select>
+              </div>
+            </div>
+            <textarea id="agent-create-prompt" rows="6" placeholder="# My Agent&#10;You are a senior Python expert..."></textarea>
+            <div class="hint">Markdown-formatted instructions defining your agent's behavior</div>
+          </div>
+          <div class="form-group">
+            <div class="inline-field">
+              <label>Upload document <span class="optional">(optional)</span></label>
+              <div class="select-wrapper">
+                <select id="agent-create-upload-type">
+                  <option value="full_prompt">System prompt</option>
+                  <option value="rule">Rule doc</option>
+                  <option value="skill">Skill doc</option>
+                </select>
+              </div>
+            </div>
+            <div class="file-upload" id="agent-create-file-zone">
+              <input type="file" id="agent-create-file" accept=".md,.txt,.markdown" class="agent-file-input" hidden/>
+              <div class="file-upload-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </div>
+              <div class="file-upload-text"><span id="agent-create-file-info">Click to upload</span> or drag and drop</div>
+              <button type="button" id="agent-create-file-clear" class="agent-file-clear" hidden>&times;</button>
+            </div>
+          </div>
+        </section>
+        <div id="agent-modal-error" class="agent-modal-error" hidden></div>
+      </div>
+      <div class="agent-create-submit">
+        <button type="button" id="agent-modal-save" class="submit-btn">Create Agent</button>
       </div>
     </div>
   </div>
 
   <!-- Edit Agent Modal (full profile) -->
-  <div id="agent-edit-modal" class="goal-modal" hidden>
+  <div id="agent-edit-modal" class="goal-modal astra-glass-modal agent-edit-panel agent-create-panel" hidden>
     <div class="goal-modal-backdrop"></div>
-    <div class="goal-modal-content" style="max-width:560px">
-      <header class="goal-modal-header">
-        <h2 class="goal-modal-title">Edit Agent</h2>
-        <button type="button" class="goal-modal-close" id="agent-edit-modal-close">&times;</button>
-      </header>
-      <div class="goal-modal-body">
-        <div class="agent-modal-section">Identity</div>
-        <div class="field">
-          <label>Name</label>
-          <input type="text" id="agent-edit-name" class="modal-input" placeholder="Agent name"/>
-        </div>
-        <div class="field">
-          <label>Actor type</label>
-          <span id="agent-edit-actor-type" class="modal-readonly agent-edit-readonly"></span>
-          <p class="agent-field-hint">Internal type; cannot be changed after creation.</p>
-        </div>
-        <div class="field">
-          <label>Config (JSON)</label>
-          <input type="text" id="agent-edit-config" class="modal-input" placeholder='{"model_preference":"code"}'/>
-          <p class="agent-field-hint">Optional JSON for model preference or behavior.</p>
-        </div>
-
-        <div class="agent-modal-section">Visibility &amp; access</div>
-        <div class="field"><label>Visibility</label><select id="agent-edit-visibility" class="modal-input"></select></div>
-        <div class="field">
-          <label><input type="checkbox" id="agent-edit-chat-capable"/> Chat capable</label>
-          <p class="agent-field-hint">Allow users to chat with this agent in the dashboard.</p>
-        </div>
-        <div class="field">
-          <label><input type="checkbox" id="agent-edit-slack-notifications"/> Slack notifications</label>
-          <p class="agent-field-hint">Allow this agent to post to Slack when its instructions say so (e.g. alerts).</p>
-        </div>
-
-        <div class="agent-modal-section">External data (optional)</div>
-        <div class="field">
-          <label>Data source</label>
-          <select id="agent-edit-ingest-source-type" class="modal-input"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select>
-          <p class="agent-field-hint">Connects this agent to an external event stream.</p>
-        </div>
-        <div class="field">
-          <label>Data source config (JSON)</label>
-          <input type="text" id="agent-edit-ingest-source-config" class="modal-input" placeholder=""/>
-          <p id="agent-edit-ingest-hint" class="agent-field-hint agent-ingest-hint" aria-live="polite"></p>
-        </div>
-
-        <div class="agent-modal-section">Instructions</div>
-        <div class="field">
-          <label>Agent prompt (Markdown)</label>
-          <textarea id="agent-edit-prompt" class="modal-input agent-prompt-textarea" rows="8" placeholder="# My Agent&#10;You are..."></textarea>
-        </div>
-        <div id="agent-edit-modal-error" class="modal-error" hidden></div>
-        <button type="button" id="agent-edit-modal-save" class="action-btn approve" style="margin-top:12px;width:100%">Save</button>
+    <div class="goal-modal-content astra-modal-shell agent-create-content">
+      <div class="agent-create-header">
+        <h2 class="agent-create-title">Edit Agent</h2>
+        <button type="button" class="agent-create-close" id="agent-edit-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
+      </div>
+      <div class="goal-modal-body agent-create-body">
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <span class="agent-create-section-title">Identity</span>
+          </div>
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="agent-edit-name" placeholder="Agent name"/>
+          </div>
+          <div class="form-group">
+            <label>Actor type</label>
+            <div class="agent-edit-readonly-wrap"><span id="agent-edit-actor-type" class="agent-edit-readonly"></span></div>
+            <div class="hint">Internal type; cannot be changed after creation.</div>
+          </div>
+          <div class="form-group">
+            <label>Config <span class="optional">(JSON)</span></label>
+            <input type="text" id="agent-edit-config" class="json-input" placeholder='{"model_preference":"code"}'/>
+            <div class="hint">Optional JSON for model preference or behavior.</div>
+          </div>
+        </section>
+        <div class="agent-create-divider"></div>
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <span class="agent-create-section-title">Access</span>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Chat capable</span>
+              <span class="toggle-desc">Allow users to chat with this agent in the dashboard</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="agent-edit-chat-capable"/>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Slack notifications</span>
+              <span class="toggle-desc">Allow this agent to post to Slack when its instructions say so</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="agent-edit-slack-notifications"/>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </section>
+        <div class="agent-create-divider"></div>
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            </div>
+            <span class="agent-create-section-title">External Data <span class="optional-inline">— optional</span></span>
+          </div>
+          <div class="form-group">
+            <label>Data source</label>
+            <div class="select-wrapper">
+              <select id="agent-edit-ingest-source-type"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select>
+            </div>
+            <div class="hint">Connects this agent to an external event stream.</div>
+          </div>
+          <div class="form-group">
+            <label>Data source config <span class="optional">(JSON)</span></label>
+            <input type="text" id="agent-edit-ingest-source-config" class="json-input" placeholder=""/>
+            <p id="agent-edit-ingest-hint" class="hint agent-ingest-hint" aria-live="polite"></p>
+          </div>
+        </section>
+        <div class="agent-create-divider"></div>
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <span class="agent-create-section-title">Instructions</span>
+          </div>
+          <div class="form-group">
+            <label>Agent prompt (Markdown)</label>
+            <textarea id="agent-edit-prompt" rows="8" placeholder="# My Agent&#10;You are..."></textarea>
+          </div>
+        </section>
+        <div id="agent-edit-modal-error" class="agent-modal-error" hidden></div>
+      </div>
+      <div class="agent-create-submit">
+        <button type="button" id="agent-edit-modal-save" class="submit-btn">Save changes</button>
       </div>
     </div>
   </div>
