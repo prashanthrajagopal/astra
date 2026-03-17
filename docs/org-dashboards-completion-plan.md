@@ -1,8 +1,9 @@
 # Org Dashboards Completion Plan
 
-**Status:** Plan only — no implementation.  
+**Status:** **OBSOLETE** — Multi-tenant (LTI) feature has been removed. Astra is single-platform only; there are no organizations, teams, or org-level dashboards. This plan is retained for historical reference only.
+
 **Audience:** Project Manager, Architect, Tech Lead.  
-**References:** `docs/PRD.md` (§19 Multi-Tenancy, §Dashboards, Phase 11.7), `cmd/api-gateway/main.go`, `cmd/api-gateway/dashboard/`.
+**References:** `docs/PRD.md`, `cmd/api-gateway/main.go`, `cmd/api-gateway/dashboard/`.
 
 ---
 

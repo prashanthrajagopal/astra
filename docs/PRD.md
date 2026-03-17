@@ -1,6 +1,6 @@
 # ASTRA — The Autonomous Agent Operating System
 
-**Engineering Specification v3.0 — Multi-Tenant**
+**Engineering Specification v3.0 — Single-Platform**
 
 > A single, self-contained specification for building Astra — a production-grade, microkernel-style, planet-scale autonomous agent platform and SDK. Contains architecture, Go interfaces, gRPC contracts, database DDL, Redis stream schemas, deployment manifests, and phased implementation roadmap.
 
@@ -155,9 +155,8 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
     /events                    # event store, event replay, event sourcing
     /messaging                 # Redis Streams clients, consumer groups, backoff, ack
     /llm                       # LLM router logic, model selection, caching
-    /identity                  # user CRUD, login/auth, password hashing (multi-tenant)
-    /orgs                      # organization & team CRUD, membership management
-    /rbac                      # role-based access control, agent visibility, middleware
+    /identity                  # user CRUD, login/auth, password hashing
+    /rbac                      # role-based access control, middleware
   /pkg                         # shared packages (stable, documented, importable)
     /db                        # DB connection pool, migration runner, helpers
     /config                    # config loader (env vars, Vault)
@@ -173,8 +172,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
   /deployments                 # Helm charts, k8s manifests, infra scripts
     /helm/astra/
   /cmd/api-gateway
-    /superadmin/               # super-admin dashboard (HTML/CSS/JS)
-    /org/                      # org home + org-admin dashboard (HTML/CSS/JS)
+    /superadmin/               # platform dashboard (HTML/CSS/JS)
     /login/                    # login page (HTML/CSS/JS)
   /web                         # frontend (future)
   /scripts                     # dev utilities
@@ -205,8 +203,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 | `internal/agentdocs` | Service | Agent document store (rules, skills, context docs), profile/context assembly for planner and workers |
 | `internal/llm` | Service | LLM model routing, cost-based selection, response caching |
 | `internal/identity` | Service | User CRUD, login/authentication, password hashing (bcrypt), JWT enrichment |
-| `internal/orgs` | Service | Organization and team CRUD, membership management (org_memberships, team_memberships) |
-| `internal/rbac` | Service | Role-based authorization engine, agent visibility logic (`CanAccessAgent`), super-admin redaction, HTTP/gRPC middleware |
+| `internal/rbac` | Service | Role-based authorization engine, super-admin checks, HTTP/gRPC middleware |
 | `pkg/db` | Shared | Postgres connection pool (`pgx`), migration runner |
 | `pkg/config` | Shared | Config loader (environment variables, Vault integration) |
 | `pkg/logger` | Shared | Structured logging setup (`slog` or `zerolog`) |
@@ -659,8 +656,8 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 | # | Service | Responsibility | Namespace |
 |---|---|---|---|
 | 1 | `api-gateway` | REST/gRPC gateway, auth middleware, rate limiting, versioning; chat sessions, WebSocket streaming | control-plane |
-| 2 | `identity` | User management (CRUD, login, password reset), JWT tokens with multi-tenant claims (user_id, org_id, org_role, team_ids, is_super_admin), service-to-service tokens | control-plane |
-| 3 | `access-control` | RBAC policy engine (role-aware: super_admin/org_admin/org_member/team_admin/agent_admin), agent visibility enforcement, org isolation checks, approval workflows | control-plane |
+| 2 | `identity` | User management (CRUD, login, password reset), JWT tokens (user_id, email, is_super_admin, scopes), service-to-service tokens | control-plane |
+| 3 | `access-control` | Policy engine (super_admin, approval workflows), approval assignment and actions | control-plane |
 | 4 | `agent-service` | Agent lifecycle (spawn/stop/inspect), actor supervisor integration, agent profile & document management | kernel |
 | 5 | `goal-service` | Goal ingestion, validation, routing to planner, context assembly (system_prompt + documents) | kernel |
 | 6 | `planner-service` | Core planner: goals → TaskGraphs using LLM | kernel |
@@ -706,79 +703,9 @@ The following REST endpoints are added to the `api-gateway` for agent profile an
 4. `planner-service` embeds `agent_context` in each task payload
 5. `execution-worker` includes `agent_context` when building LLM prompts for task execution
 
-## Multi-Tenant API — Super-Admin Endpoints (Phase 11)
+## Dashboard API (Phase 11)
 
-Super-admin endpoints live under `/superadmin/api/` and require `is_super_admin` JWT claim.
-
-### Organization Management
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/superadmin/api/orgs` | Create organization |
-| `GET` | `/superadmin/api/orgs` | List all organizations |
-| `GET` | `/superadmin/api/orgs/{id}` | Get org details |
-| `PATCH` | `/superadmin/api/orgs/{id}` | Update org (name, status) |
-| `DELETE` | `/superadmin/api/orgs/{id}` | Archive/delete org |
-| `POST` | `/superadmin/api/orgs/{id}/admins` | Add org admin |
-| `DELETE` | `/superadmin/api/orgs/{id}/admins/{user_id}` | Remove org admin |
-
-### Platform-Wide User Management
-
-Super admins manage every user of every org from the super-admin dashboard.
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/superadmin/api/users` | Create user (optionally assign to org) |
-| `GET` | `/superadmin/api/users` | List ALL users (`?org_id=`, `?status=`, `?q=`, `?page=`, `?per_page=`, `?sort=`) |
-| `GET` | `/superadmin/api/users/{id}` | Get user details (all org/team memberships, owned agents) |
-| `PATCH` | `/superadmin/api/users/{id}` | Update user (name, email, status, is_super_admin) |
-| `DELETE` | `/superadmin/api/users/{id}` | Deactivate/delete user |
-| `POST` | `/superadmin/api/users/{id}/reset-password` | Force-reset password |
-| `GET` | `/superadmin/api/users/{id}/orgs` | List all orgs for user |
-| `POST` | `/superadmin/api/users/{id}/orgs` | Add user to org with role |
-| `PATCH` | `/superadmin/api/users/{id}/orgs/{org_id}` | Change user role in org |
-| `DELETE` | `/superadmin/api/users/{id}/orgs/{org_id}` | Remove user from org |
-| `GET` | `/superadmin/api/users/{id}/teams` | List all teams for user |
-| `POST` | `/superadmin/api/users/{id}/teams/{team_id}` | Add user to team |
-| `DELETE` | `/superadmin/api/users/{id}/teams/{team_id}` | Remove user from team |
-| `POST` | `/superadmin/api/users/{id}/suspend` | Suspend user |
-| `POST` | `/superadmin/api/users/{id}/activate` | Reactivate user |
-
-### Global Agent Management
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/superadmin/api/agents` | Create global agent (visibility=global, org_id=NULL) |
-
-## Multi-Tenant API — Org-Level Endpoints (Phase 11)
-
-Org endpoints live under `/org/api/` and require valid org JWT.
-
-### Team & Member Management (org_admin)
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/org/api/teams` | List teams |
-| `POST` | `/org/api/teams` | Create team |
-| `PATCH` | `/org/api/teams/{id}` | Update team |
-| `DELETE` | `/org/api/teams/{id}` | Delete team |
-| `POST` | `/org/api/teams/{id}/members` | Add member to team |
-| `DELETE` | `/org/api/teams/{id}/members/{user_id}` | Remove member from team |
-| `GET` | `/org/api/members` | List org members |
-| `POST` | `/org/api/members` | Invite/add member to org |
-| `PATCH` | `/org/api/members/{user_id}` | Change member role |
-| `DELETE` | `/org/api/members/{user_id}` | Remove member from org |
-
-### Agent Ownership & Collaboration (org context)
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/org/api/agents` | Create agent (visibility: public/team/private; sets org_id, owner_id from JWT) |
-| `POST` | `/org/api/agents/{id}/collaborators` | Add collaborator (user or team) |
-| `GET` | `/org/api/agents/{id}/collaborators` | List collaborators |
-| `DELETE` | `/org/api/agents/{id}/collaborators/{cid}` | Remove collaborator |
-| `POST` | `/org/api/agents/{id}/admins` | Add agent admin (receives approve/reject requests) |
-| `DELETE` | `/org/api/agents/{id}/admins/{uid}` | Remove agent admin |
+The platform dashboard is served at `/superadmin/dashboard/`. Dashboard-specific APIs live under `/superadmin/api/dashboard/` and `/superadmin/api/slack/` (snapshot, approvals, goals, tasks, agents, chat sessions, Slack config). Multi-tenant (organizations, teams, org-level APIs) has been removed; the platform is single-tenant.
 
 ---
 
@@ -1660,9 +1587,9 @@ Agents that users connect to via **WebSocket** for real-time chat with **streami
 
 ## Slack integration (design)
 
-Users can interact with Astra chat agents from **Slack**. One Slack workspace is linked to one Astra organization via OAuth. **Slack app secrets** (Signing Secret, Client ID, Client Secret, OAuth Redirect URL) are configurable from the **super-admin UI** (stored encrypted in DB; env fallback). A dedicated **slack-adapter** service receives Slack Events API (and optional slash commands), verifies request signature, resolves org/agent/user from workspace and optional channel bindings, and enqueues work to a Redis stream for async processing. A worker consumes the stream, calls existing chat (and optionally goal) APIs with org-scoped identity, and posts replies back to Slack via the Slack API. Data: `slack_workspaces`, `slack_channel_bindings`, `slack_user_mappings`; bot tokens stored in Vault. Design: **docs/slack-integration-design.md**.
+Users can interact with Astra chat agents from **Slack**. One Slack workspace is linked to the platform via OAuth. **Slack app secrets** (Signing Secret, Client ID, Client Secret, OAuth Redirect URL) are configurable from the **super-admin UI** (stored encrypted in DB; env fallback). A dedicated **slack-adapter** service receives Slack Events API (and optional slash commands), verifies request signature, resolves org/agent/user from workspace and optional channel bindings, and enqueues work to a Redis stream for async processing. A worker consumes the stream, calls existing chat (and optionally goal) APIs with org-scoped identity, and posts replies back to Slack via the Slack API. Data: `slack_workspaces`, `slack_channel_bindings`, `slack_user_mappings`; bot tokens stored in Vault. Design: **docs/slack-integration-design.md**.
 
-**Proactive posting:** Astra supports **proactively posting** to Slack (e.g. “Plan pending approval”) without a prior user message. The api-gateway exposes **`POST /internal/slack/post`** (internal only; auth via header **`X-Slack-Internal-Secret`**). Body: `org_id` (required), optional `channel_id`, `text` (required), optional `thread_ts`. If `channel_id` is omitted, `slack_workspaces.notification_channel_id` is used when set. Token refresh on 401 is handled by `internal/slack`. Callers (e.g. goal-service, access-control) may call this endpoint to notify users in Slack; they need the gateway URL and internal secret in their environment.
+**Proactive posting:** Astra supports **proactively posting** to Slack (e.g. “Plan pending approval”) without a prior user message. The api-gateway exposes **`POST /internal/slack/post`** (internal only; auth via header **`X-Slack-Internal-Secret`**). Body: optional `channel_id`, `text` (required), optional `thread_ts`. If `channel_id` is omitted, the default workspace's notification channel is used when set. Token refresh on 401 is handled by `internal/slack`. Callers (e.g. goal-service, access-control) may call this endpoint to notify users in Slack; they need the gateway URL and internal secret in their environment.
 
 ---
 
@@ -1704,8 +1631,7 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 | Dashboard | Content |
 |---|---|
 | **Super-Admin Dashboard** (`/superadmin/dashboard/`) | Platform-wide **redacted** view: service health, workers (names/status), agents (names/status), goal/task counts, LLM cost totals. **Organizations** section (create/edit/delete, add org admins). **Users** section (paginated table of ALL users, search/filter, suspend/activate/reset-password/role-change/move-org actions, detail modal). Org filter dropdown. No execution details, code, or chat messages visible. |
-| **Org Dashboard** (`/org/dashboard`) | Org-admin only. Full 100% visibility: members, teams, agents (all visibilities), goals (full text, task payloads, execution results, code), workers, approvals, cost, logs. Manage collaborators and agent admins. |
-| **Org Home** (`/org/`) | All org members: agents they can access (filtered by visibility), recent goals, quick-submit goal form, chat. |
+| **Platform Dashboard** (`/superadmin/dashboard/`) | Single dashboard: overview, agents, goals, workers, approvals, cost, Slack config, chat. |
 | Cluster Overview | Capacity, active agents, task throughput, error rate |
 | Agent Health | Per-agent throughput, avg latency, failure rate |
 | Cost | LLM token usage & cost per agent, per model |
@@ -1724,8 +1650,8 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 ## Authentication & Identity
 
-- `identity` service handles user accounts (CRUD, login, password reset), service accounts, and multi-tenant JWT issuance
-- JWT tokens carry multi-tenant claims: `user_id`, `email`, `org_id`, `org_role`, `team_ids`, `is_super_admin`, `scopes`
+- `identity` service handles user accounts (CRUD, login, password reset), service accounts, and JWT issuance
+- JWT tokens carry claims: `user_id`, `email`, `is_super_admin`, `scopes`
 - Login: `POST /users/login` with email + password → JWT with org context
 - Multi-org users select which org to authenticate against
 - Password hashing: bcrypt (`golang.org/x/crypto/bcrypt`)
@@ -1736,12 +1662,12 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 
 - `access-control` service implements role-based authorization via `internal/rbac`:
   - **Super-admin**: platform management (orgs, all users); execution detail access DENIED
-  - **Org-admin**: full access within own `org_id`
+  - **Authenticated user**: access to platform resources
   - **Org-member**: access per agent visibility rules (global/public/team/private)
   - **Team-admin**: manage team membership, create team-scoped agents
   - **Agent-admin**: approve/reject for specific agent
 - Agent visibility enforced by `CanAccessAgent()` in `internal/rbac/visibility.go`
-- Org isolation enforced by RBAC middleware: resource `org_id` must match JWT `org_id`
+- Access control enforced by RBAC middleware and approval workflows
 - Super-admin data redaction: `redactForSuperAdmin()` strips execution details, code, system_prompt, goal_text, payload, result, chat messages
 - Dangerous tool approval gates remain (plan approval and risky_task approval); approval routing goes to agent_admins first, then org_admins
 
@@ -1773,11 +1699,11 @@ Full design: **docs/phase-history-usage-audit-design.md**.
 
 # 19. Multi-Tenancy Architecture
 
-Astra is a **privacy-focused multi-tenant platform** modeled after GitHub's organization structure: organizations contain teams and users; agents have tiered visibility; data is strictly isolated between organizations.
+Astra is a **single-platform** autonomous agent OS: users and agents share one platform; there are no organizations or teams.
 
 ## Entity Model
 
-- **Users** — Platform accounts with email/password authentication. A user can belong to multiple organizations.
+- **Users** — Platform accounts with email/password authentication.
 - **Organizations** — Tenants. Each org has its own agents, goals, tasks, workers, cost tracking, and approvals. One org's data is never visible to another org.
 - **Teams** — Groups within an org. Teams can own agents and be granted collaborator access to agents.
 - **Org Memberships** — Links users to orgs with a role (`admin` or `member`).
@@ -1803,24 +1729,13 @@ Astra is a **privacy-focused multi-tenant platform** modeled after GitHub's orga
 | `team` | Team | Team members and org admins only. |
 | `private` | User | Only the owner and explicitly added collaborators (users or teams). |
 
-Org admins see ALL agents within their org regardless of visibility level.
-
-### Agent Visibility Logic
+### Agent Access (single-platform)
 
 ```go
 func CanAccessAgent(claims Claims, agent Agent) bool {
-    if agent.Visibility == "global" { return true }
-    if claims.IsSuperAdmin { return true } // metadata only, execution details redacted
-    if agent.OrgID != claims.OrgID { return false } // org isolation barrier
-    if claims.OrgRole == "admin" { return true }
-    if agent.Visibility == "public" { return true }
-    if agent.Visibility == "team" {
-        return userInTeam(claims.TeamIDs, agent.TeamID) ||
-               isCollaborator(claims.UserID, agent.ID)
-    }
-    return agent.OwnerID == claims.UserID ||
-           isCollaborator(claims.UserID, agent.ID) ||
-           isCollaboratorViaTeam(claims.TeamIDs, agent.ID)
+    if claims.UserID == "" { return false }
+    if claims.IsSuperAdmin { return true }
+    return true // single-platform: all authenticated users can access agents
 }
 ```
 
@@ -1831,27 +1746,24 @@ func CanAccessAgent(claims Claims, agent Agent) bool {
 
 ## Privacy & Data Isolation
 
-1. **Org barrier**: Every data table carrying `org_id` is filtered by `WHERE org_id = $orgID` in all queries. This is the primary tenant isolation mechanism.
+1. **Authentication**: All dashboard and agent APIs require a valid JWT. Super-admin flag enables dashboard and certain admin actions.
 2. **Super-admin redaction**: A `redactForSuperAdmin()` function strips `system_prompt`, `config`, `payload`, `result`, `goal_text`, code, file contents, shell output, and chat messages before returning data to super-admin endpoints.
-3. **Cross-org invisibility**: No API, dashboard, or internal service ever returns data from org A to a user in org B. Agent-service `QueryState` filters by org_id. Goal-service, task-service, worker-manager, cost-tracker, and memory-service all scope queries by org_id.
-4. **Workspace isolation**: Each org gets `WORKSPACE_ROOT/{org_slug}/{goal_id}/`. Global agents use `WORKSPACE_ROOT/_global/{goal_id}/`.
+3. **Single platform**: All services operate on a single platform; no tenant isolation. Agent-service `QueryState` returns all agents. Goal-service, task-service, worker-manager, cost-tracker, and memory-service query across the full dataset.
+4. **Workspace isolation**: All goals use `WORKSPACE_ROOT/_global/{goal_id}/`.
 
-## JWT Claims (Multi-Tenant)
+## JWT Claims
 
 ```go
 type Claims struct {
     jwt.RegisteredClaims
     UserID       string   `json:"user_id"`
     Email        string   `json:"email"`
-    OrgID        string   `json:"org_id,omitempty"`
-    OrgRole      string   `json:"org_role,omitempty"`
-    TeamIDs      []string `json:"team_ids,omitempty"`
     IsSuperAdmin bool     `json:"is_super_admin"`
     Scopes       []string `json:"scopes"`
 }
 ```
 
-Login flow: `POST /users/login` with email + password. Identity looks up user, org_memberships, team_memberships, and issues JWT with all claims. For multi-org users, they select which org to authenticate against.
+Login flow: `POST /users/login` (or `/login` via gateway) with email + password. Identity looks up user and issues JWT with user_id, email, is_super_admin, scopes.
 
 ## URL Structure
 
@@ -1860,10 +1772,7 @@ Login flow: `POST /users/login` with email + password. Identity looks up user, o
 | `/` | Landing/login page | None |
 | `/login` | Login form | None |
 | `/superadmin/dashboard` | Super-admin dashboard | super_admin JWT |
-| `/superadmin/api/*` | Super-admin API (orgs, users, global agents) | super_admin JWT |
-| `/org/` | Org home (agents, goals, activity) | org JWT |
-| `/org/dashboard` | Org admin dashboard (users, teams, agents, full details) | org_admin JWT |
-| `/org/api/*` | Org-scoped API (teams, members, agents, goals) | org JWT |
+| `/superadmin/api/*` | Dashboard API (snapshot, approvals, goals, agents, chat, Slack config) | JWT |
 | `/health` | Health check | None |
 
 ## Super-Admin Dashboard
@@ -1875,7 +1784,7 @@ The current dashboard at `/dashboard/` is renamed to `/superadmin/dashboard/`. I
 - **Platform metrics**: service health, agents (names/status only), workers (names/status only), goal/task counts, LLM cost totals — all redacted (no execution details).
 - Org filter dropdown to narrow stats by org.
 
-## Org Dashboard (`/org/dashboard`)
+## (Removed) Org Dashboard
 
 Org-admin-only. Shows 100% of org data:
 
@@ -1887,7 +1796,7 @@ Org-admin-only. Shows 100% of org data:
 - **Approvals**: pending for org agents
 - **Cost**: org-scoped LLM usage
 
-## Org Home (`/org/`)
+## (Removed) Org Home
 
 All org members see: agents they can access (filtered by visibility), recent goals, quick-submit goal form, chat (if enabled).
 
@@ -2076,7 +1985,7 @@ func (r *Router) Route(taskType string, priority int) ModelTier {
 - `cost_tracking` monitors token usage, model calls per agent, cost per task
 - Alerts when thresholds exceeded
 - Dashboard: LLM cost per agent, per model, per day
-- **Multi-tenant**: Cost queries are scoped by `org_id`. Super-admin dashboard shows platform-wide cost totals with org filter. Org-admin dashboard shows org-specific cost. Token quotas can be set per org via `organizations.config`.
+- Cost queries are platform-wide. Dashboard shows cost totals. Token quotas can be set per agent or globally.
 
 ## Per-request usage and audit
 

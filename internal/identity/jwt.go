@@ -11,9 +11,6 @@ type Claims struct {
 	jwt.RegisteredClaims
 	UserID       string   `json:"user_id"`
 	Email        string   `json:"email"`
-	OrgID        string   `json:"org_id,omitempty"`
-	OrgRole      string   `json:"org_role,omitempty"`
-	TeamIDs      []string `json:"team_ids,omitempty"`
 	IsSuperAdmin bool     `json:"is_super_admin"`
 	Scopes       []string `json:"scopes"`
 }
@@ -22,9 +19,6 @@ type ValidateResult struct {
 	Valid        bool     `json:"valid"`
 	UserID       string   `json:"user_id"`
 	Email        string   `json:"email"`
-	OrgID        string   `json:"org_id,omitempty"`
-	OrgRole      string   `json:"org_role,omitempty"`
-	TeamIDs      []string `json:"team_ids,omitempty"`
 	IsSuperAdmin bool     `json:"is_super_admin"`
 	Scopes       []string `json:"scopes"`
 	Subject      string   `json:"subject"`
@@ -68,9 +62,6 @@ func ValidateToken(secret, tokenStr string) (*ValidateResult, error) {
 		Valid:        true,
 		UserID:       c.UserID,
 		Email:        c.Email,
-		OrgID:        c.OrgID,
-		OrgRole:      c.OrgRole,
-		TeamIDs:      c.TeamIDs,
 		IsSuperAdmin: c.IsSuperAdmin,
 		Scopes:       c.Scopes,
 		Subject:      sub,

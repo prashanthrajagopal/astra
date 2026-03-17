@@ -38,7 +38,7 @@ DROP TRIGGER IF EXISTS slack_workspaces_updated_at ON slack_workspaces;
 CREATE TRIGGER slack_workspaces_updated_at BEFORE UPDATE ON slack_workspaces
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE INDEX IF NOT EXISTS idx_slack_workspaces_org ON slack_workspaces(org_id);
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'slack_workspaces' AND column_name = 'org_id') THEN CREATE INDEX IF NOT EXISTS idx_slack_workspaces_org ON slack_workspaces(org_id); END IF; END $$;
 CREATE INDEX IF NOT EXISTS idx_slack_workspaces_slack_id ON slack_workspaces(slack_workspace_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS slack_channel_bindings (
   UNIQUE(org_id, slack_channel_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_slack_channel_bindings_org ON slack_channel_bindings(org_id);
-CREATE INDEX IF NOT EXISTS idx_slack_channel_bindings_channel ON slack_channel_bindings(org_id, slack_channel_id);
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'slack_channel_bindings' AND column_name = 'org_id') THEN CREATE INDEX IF NOT EXISTS idx_slack_channel_bindings_org ON slack_channel_bindings(org_id); END IF; END $$;
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'slack_channel_bindings' AND column_name = 'org_id') THEN CREATE INDEX IF NOT EXISTS idx_slack_channel_bindings_channel ON slack_channel_bindings(org_id, slack_channel_id); END IF; END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Slack user → Astra user mapping (per org)
@@ -70,8 +70,8 @@ CREATE TABLE IF NOT EXISTS slack_user_mappings (
   UNIQUE(org_id, slack_user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_slack_user_mappings_org ON slack_user_mappings(org_id);
-CREATE INDEX IF NOT EXISTS idx_slack_user_mappings_slack_user ON slack_user_mappings(org_id, slack_user_id);
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'slack_user_mappings' AND column_name = 'org_id') THEN CREATE INDEX IF NOT EXISTS idx_slack_user_mappings_org ON slack_user_mappings(org_id); END IF; END $$;
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'slack_user_mappings' AND column_name = 'org_id') THEN CREATE INDEX IF NOT EXISTS idx_slack_user_mappings_slack_user ON slack_user_mappings(org_id, slack_user_id); END IF; END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Optional: link chat session to Slack thread for continuity

@@ -421,9 +421,8 @@ paths:
           application/json:
             schema:
               type: object
-              required: [org_id, agent_id, user_id, text]
+              required: [agent_id, user_id, text]
               properties:
-                org_id: { type: string }
                 agent_id: { type: string }
                 user_id: { type: string }
                 session_id: { type: string }
