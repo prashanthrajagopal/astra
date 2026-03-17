@@ -115,8 +115,8 @@ func TestComplete_WithCache_SecondCallDoesNotCallBackend(t *testing.T) {
 
 func TestResolveModel(t *testing.T) {
 	tests := []struct {
-		hint   string
-		want   string
+		hint string
+		want string
 	}{
 		{"", ModelLocal},
 		{"local", ModelLocal},

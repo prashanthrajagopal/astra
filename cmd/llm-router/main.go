@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,27 +20,31 @@ import (
 	"google.golang.org/grpc/status"
 
 	"astra/internal/events"
+	"astra/internal/goaladmission"
 	"astra/internal/llm"
 	"astra/internal/messaging"
 	"astra/pkg/config"
 	"astra/pkg/db"
 	"astra/pkg/grpc"
 	"astra/pkg/logger"
+	"astra/pkg/metrics"
 
 	llmpb "astra/proto/llm"
 )
 
 const (
-	cacheTTL        = 86400 // 24h
+	cacheTTL        = 86400
 	usageStream     = "astra:usage"
 	usageGroup      = "usage-consumer"
 	usageConsumerID = "llm-router-1"
+	inflightKey     = "astra:llm:inflight"
 )
 
 type llmRouterServer struct {
 	llmpb.UnimplementedLLMRouterServer
 	router llm.Router
 	bus    *messaging.Bus
+	rdb    *redis.Client
 }
 
 func (s *llmRouterServer) Complete(ctx context.Context, req *llmpb.CompletionRequest) (*llmpb.CompletionResponse, error) {
@@ -49,13 +54,6 @@ func (s *llmRouterServer) Complete(ctx context.Context, req *llmpb.CompletionReq
 		ModelHint: modelHint,
 		MaxTokens: int(req.GetMaxTokens()),
 	}
-	content, usage, err := s.router.Complete(ctx, modelHint, prompt, options)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "complete: %v", err)
-	}
-
-	// Publish usage to Redis stream (async persistence) - no DB write on hot path
-	requestID := uuid.New().String()
 	agentID := ""
 	taskID := ""
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
@@ -67,6 +65,46 @@ func (s *llmRouterServer) Complete(ctx context.Context, req *llmpb.CompletionReq
 		}
 	}
 
+	maxInflight, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("ASTRA_LLM_MAX_INFLIGHT")))
+	retryAfter := strings.TrimSpace(os.Getenv("ASTRA_LLM_RETRY_AFTER_SECONDS"))
+	if retryAfter == "" {
+		retryAfter = "30"
+	}
+	if maxInflight > 0 && s.rdb != nil {
+		n, err := s.rdb.Incr(ctx, inflightKey).Result()
+		if err != nil {
+			slog.Warn("llm inflight incr failed", "err", err)
+		} else if n > int64(maxInflight) {
+			_ = s.rdb.Decr(ctx, inflightKey).Err()
+			return nil, status.Errorf(codes.ResourceExhausted, "llm saturated; retry after %s s", retryAfter)
+		} else {
+			defer func() { _ = s.rdb.Decr(ctx, inflightKey).Err() }()
+		}
+	}
+
+	content, usage, err := s.router.Complete(ctx, modelHint, prompt, options)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "complete: %v", err)
+	}
+
+	tokens := int64(usage.TokensIn + usage.TokensOut)
+	if agentID != "" && tokens > 0 {
+		if aid, err := uuid.Parse(agentID); err == nil {
+			_ = goaladmission.IncrAgentDailyTokens(ctx, s.rdb, aid, tokens)
+		}
+	}
+	mLabel := agentID
+	if mLabel == "" {
+		mLabel = "unknown"
+	}
+	if usage.LatencyMs > 0 {
+		metrics.LLMCompletionSeconds.WithLabelValues(mLabel, usage.Model).Observe(float64(usage.LatencyMs) / 1000.0)
+	}
+	if usage.CostDollars > 0 && agentID != "" {
+		metrics.LLMCostByAgentModel.WithLabelValues(agentID, usage.Model).Add(usage.CostDollars)
+	}
+
+	requestID := uuid.New().String()
 	fields := map[string]interface{}{
 		"request_id":   requestID,
 		"model":        usage.Model,
@@ -82,7 +120,6 @@ func (s *llmRouterServer) Complete(ctx context.Context, req *llmpb.CompletionReq
 	if taskID != "" {
 		fields["task_id"] = taskID
 	}
-
 	if s.bus != nil {
 		if err := s.bus.Publish(ctx, usageStream, fields); err != nil {
 			slog.Warn("publish usage to stream failed", "err", err)
@@ -142,7 +179,7 @@ func runUsageConsumer(ctx context.Context, bus *messaging.Bus, database *sql.DB,
 		return err
 	}
 
-	bus.Consume(ctx, usageStream, usageGroup, usageConsumerID, handler)
+	_ = bus.Consume(ctx, usageStream, usageGroup, usageConsumerID, handler)
 }
 
 func strVal(m map[string]interface{}, key string) string {
@@ -224,11 +261,14 @@ func main() {
 	bus := messaging.New(cfg.RedisAddr)
 	defer bus.Close()
 
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	defer rdb.Close()
+
 	eventStore := events.NewStore(database)
 
 	mc := memcache.New(cfg.MemcachedAddr)
 	router := llm.NewRouterWithCache(llm.NewEndpointBackendFromEnv(), mc, cacheTTL)
-	srv := &llmRouterServer{router: router, bus: bus}
+	srv := &llmRouterServer{router: router, bus: bus, rdb: rdb}
 	grpcSrv, err := grpc.NewServerFromConfig(cfg)
 	if err != nil {
 		slog.Error("failed to initialize gRPC server", "err", err)

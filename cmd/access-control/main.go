@@ -101,14 +101,14 @@ func main() {
 }
 
 type server struct {
-	db                *sql.DB
-	goalServiceAddr   string
-	client            *http.Client
+	db              *sql.DB
+	goalServiceAddr string
+	client          *http.Client
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +175,10 @@ func (s *server) handleApprovalAction(w http.ResponseWriter, r *http.Request, st
 	}
 
 	var req approveReq
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	callerUserID := r.Header.Get("X-User-Id")
 	if callerUserID != "" {
@@ -386,20 +389,20 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		ar.DecidedBy = decidedBy.String
 	}
 	out := map[string]interface{}{
-		"id":              ar.ID,
-		"request_type":    ar.RequestType,
-		"task_id":         ar.TaskID,
-		"worker_id":       ar.WorkerID,
-		"tool_name":       ar.ToolName,
-		"action_summary":  ar.ActionSummary,
-		"goal_id":         ar.GoalID,
-		"graph_id":        ar.GraphID,
-		"status":          ar.Status,
-		"requested_by":    ar.RequestedBy,
-		"assigned_to":     ar.AssignedTo,
-		"requested_at":    ar.RequestedAt,
-		"decided_at":      ar.DecidedAt,
-		"decided_by":      ar.DecidedBy,
+		"id":             ar.ID,
+		"request_type":   ar.RequestType,
+		"task_id":        ar.TaskID,
+		"worker_id":      ar.WorkerID,
+		"tool_name":      ar.ToolName,
+		"action_summary": ar.ActionSummary,
+		"goal_id":        ar.GoalID,
+		"graph_id":       ar.GraphID,
+		"status":         ar.Status,
+		"requested_by":   ar.RequestedBy,
+		"assigned_to":    ar.AssignedTo,
+		"requested_at":   ar.RequestedAt,
+		"decided_at":     ar.DecidedAt,
+		"decided_by":     ar.DecidedBy,
 	}
 	if len(planPayload) > 0 {
 		var payload interface{}

@@ -1,0 +1,7 @@
+{
+  "name": "template-default-agent",
+  "actor_type": "assistant",
+  "system_prompt": "# Pack agent\nYou are a helpful task agent.",
+  "chat_capable": true,
+  "allowed_tools": ["file_read@1", "file_write@1", "shell_exec@1", "list_files@1"]
+}
