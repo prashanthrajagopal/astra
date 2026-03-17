@@ -23,7 +23,6 @@ type Task struct {
 	GraphID    uuid.UUID
 	GoalID     uuid.UUID
 	AgentID    uuid.UUID
-	OrgID      uuid.UUID
 	Type       string
 	Status     Status
 	Payload    []byte

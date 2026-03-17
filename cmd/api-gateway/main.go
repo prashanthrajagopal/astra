@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,10 +20,8 @@ import (
 	"astra/internal/agentdocs"
 	"astra/internal/chat"
 	"astra/internal/dashboard"
-	"astra/internal/identity"
 	"astra/internal/llm"
 	"astra/internal/memory"
-	"astra/internal/orgs"
 	"astra/internal/slack"
 	"astra/pkg/config"
 	"astra/pkg/db"
@@ -38,7 +35,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	gogrpc "google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 var (
@@ -135,9 +131,6 @@ func main() {
 		}
 	}
 	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth)
-	orgStore := orgs.NewStore(database)
-	identityStore := identity.NewStore(database)
-	registerMultiTenantRoutes(mux, cfg, orgStore, identityStore, dashboardClient, database, auth)
 	mux.HandleFunc("GET /login", handleLoginPage)
 	mux.HandleFunc("POST /login", makeLoginProxyHandler(dashboardClient, cfg.IdentityAddr))
 	if cfg.ChatEnabled {
@@ -164,10 +157,9 @@ func main() {
 		http.Redirect(w, r, "/login", http.StatusFound)
 	})
 
-	handler := orgSlugInterceptor(mux, orgStore, dashboardClient, cfg.IdentityAddr)
 	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	slog.Info("api gateway started", "addr", addr)
-	srv := &http.Server{Addr: addr, Handler: handler}
+	srv := &http.Server{Addr: addr, Handler: mux}
 	if err := httpx.ListenAndServe(srv, cfg); err != nil {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
@@ -237,9 +229,6 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			Scopes       []string `json:"scopes"`
 			UserID       string   `json:"user_id"`
 			Email        string   `json:"email"`
-			OrgID        string   `json:"org_id"`
-			OrgRole      string   `json:"org_role"`
-			TeamIDs      []string `json:"team_ids"`
 			IsSuperAdmin bool     `json:"is_super_admin"`
 		}
 		if err := json.NewDecoder(valResp.Body).Decode(&valRes); err != nil || !valRes.Valid {
@@ -253,8 +242,6 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			"action":         action,
 			"resource":       r.URL.Path,
 			"tool_name":      "",
-			"org_id":         valRes.OrgID,
-			"org_role":       valRes.OrgRole,
 			"is_super_admin": valRes.IsSuperAdmin,
 		})
 		checkReq, _ := http.NewRequestWithContext(ctx, "POST", a.accessControlAddr+"/check", bytes.NewReader(checkBody))
@@ -278,14 +265,9 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 		}
 
 		r.Header.Set("X-User-Id", valRes.UserID)
-		r.Header.Set("X-Org-Id", valRes.OrgID)
-		r.Header.Set("X-Org-Role", valRes.OrgRole)
 		r.Header.Set("X-Email", valRes.Email)
 		if valRes.IsSuperAdmin {
 			r.Header.Set("X-Is-Super-Admin", "true")
-		}
-		if len(valRes.TeamIDs) > 0 {
-			r.Header.Set("X-Team-Ids", strings.Join(valRes.TeamIDs, ","))
 		}
 
 		next.ServeHTTP(w, r)
@@ -432,456 +414,6 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 </body>
 </html>`
 
-var reservedPaths = map[string]bool{
-	"login": true, "logout": true, "health": true, "agents": true, "tasks": true,
-	"graphs": true, "superadmin": true, "org": true, "api": true, "dashboard": true,
-	"chat": true, "goals": true, "":true,
-}
-
-func orgSlugInterceptor(mux http.Handler, orgStore *orgs.Store, client *http.Client, identityAddr string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
-		first := parts[0]
-		if first == "" || reservedPaths[first] {
-			mux.ServeHTTP(w, r)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		org, err := orgStore.GetOrgBySlug(ctx, first)
-		if err != nil || org == nil {
-			mux.ServeHTTP(w, r)
-			return
-		}
-		rest := ""
-		if len(parts) > 1 {
-			rest = "/" + parts[1]
-		}
-		switch {
-		case r.Method == "POST" && rest == "/login":
-			handleOrgLoginPost(w, r, org, client, identityAddr, ctx)
-		case r.Method == "GET" && rest == "/dashboard":
-			handleOrgDashboardPage(w, org)
-		case r.Method == "GET" && (rest == "" || rest == "/"):
-			handleOrgLoginPage(w, org)
-		default:
-			mux.ServeHTTP(w, r)
-		}
-	})
-}
-
-func handleOrgLoginPage(w http.ResponseWriter, org *orgs.Organization) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	html := strings.ReplaceAll(orgLoginPageHTML, "{{ORG_NAME}}", org.Name)
-	html = strings.ReplaceAll(html, "{{ORG_SLUG}}", org.Slug)
-	html = strings.ReplaceAll(html, "{{ORG_ID}}", org.ID.String())
-	w.Write([]byte(html))
-}
-
-func handleOrgLoginPost(w http.ResponseWriter, r *http.Request, org *orgs.Organization, client *http.Client, identityAddr string, ctx context.Context) {
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
-	var loginReq map[string]interface{}
-	json.Unmarshal(body, &loginReq)
-	loginReq["org_id"] = org.ID.String()
-	enriched, _ := json.Marshal(loginReq)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(identityAddr, "/")+"/users/login", bytes.NewReader(enriched))
-	if err != nil {
-		http.Error(w, `{"error":"request build failed"}`, http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, `{"error":"identity service unavailable"}`, http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-func handleOrgDashboardPage(w http.ResponseWriter, org *orgs.Organization) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	html := strings.ReplaceAll(orgDashboardHTML, "{{ORG_NAME}}", org.Name)
-	html = strings.ReplaceAll(html, "{{ORG_SLUG}}", org.Slug)
-	html = strings.ReplaceAll(html, "{{ORG_ID}}", org.ID.String())
-	w.Write([]byte(html))
-}
-
-func makeOrgDashboardHandler(orgStore *orgs.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		slug := r.PathValue("slug")
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		org, err := orgStore.GetOrgBySlug(ctx, slug)
-		if err != nil || org == nil {
-			http.Error(w, "Organization not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		html := strings.ReplaceAll(orgDashboardHTML, "{{ORG_NAME}}", org.Name)
-		html = strings.ReplaceAll(html, "{{ORG_SLUG}}", org.Slug)
-		html = strings.ReplaceAll(html, "{{ORG_ID}}", org.ID.String())
-		w.Write([]byte(html))
-	}
-}
-
-const orgDashboardHTML = `<!doctype html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>{{ORG_NAME}} — Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#242736;--border:#2e3348;
-  --text:#e4e6f0;--text2:#9399b2;--primary:#6c8aff;--primary-hover:#8ba3ff;
-  --error:#f87171;--success:#34d399;--warn:#fbbf24}
-body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh}
-.hdr{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;background:var(--surface);border-bottom:1px solid var(--border)}
-.hdr h1{font-size:1.25rem;font-weight:700}.hdr h1 span{color:var(--primary)}
-.badge{display:inline-block;background:rgba(108,138,255,.15);border:1px solid rgba(108,138,255,.3);border-radius:6px;padding:2px 10px;font-size:.75rem;color:var(--primary);margin-left:8px;vertical-align:middle}
-.btn{padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:.8125rem;font-weight:600;cursor:pointer;transition:background .15s}
-.btn:hover{background:var(--primary-hover)}.btn-sm{padding:6px 12px;font-size:.75rem}
-.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text2)}.btn-ghost:hover{background:var(--surface2);color:var(--text)}
-.nav{display:flex;gap:0;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border)}
-.nav button{padding:12px 20px;background:none;border:none;color:var(--text2);font-size:.875rem;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
-.nav button:hover{color:var(--text)}.nav button.active{color:var(--primary);border-bottom-color:var(--primary)}
-.content{padding:24px;max-width:1200px;margin:0 auto}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
-.card .label{font-size:.75rem;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
-.card .value{font-size:1.75rem;font-weight:700}
-.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
-.panel-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-.panel-hdr h2{font-size:1rem;font-weight:600}
-table{width:100%;border-collapse:collapse;font-size:.8125rem}
-th{text-align:left;color:var(--text2);font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)}
-td{padding:10px 12px;border-bottom:1px solid rgba(46,51,72,.5)}
-tr:hover td{background:rgba(108,138,255,.03)}
-.st{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.6875rem;font-weight:600;text-transform:uppercase}
-.st-active,.st-running{background:rgba(52,211,153,.15);color:var(--success)}
-.st-idle,.st-stopped,.st-unknown{background:rgba(147,153,178,.15);color:var(--text2)}
-.st-error{background:rgba(248,113,113,.15);color:var(--error)}
-.empty{text-align:center;padding:40px;color:var(--text2);font-size:.875rem}
-.mo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
-.mo.open{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:100%;max-width:440px}
-.modal h3{font-size:1.125rem;font-weight:600;margin-bottom:20px}
-.field{margin-bottom:16px}
-.field label{display:block;font-size:.8125rem;font-weight:500;color:var(--text2);margin-bottom:6px}
-.field input,.field select{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem;outline:none}
-.field input:focus,.field select:focus{border-color:var(--primary)}
-.mact{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
-.tab{display:none}.tab.active{display:block}
-.pag{display:flex;gap:8px;justify-content:center;margin-top:16px}
-code{background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:.75rem}
-</style>
-</head>
-<body>
-<div class="hdr">
-  <div><h1><span>{{ORG_NAME}}</span> Dashboard</h1><span class="badge">{{ORG_SLUG}}</span></div>
-  <button class="btn btn-ghost" onclick="localStorage.clear();location.href='/{{ORG_SLUG}}'">Sign out</button>
-</div>
-<div class="nav" id="nav">
-  <button class="active" data-tab="overview">Overview</button>
-  <button data-tab="agents">Agents</button>
-  <button data-tab="goals">Goals</button>
-  <button data-tab="teams">Teams</button>
-  <button data-tab="members">Members</button>
-</div>
-<div class="content">
-  <div class="tab active" id="tab-overview">
-    <div class="cards">
-      <div class="card"><div class="label">Agents</div><div class="value" id="s-ag">&#8212;</div></div>
-      <div class="card"><div class="label">Teams</div><div class="value" id="s-tm">&#8212;</div></div>
-      <div class="card"><div class="label">Members</div><div class="value" id="s-mb">&#8212;</div></div>
-      <div class="card"><div class="label">Goals</div><div class="value" id="s-gl">&#8212;</div></div>
-    </div>
-    <div class="panel" style="margin-top:16px">
-      <div class="panel-hdr"><h2>Integrations</h2></div>
-      <p style="color:var(--text2);font-size:.875rem;margin-bottom:12px">Connect Slack so your org can chat with Astra agents from Slack.</p>
-      <button class="btn btn-sm" id="btn-connect-slack">Connect Slack</button>
-      <span id="slack-connect-status" style="margin-left:12px;font-size:.8125rem;color:var(--text2)"></span>
-      <div style="margin-top:16px" id="slack-default-agent-row">
-        <label style="display:block;font-size:.8125rem;color:var(--text2);margin-bottom:6px">Default agent for Slack</label>
-        <select id="slack-default-agent" class="field" style="max-width:280px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem">
-          <option value="">— Select agent —</option>
-        </select>
-      </div>
-      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-        <p style="color:var(--text2);font-size:.8125rem;margin-bottom:10px">Or paste tokens from Slack → Your App → <strong>App Configuration Tokens</strong> (Access Token + Refresh Token):</p>
-        <p style="color:var(--text2);font-size:.75rem;margin-bottom:10px">If you see a token-format error, enter your <strong>Slack Workspace ID</strong> below (find it in Slack: <strong>Settings &amp; administration → Workspace settings</strong>, or in your workspace URL).</p>
-        <div class="field" style="margin-bottom:10px">
-          <label style="display:block;font-size:.75rem;color:var(--text2);margin-bottom:4px">Slack Workspace ID (recommended for App Configuration Tokens; e.g. T0ABC123)</label>
-          <input id="slack-workspace-id" placeholder="T0ABC123 or leave blank" style="width:100%;max-width:320px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem"/>
-        </div>
-        <div class="field" style="margin-bottom:10px">
-          <label style="display:block;font-size:.75rem;color:var(--text2);margin-bottom:4px">Access Token</label>
-          <input id="slack-access-token" type="password" placeholder="e.g. xoxb-... or xoxe.xoxp-..." autocomplete="off" style="width:100%;max-width:320px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem"/>
-        </div>
-        <div class="field" style="margin-bottom:10px">
-          <label style="display:block;font-size:.75rem;color:var(--text2);margin-bottom:4px">Refresh Token</label>
-          <input id="slack-refresh-token" type="password" placeholder="..." autocomplete="off" style="width:100%;max-width:320px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem"/>
-        </div>
-        <button class="btn btn-sm" id="btn-save-slack-tokens">Save tokens</button>
-        <span id="slack-tokens-status" style="margin-left:12px;font-size:.8125rem;color:var(--text2)"></span>
-      </div>
-    </div>
-  </div>
-  <div class="tab" id="tab-agents">
-    <div class="panel"><div class="panel-hdr"><h2>Agents</h2></div>
-    <table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Visibility</th><th>ID</th><th>Actions</th></tr></thead>
-    <tbody id="ag-tb"></tbody></table>
-    <div id="ag-e" class="empty" style="display:none">No agents found</div>
-    <div class="pag" id="ag-pg"></div></div>
-  </div>
-  <div class="tab" id="tab-goals">
-    <div class="panel"><div class="panel-hdr"><h2>Goals</h2></div>
-    <div class="empty">Org-scoped goal listing coming soon.<br/>Use the <a href="/superadmin/dashboard/" style="color:var(--primary)">super-admin dashboard</a> for goal management.</div></div>
-  </div>
-  <div class="tab" id="tab-teams">
-    <div class="panel"><div class="panel-hdr"><h2>Teams</h2><button class="btn btn-sm" onclick="openM('tm-mo')">Create Team</button></div>
-    <table><thead><tr><th>Name</th><th>Slug</th><th>Description</th><th>Created</th></tr></thead>
-    <tbody id="tm-tb"></tbody></table>
-    <div id="tm-e" class="empty" style="display:none">No teams yet</div></div>
-  </div>
-  <div class="tab" id="tab-members">
-    <div class="panel"><div class="panel-hdr"><h2>Members</h2><button class="btn btn-sm" onclick="openM('mb-mo')">Invite Member</button></div>
-    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th></tr></thead>
-    <tbody id="mb-tb"></tbody></table>
-    <div id="mb-e" class="empty" style="display:none">No members yet</div></div>
-  </div>
-</div>
-<div class="mo" id="tm-mo"><div class="modal"><h3>Create Team</h3>
-  <div class="field"><label>Name</label><input id="tf-n" placeholder="Engineering"/></div>
-  <div class="field"><label>Slug</label><input id="tf-s" placeholder="engineering"/></div>
-  <div class="mact"><button class="btn btn-ghost" onclick="closeM('tm-mo')">Cancel</button><button class="btn" onclick="mkTeam()">Create</button></div>
-</div></div>
-<div class="mo" id="mb-mo"><div class="modal"><h3>Invite Member</h3>
-  <div class="field"><label>Name</label><input id="mf-n" placeholder="Jane Doe"/></div>
-  <div class="field"><label>Email</label><input id="mf-e" type="email" placeholder="jane@company.com"/></div>
-  <div class="field"><label>Password</label><input id="mf-p" type="password" placeholder="Temporary password"/></div>
-  <div class="field"><label>Role</label><select id="mf-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
-  <div class="mact"><button class="btn btn-ghost" onclick="closeM('mb-mo')">Cancel</button><button class="btn" onclick="mkMember()">Invite</button></div>
-</div></div>
-<div class="mo" id="ag-edit-mo"><div class="modal" style="max-width:520px"><h3>Edit agent — Data source &amp; Slack</h3>
-  <div class="field"><label>Data source</label><select id="ag-edit-source"><option value="">None</option><option value="redis_pubsub">Redis Pub/Sub</option><option value="gcp_pubsub">GCP Pub/Sub</option><option value="websocket">WebSocket</option></select></div>
-  <div class="field"><label>Data source config (JSON)</label><textarea id="ag-edit-config" placeholder='{"channel":"events"}' rows="3" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.875rem;font-family:monospace;resize:vertical"></textarea></div>
-  <div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ag-edit-slack"/> Allow this agent to post to Slack when the prompt says so</label></div>
-  <div class="mact"><button class="btn btn-ghost" onclick="closeM('ag-edit-mo')">Cancel</button><button class="btn" id="ag-edit-save">Save</button></div>
-</div></div>
-<script>
-/* Org dashboard: inline script; could be moved to a static file (e.g. org-dashboard.js) for consistency with super-admin dashboard and easier maintenance. */
-(function(){
-var OID='{{ORG_ID}}',SLG='{{ORG_SLUG}}',tok=localStorage.getItem('astra_token');
-if(!tok){location.href='/'+SLG;return}
-function authFetch(u,o){o=o||{};o.headers=Object.assign({'Authorization':'Bearer '+tok,'Content-Type':'application/json'},o.headers||{});
-  return fetch(u,o).then(function(r){if(r.status===401){localStorage.clear();location.href='/'+SLG;throw new Error('unauthorized')}return r.json()})}
-function $(id){return document.getElementById(id)}
-function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
-document.getElementById('nav').onclick=function(e){if(e.target.tagName!=='BUTTON')return;
-  document.querySelectorAll('.nav button').forEach(function(b){b.classList.remove('active')});
-  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});
-  e.target.classList.add('active');var t=$('tab-'+e.target.dataset.tab);if(t)t.classList.add('active');
-  var d=e.target.dataset.tab;if(d==='agents')ldAg();if(d==='teams')ldTm();if(d==='members')ldMb()};
-window.openM=function(id){$(id).classList.add('open')};
-window.closeM=function(id){$(id).classList.remove('open')};
-function ldOv(){
-  authFetch('/agents').then(function(d){$('s-ag').textContent=(d.agents||[]).length}).catch(function(){$('s-ag').textContent='?'});
-  authFetch('/org/api/teams?org_id='+OID).then(function(d){$('s-tm').textContent=(d.teams||[]).length}).catch(function(){$('s-tm').textContent='?'});
-  authFetch('/org/api/members?org_id='+OID).then(function(d){$('s-mb').textContent=(d.members||[]).length}).catch(function(){$('s-mb').textContent='?'});
-  $('s-gl').textContent='\u2014';
-}ldOv();
-var agPg=0,agSz=20;
-window.ldAg=function(){authFetch('/agents').then(function(d){
-  var rw=d.agents||[],tb=$('ag-tb'),em=$('ag-e');tb.innerHTML='';
-  if(!rw.length){em.style.display='block';return}em.style.display='none';
-  var st=agPg*agSz,pg=rw.slice(st,st+agSz);
-  pg.forEach(function(a){var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+esc(a.name||'\u2014')+'</td><td>'+esc(a.actor_type||'\u2014')+'</td><td><span class="st st-'+(a.status||'unknown')+'">'+esc(a.status||'unknown')+'</span></td><td>'+esc(a.visibility||'\u2014')+'</td><td style="font-family:monospace;font-size:.75rem;color:var(--text2)">'+esc((a.id||'').substring(0,8))+'</td><td><button class="btn btn-sm btn-ghost" onclick="openEditAgent(\''+esc(a.id||'')+'\')">Edit</button></td>';
-    tb.appendChild(tr)});
-  var p=$('ag-pg'),pages=Math.ceil(rw.length/agSz);p.innerHTML='';
-  for(var i=0;i<pages;i++){var b=document.createElement('button');b.className='btn btn-sm'+(i===agPg?'':' btn-ghost');b.textContent=i+1;b.dataset.p=i;
-    b.onclick=function(){agPg=+this.dataset.p;ldAg()};p.appendChild(b)}
-}).catch(function(){})};
-var editAgentId=null;
-window.openEditAgent=function(id){
-  editAgentId=id;
-  authFetch('/agents/'+id+'/profile').then(function(p){
-    $('ag-edit-source').value=p.ingest_source_type||'';
-    var cfg=p.ingest_source_config;
-    $('ag-edit-config').value=typeof cfg==='string'?cfg:(cfg?JSON.stringify(cfg,null,2):'');
-    $('ag-edit-slack').checked=!!p.slack_notifications_enabled;
-    openM('ag-edit-mo');
-  }).catch(function(e){alert('Could not load agent');});
-};
-$('ag-edit-save').onclick=function(){
-  if(!editAgentId)return;
-  var src=$('ag-edit-source').value.trim(),cfgText=$('ag-edit-config').value.trim(),slack=$('ag-edit-slack').checked;
-  var payload={slack_notifications_enabled:slack};
-  if(src){var cfg={};try{if(cfgText)cfg=JSON.parse(cfgText);}catch(e){alert('Invalid JSON in data source config');return;}payload.ingest_source_type=src;payload.ingest_source_config=cfg;}
-  else{payload.ingest_source_type='';payload.ingest_source_config=null;}
-  authFetch('/agents/'+editAgentId,{method:'PATCH',body:JSON.stringify(payload)}).then(function(){closeM('ag-edit-mo');ldAg();}).catch(function(e){alert('Save failed');});
-};
-window.ldTm=function(){authFetch('/org/api/teams?org_id='+OID).then(function(d){
-  var rw=d.teams||[],tb=$('tm-tb'),em=$('tm-e');tb.innerHTML='';
-  if(!rw.length){em.style.display='block';return}em.style.display='none';
-  rw.forEach(function(t){var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+esc(t.name)+'</td><td><code>'+esc(t.slug)+'</code></td><td>'+esc(t.description||'\u2014')+'</td><td>'+new Date(t.created_at).toLocaleDateString()+'</td>';
-    tb.appendChild(tr)});
-}).catch(function(){})};
-window.mkTeam=function(){var n=$('tf-n').value,s=$('tf-s').value;
-  if(!n||!s)return alert('Name and slug required');
-  authFetch('/org/api/teams?org_id='+OID,{method:'POST',body:JSON.stringify({name:n,slug:s})}).then(function(){
-    closeM('tm-mo');$('tf-n').value='';$('tf-s').value='';ldTm();ldOv()}).catch(function(e){alert('Error: '+e.message)})};
-window.ldMb=function(){authFetch('/org/api/members?org_id='+OID).then(function(d){
-  var rw=d.members||[],tb=$('mb-tb'),em=$('mb-e');tb.innerHTML='';
-  if(!rw.length){em.style.display='block';return}em.style.display='none';
-  rw.forEach(function(m){var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+esc(m.name)+'</td><td>'+esc(m.email)+'</td><td><span class="badge">'+esc(m.role)+'</span></td><td>'+new Date(m.created_at).toLocaleDateString()+'</td>';
-    tb.appendChild(tr)});
-}).catch(function(){})};
-window.mkMember=function(){var n=$('mf-n').value,e=$('mf-e').value,p=$('mf-p').value,r=$('mf-r').value;
-  if(!n||!e||!p)return alert('All fields required');
-  authFetch('/org/api/members?org_id='+OID,{method:'POST',body:JSON.stringify({name:n,email:e,password:p,role:r})}).then(function(){
-    closeM('mb-mo');$('mf-n').value='';$('mf-e').value='';$('mf-p').value='';ldMb();ldOv()}).catch(function(er){alert('Error: '+er.message)})};
-(function(){
-  var btn=$('btn-connect-slack'),st=$('slack-connect-status'),sel=$('slack-default-agent');
-  if(btn)btn.onclick=function(){
-    if(!tok){st.textContent='Sign in first';return}
-    st.textContent='Redirecting...';btn.disabled=true;
-    fetch('/org/api/slack/connect',{redirect:'manual',headers:{'Authorization':'Bearer '+tok}})
-      .then(function(r){if(r.type==='opaqueredirect'||r.status===302){var loc=r.headers.get('Location');if(loc)window.location.href=loc;else st.textContent='Redirect failed'}else return r.text().then(function(t){st.textContent=t||'Error';btn.disabled=false})})
-      .catch(function(e){st.textContent=e.message||'Error';btn.disabled=false});
-  };
-  if(location.search.indexOf('slack=connected')!==-1&&st)st.textContent='Slack connected.';
-  function loadSlackWorkspace(){authFetch('/org/api/slack/workspace').then(function(ws){if(!ws.connected){if(sel)sel.innerHTML='<option value="">— Connect Slack first —</option>';return}authFetch('/agents').then(function(ag){var list=ag.agents||[];if(!sel)return;sel.innerHTML='<option value="">— Select agent —</option>';list.forEach(function(a){var o=document.createElement('option');o.value=a.id;o.textContent=a.name||a.id;sel.appendChild(o)});if(ws.default_agent_id)sel.value=ws.default_agent_id}).catch(function(){})}).catch(function(){})}
-  loadSlackWorkspace();
-  if(sel)sel.onchange=function(){var v=sel.value;authFetch('/org/api/slack/workspace',{method:'PATCH',body:JSON.stringify({default_agent_id:v||null})}).catch(function(){})};
-  var btnSaveTokens=$('btn-save-slack-tokens'),stTokens=$('slack-tokens-status');
-  if(btnSaveTokens)btnSaveTokens.onclick=function(){
-    var access=$('slack-access-token').value, refresh=$('slack-refresh-token').value, wid=$('slack-workspace-id').value;
-    if(!access){if(stTokens)stTokens.textContent='Access token required';return}
-    if(!tok){if(stTokens)stTokens.textContent='Sign in first';return}
-    btnSaveTokens.disabled=true;if(stTokens)stTokens.textContent='Saving...';
-    var payload={access_token:access,refresh_token:refresh};if(wid)payload.slack_workspace_id=wid;
-    fetch('/org/api/slack/workspace/tokens',{method:'PUT',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      .then(function(r){return r.text().then(function(t){var d;try{d=JSON.parse(t)}catch(e){d={}};return{ok:r.ok,status:r.status,data:d,text:t};});})
-      .then(function(res){
-        btnSaveTokens.disabled=false;
-        var msg=res.ok ? 'Tokens saved.'+(res.data.slack_workspace_id?' Workspace: '+res.data.slack_workspace_id:'') : (res.data.error||res.data.message||res.text||'Save failed');
-        if(stTokens)stTokens.textContent=msg;
-        if(res.ok){$('slack-access-token').value='';$('slack-refresh-token').value='';loadSlackWorkspace();}
-      })
-      .catch(function(e){btnSaveTokens.disabled=false;if(stTokens)stTokens.textContent=e.message||'Request failed';});
-  };
-})();
-})();
-</script>
-</body>
-</html>`
-
-const orgLoginPageHTML = `<!doctype html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>{{ORG_NAME}} — Astra</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0f1117;--surface:#1a1d27;--surface2:#242736;--border:#2e3348;
-  --text:#e4e6f0;--text2:#9399b2;--primary:#6c8aff;--primary-hover:#8ba3ff;
-  --error:#f87171;--success:#34d399;
-}
-body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
-  min-height:100vh;display:flex;align-items:center;justify-content:center}
-.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
-  padding:48px 40px;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
-.logo{font-size:1.75rem;font-weight:700;text-align:center;margin-bottom:4px;letter-spacing:-.02em}
-.logo span{color:var(--primary)}
-.org-name{text-align:center;font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:4px}
-.subtitle{text-align:center;color:var(--text2);font-size:.875rem;margin-bottom:32px}
-.field{margin-bottom:20px}
-.field label{display:block;font-size:.8125rem;font-weight:500;color:var(--text2);margin-bottom:6px}
-.field input{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);
-  border-radius:8px;color:var(--text);font-size:.9375rem;outline:none;transition:border .15s}
-.field input:focus{border-color:var(--primary)}
-.field input::placeholder{color:var(--text2);opacity:.6}
-.btn{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:8px;
-  font-size:.9375rem;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
-.btn:hover{background:var(--primary-hover)}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.msg{margin-top:16px;padding:10px 14px;border-radius:8px;font-size:.8125rem;display:none}
-.msg.error{display:block;background:rgba(248,113,113,.1);border:1px solid var(--error);color:var(--error)}
-.msg.success{display:block;background:rgba(52,211,153,.1);border:1px solid var(--success);color:var(--success)}
-.links{margin-top:24px;text-align:center;font-size:.8125rem;color:var(--text2)}
-.links a{color:var(--primary);text-decoration:none}
-.links a:hover{text-decoration:underline}
-.org-badge-top{display:inline-block;background:rgba(108,138,255,.15);border:1px solid rgba(108,138,255,.3);
-  border-radius:6px;padding:2px 10px;font-size:.75rem;color:var(--primary);margin-bottom:16px}
-</style>
-</head>
-<body>
-<div class="login-card">
-  <div class="logo"><span>Astra</span></div>
-  <div class="org-name">{{ORG_NAME}}</div>
-  <div class="subtitle">Sign in to your organization</div>
-  <form id="login-form" autocomplete="on">
-    <div class="field">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" placeholder="you@company.com" required autofocus/>
-    </div>
-    <div class="field">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" placeholder="Password" required/>
-    </div>
-    <button class="btn" type="submit" id="btn-login">Sign in</button>
-  </form>
-  <div id="msg" class="msg"></div>
-  <div class="links">
-    <a href="/login">Platform login</a>
-  </div>
-</div>
-<script>
-(function(){
-  var form=document.getElementById('login-form');
-  var msg=document.getElementById('msg');
-  var btn=document.getElementById('btn-login');
-  var orgSlug='{{ORG_SLUG}}';
-  form.addEventListener('submit',function(e){
-    e.preventDefault();
-    btn.disabled=true;btn.textContent='Signing in...';
-    msg.className='msg';msg.style.display='none';
-    var body=JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value});
-    fetch('/'+orgSlug+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:body})
-      .then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})})
-      .then(function(res){
-        if(!res.ok){
-          msg.className='msg error';msg.textContent=res.data.error||'Login failed';msg.style.display='block';
-          btn.disabled=false;btn.textContent='Sign in';return;
-        }
-        var d=res.data;
-        localStorage.setItem('astra_token',d.token||'');
-        localStorage.setItem('astra_user',JSON.stringify(d.user||{}));
-        if(d.org) localStorage.setItem('astra_org',JSON.stringify(d.org));
-        msg.className='msg success';msg.textContent='Welcome, '+(d.user&&d.user.name||'User')+'!';msg.style.display='block';
-        setTimeout(function(){ window.location.href='/'+orgSlug+'/dashboard'; },600);
-      })
-      .catch(function(err){
-        msg.className='msg error';msg.textContent='Network error: '+err.message;msg.style.display='block';
-        btn.disabled=false;btn.textContent='Sign in';
-      });
-  });
-})();
-</script>
-</body>
-</html>`
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
@@ -1582,7 +1114,7 @@ func handleInternalIngestEvent() http.HandlerFunc {
 	}
 }
 
-// handleInternalSlackPost handles POST /internal/slack/post for proactive Slack messages. Auth: X-Slack-Internal-Secret.
+// handleInternalSlackPost handles POST /internal/slack/post for proactive Slack messages. Auth: X-Slack-Internal-Secret. Single-platform: uses default workspace.
 func handleInternalSlackPost(slackStore *slack.Store) http.HandlerFunc {
 	secret := os.Getenv("ASTRA_SLACK_INTERNAL_SECRET")
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1597,7 +1129,6 @@ func handleInternalSlackPost(slackStore *slack.Store) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			OrgID     string `json:"org_id"`
 			ChannelID string `json:"channel_id,omitempty"`
 			Text      string `json:"text"`
 			ThreadTs  string `json:"thread_ts,omitempty"`
@@ -1608,22 +1139,15 @@ func handleInternalSlackPost(slackStore *slack.Store) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
 			return
 		}
-		if req.OrgID == "" || req.Text == "" {
+		if req.Text == "" {
 			w.Header().Set(headerContentType, contentTypeJSON)
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "org_id and text required"})
-			return
-		}
-		orgID, err := uuid.Parse(req.OrgID)
-		if err != nil {
-			w.Header().Set(headerContentType, contentTypeJSON)
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid org_id"})
+			json.NewEncoder(w).Encode(map[string]string{"error": "text required"})
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		if err := slack.PostMessage(ctx, slackStore, &http.Client{}, orgID, req.ChannelID, req.Text, req.ThreadTs); err != nil {
+		if err := slack.PostMessage(ctx, slackStore, &http.Client{}, req.ChannelID, req.Text, req.ThreadTs); err != nil {
 			slog.Error("internal slack post failed", "err", err)
 			w.Header().Set(headerContentType, contentTypeJSON)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -1737,6 +1261,12 @@ func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *h
 		return
 	}
 	req.Header.Set(headerContentType, contentTypeJSON)
+	if v := r.Header.Get("X-User-Id"); v != "" {
+		req.Header.Set("X-User-Id", v)
+	}
+	if r.Header.Get("X-Is-Super-Admin") == "true" {
+		req.Header.Set("X-Is-Super-Admin", "true")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "access-control unavailable", http.StatusBadGateway)
@@ -1759,16 +1289,9 @@ func handleApprovalActionProxy(w http.ResponseWriter, r *http.Request, client *h
 	})
 }
 
-// kernelCtxWithAuth returns a context with gRPC metadata from request headers so the kernel can scope by org/super-admin.
+// kernelCtxWithAuth returns context for kernel calls (single-platform: no org scoping).
 func kernelCtxWithAuth(r *http.Request, ctx context.Context) context.Context {
-	md := metadata.New(map[string]string{})
-	if v := r.Header.Get("X-Org-Id"); v != "" {
-		md.Set("x-org-id", v)
-	}
-	if r.Header.Get("X-Is-Super-Admin") == "true" {
-		md.Set("x-is-super-admin", "true")
-	}
-	return metadata.NewOutgoingContext(ctx, md)
+	return ctx
 }
 
 func handleListAgents(w http.ResponseWriter, r *http.Request) {
@@ -1811,52 +1334,10 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		Config       string `json:"config"`
 		Name         string `json:"name"`
 		SystemPrompt string `json:"system_prompt"`
-		Visibility   string `json:"visibility"`
 		ChatCapable  bool   `json:"chat_capable"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Role-based visibility enforcement (before SpawnActor)
-	visibility := req.Visibility
-	if visibility == "" {
-		visibility = "private"
-	}
-	isSuperAdmin := r.Header.Get("X-Is-Super-Admin") == "true"
-	orgIDStr := r.Header.Get("X-Org-Id")
-	orgRole := r.Header.Get("X-Org-Role")
-	userIDStr := r.Header.Get("X-User-Id")
-	teamIDStr := r.Header.Get("X-Team-Id")
-	if teamIDStr == "" {
-		if ids := r.Header.Get("X-Team-Ids"); ids != "" {
-			teamIDStr = strings.Split(ids, ",")[0]
-		}
-	}
-
-	if isSuperAdmin {
-		if visibility != "global" {
-			visibility = "global"
-		}
-		if !strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") {
-			req.Name = "astra-global-" + req.Name
-		}
-		orgIDStr = ""
-	} else if orgRole == "admin" {
-		if visibility == "global" {
-			http.Error(w, `{"error":"org admins cannot create global agents"}`, http.StatusForbidden)
-			return
-		}
-	} else {
-		if visibility == "global" || visibility == "public" {
-			http.Error(w, `{"error":"only org admins can create public agents; only super admins can create global agents"}`, http.StatusForbidden)
-			return
-		}
-	}
-
-	if strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") && !isSuperAdmin {
-		http.Error(w, `{"error":"agents with the astra-global- prefix can only be created by super admins"}`, http.StatusForbidden)
 		return
 	}
 
@@ -1885,35 +1366,13 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 	if req.Name != "" && docStore != nil {
 		_ = docStore.UpdateAgentName(ctx, agentID, req.Name)
 	}
-
-	// Update agent with visibility, chat_capable, org ownership
-	var orgID, ownerID, teamID *uuid.UUID
-	if orgIDStr != "" {
-		if o, err := uuid.Parse(orgIDStr); err == nil {
-			orgID = &o
-		}
-	}
-	if userIDStr != "" && orgID != nil {
-		if u, err := uuid.Parse(userIDStr); err == nil {
-			ownerID = &u
-		}
-	}
-	if teamIDStr != "" && orgID != nil {
-		if t, err := uuid.Parse(teamIDStr); err == nil {
-			teamID = &t
-		}
-	}
-	if docStore != nil {
-		if err := docStore.UpdateAgentMeta(ctx, agentID, visibility, req.ChatCapable, orgID, ownerID, teamID); err != nil {
-			slog.Error("UpdateAgentMeta failed", "err", err)
-		}
+	if docStore != nil && req.ChatCapable {
+		_ = docStore.UpdateAgentMeta(ctx, agentID, "", req.ChatCapable, nil, nil, nil)
 	}
 
 	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"actor_id": resp.ActorId})
 }
-
-var validVisibility = map[string]bool{"global": true, "public": true, "team": true, "private": true}
 
 func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
@@ -1926,7 +1385,6 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt             *string          `json:"system_prompt"`
 		Config                   *json.RawMessage `json:"config"`
 		Status                   *string          `json:"status"`
-		Visibility               *string          `json:"visibility"`
 		ChatCapable              *bool            `json:"chat_capable"`
 		IngestSourceType         *string          `json:"ingest_source_type"`
 		IngestSourceConfig       *json.RawMessage `json:"ingest_source_config"`
@@ -1941,34 +1399,6 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid agent id")
 		return
 	}
-	// Validate visibility when present (DB allows only global, public, team, private).
-	if req.Visibility != nil {
-		v := strings.TrimSpace(*req.Visibility)
-		if v == "" || !validVisibility[v] {
-			writeJSONError(w, http.StatusBadRequest, "invalid visibility: must be one of global, public, team, private")
-			return
-		}
-		*req.Visibility = v
-	}
-	// Any agent creator (org admin/member) can configure ingest/Slack for agents in their org; super admins can edit any agent.
-	isSuperAdmin := r.Header.Get("X-Is-Super-Admin") == "true"
-	orgIDStr := r.Header.Get("X-Org-Id")
-	if !isSuperAdmin && docStore != nil {
-		agentOrg, err := docStore.GetAgentOrg(r.Context(), id)
-		if err != nil {
-			slog.Error("GetAgentOrg failed", "err", err)
-			writeJSONError(w, http.StatusInternalServerError, "authorization check failed")
-			return
-		}
-		if agentOrg == nil {
-			writeJSONError(w, http.StatusForbidden, "only super admins can edit global agents")
-			return
-		}
-		if orgIDStr == "" || agentOrg.String() != orgIDStr {
-			writeJSONError(w, http.StatusForbidden, "you can only edit agents in your organization")
-			return
-		}
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if req.Name != nil {
@@ -1978,23 +1408,11 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.Visibility != nil || req.ChatCapable != nil {
-		vis, chat, oID, ownID, tID, err := docStore.GetAgentMeta(ctx, id)
-		if err != nil {
-			slog.Error("GetAgentMeta failed", "err", err)
-			writeJSONError(w, http.StatusInternalServerError, "authorization check failed")
-			return
-		}
-		if req.Visibility != nil {
-			vis = *req.Visibility
-		}
-		chatVal := chat
-		if req.ChatCapable != nil {
-			chatVal = *req.ChatCapable
-		}
-		if err := docStore.UpdateAgentMeta(ctx, id, vis, chatVal, oID, ownID, tID); err != nil {
+	if req.ChatCapable != nil {
+		chatVal := *req.ChatCapable
+		if err := docStore.UpdateAgentMeta(ctx, id, "", chatVal, nil, nil, nil); err != nil {
 			slog.Error("UpdateAgentMeta failed", "err", err)
-			writeJSONError(w, http.StatusInternalServerError, "update visibility/chat failed: "+err.Error())
+			writeJSONError(w, http.StatusInternalServerError, "update chat_capable failed: "+err.Error())
 			return
 		}
 	}
@@ -2069,21 +1487,6 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid agent id", http.StatusBadRequest)
 		return
 	}
-	// Org users may only view profiles of agents in their org or global agents.
-	isSuperAdmin := r.Header.Get("X-Is-Super-Admin") == "true"
-	orgIDStr := r.Header.Get("X-Org-Id")
-	if !isSuperAdmin && docStore != nil {
-		agentOrg, err := docStore.GetAgentOrg(r.Context(), id)
-		if err != nil {
-			slog.Error("GetAgentOrg failed", "err", err)
-			http.Error(w, "authorization check failed", http.StatusInternalServerError)
-			return
-		}
-		if agentOrg != nil && (orgIDStr == "" || agentOrg.String() != orgIDStr) {
-			http.Error(w, "agent not found", http.StatusNotFound)
-			return
-		}
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	profile, err := docStore.GetProfile(ctx, id)
@@ -2098,13 +1501,12 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	out := map[string]interface{}{
-		"id":            profile.ID.String(),
-		"name":          profile.Name,
-		"system_prompt": profile.SystemPrompt,
-		"config":        profile.Config,
-		"visibility":    profile.Visibility,
-		"chat_capable":  profile.ChatCapable,
-		"slack_notifications_enabled": profile.SlackNotificationsEnabled,
+		"id":                           profile.ID.String(),
+		"name":                         profile.Name,
+		"system_prompt":                profile.SystemPrompt,
+		"config":                       profile.Config,
+		"chat_capable":                 profile.ChatCapable,
+		"slack_notifications_enabled":  profile.SlackNotificationsEnabled,
 	}
 	if profile.ActorType != "" {
 		out["actor_type"] = profile.ActorType
@@ -2374,1096 +1776,6 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Multi-Tenant Routes
-// ---------------------------------------------------------------------------
-
-func registerMultiTenantRoutes(mux *http.ServeMux, cfg *config.Config, orgStore *orgs.Store, identityStore *identity.Store, client *http.Client, database *sql.DB, auth *authMiddleware) {
-	identityAddr := strings.TrimSuffix(cfg.IdentityAddr, "/")
-	slackStore := slack.NewStore(database)
-
-	// --- Super-Admin Org Routes ---
-
-	mux.Handle("GET /superadmin/api/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		limit, offset := parsePagination(r)
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		list, total, err := orgStore.ListOrgs(ctx, limit, offset)
-		if err != nil {
-			slog.Error("ListOrgs failed", "err", err)
-			http.Error(w, "list orgs failed", http.StatusInternalServerError)
-			return
-		}
-		items := make([]map[string]any, len(list))
-		for i, o := range list {
-			items[i] = map[string]any{
-				"id": o.ID.String(), "name": o.Name, "slug": o.Slug,
-				"status": o.Status, "config": json.RawMessage(o.Config),
-				"created_at": o.CreatedAt, "updated_at": o.UpdatedAt,
-			}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]any{"orgs": items, "total": total})
-	})))
-
-	mux.Handle("POST /superadmin/api/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Name string `json:"name"`
-			Slug string `json:"slug"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
-			http.Error(w, "name and slug required", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		org, err := orgStore.CreateOrg(ctx, req.Name, req.Slug)
-		if err != nil {
-			slog.Error("CreateOrg failed", "err", err)
-			http.Error(w, "create org failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"id": org.ID.String(), "name": org.Name, "slug": org.Slug,
-			"status": org.Status, "created_at": org.CreatedAt, "updated_at": org.UpdatedAt,
-		})
-	})))
-
-	mux.Handle("GET /superadmin/api/orgs/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		org, err := orgStore.GetOrg(ctx, id)
-		if err != nil {
-			slog.Error("GetOrg failed", "err", err)
-			http.Error(w, "get org failed", http.StatusInternalServerError)
-			return
-		}
-		if org == nil {
-			http.Error(w, "org not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]any{
-			"id": org.ID.String(), "name": org.Name, "slug": org.Slug,
-			"status": org.Status, "config": json.RawMessage(org.Config),
-			"created_at": org.CreatedAt, "updated_at": org.UpdatedAt,
-		})
-	})))
-
-	mux.Handle("PATCH /superadmin/api/orgs/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Name   *string `json:"name"`
-			Slug   *string `json:"slug"`
-			Status *string `json:"status"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.UpdateOrg(ctx, id, req.Name, req.Slug, req.Status); err != nil {
-			slog.Error("UpdateOrg failed", "err", err)
-			http.Error(w, "update org failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("DELETE /superadmin/api/orgs/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.DeleteOrg(ctx, id); err != nil {
-			slog.Error("DeleteOrg failed", "err", err)
-			http.Error(w, "delete org failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("POST /superadmin/api/orgs/{id}/admins", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			UserID string `json:"user_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
-			http.Error(w, "user_id required", http.StatusBadRequest)
-			return
-		}
-		userID, err := uuid.Parse(req.UserID)
-		if err != nil {
-			http.Error(w, "invalid user_id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.AddOrgMember(ctx, orgID, userID, "admin"); err != nil {
-			slog.Error("AddOrgMember admin failed", "err", err)
-			http.Error(w, "add admin failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("DELETE /superadmin/api/orgs/{id}/admins/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		userID, err := uuid.Parse(r.PathValue("uid"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.RemoveOrgMember(ctx, orgID, userID); err != nil {
-			slog.Error("RemoveOrgMember failed", "err", err)
-			http.Error(w, "remove admin failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	// --- Super-Admin User Routes (proxy to identity service) ---
-
-	mux.Handle("GET /superadmin/api/users", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyToIdentity(w, r, client, identityAddr, http.MethodGet, "/users")
-	})))
-
-	mux.Handle("POST /superadmin/api/users", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyToIdentity(w, r, client, identityAddr, http.MethodPost, "/users")
-	})))
-
-	mux.Handle("GET /superadmin/api/users/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyToIdentity(w, r, client, identityAddr, http.MethodGet, "/users/"+r.PathValue("id"))
-	})))
-
-	mux.Handle("PATCH /superadmin/api/users/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyToIdentity(w, r, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"))
-	})))
-
-	mux.Handle("POST /superadmin/api/users/{id}/reset-password", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyToIdentity(w, r, client, identityAddr, http.MethodPost, "/users/"+r.PathValue("id")+"/reset-password")
-	})))
-
-	// --- Super-Admin User-Org Management ---
-
-	mux.Handle("GET /superadmin/api/users/{id}/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		memberships, err := identityStore.GetOrgMemberships(ctx, userID)
-		if err != nil {
-			slog.Error("GetOrgMemberships failed", "err", err)
-			http.Error(w, "get memberships failed", http.StatusInternalServerError)
-			return
-		}
-		items := make([]map[string]any, len(memberships))
-		for i, m := range memberships {
-			items[i] = map[string]any{
-				"org_id": m.OrgID.String(), "org_name": m.OrgName,
-				"org_slug": m.OrgSlug, "role": m.Role,
-			}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]any{"memberships": items})
-	})))
-
-	mux.Handle("POST /superadmin/api/users/{id}/orgs", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			OrgID string `json:"org_id"`
-			Role  string `json:"role"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrgID == "" || req.Role == "" {
-			http.Error(w, "org_id and role required", http.StatusBadRequest)
-			return
-		}
-		orgID, err := uuid.Parse(req.OrgID)
-		if err != nil {
-			http.Error(w, "invalid org_id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.AddOrgMember(ctx, orgID, userID, req.Role); err != nil {
-			slog.Error("AddOrgMember failed", "err", err)
-			http.Error(w, "add membership failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("PATCH /superadmin/api/users/{id}/orgs/{oid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		orgID, err := uuid.Parse(r.PathValue("oid"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Role string `json:"role"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Role == "" {
-			http.Error(w, "role required", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.UpdateOrgMemberRole(ctx, orgID, userID, req.Role); err != nil {
-			slog.Error("UpdateOrgMemberRole failed", "err", err)
-			http.Error(w, "update role failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("DELETE /superadmin/api/users/{id}/orgs/{oid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		orgID, err := uuid.Parse(r.PathValue("oid"))
-		if err != nil {
-			http.Error(w, "invalid org id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.RemoveOrgMember(ctx, orgID, userID); err != nil {
-			slog.Error("RemoveOrgMember failed", "err", err)
-			http.Error(w, "remove membership failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("POST /superadmin/api/users/{id}/suspend", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := json.Marshal(map[string]string{"status": "suspended"})
-		proxyToIdentityWithBody(w, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"), body, r.Context())
-	})))
-
-	mux.Handle("POST /superadmin/api/users/{id}/activate", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := json.Marshal(map[string]string{"status": "active"})
-		proxyToIdentityWithBody(w, client, identityAddr, http.MethodPatch, "/users/"+r.PathValue("id"), body, r.Context())
-	})))
-
-	// --- Org-Level Routes ---
-
-	mux.Handle("GET /org/api/teams", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		teams, err := orgStore.ListTeams(ctx, orgID)
-		if err != nil {
-			slog.Error("ListTeams failed", "err", err)
-			http.Error(w, "list teams failed", http.StatusInternalServerError)
-			return
-		}
-		items := make([]map[string]any, len(teams))
-		for i, t := range teams {
-			items[i] = map[string]any{
-				"id": t.ID.String(), "org_id": t.OrgID.String(),
-				"name": t.Name, "slug": t.Slug,
-				"description": t.Description, "created_at": t.CreatedAt,
-			}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]any{"teams": items})
-	})))
-
-	mux.Handle("POST /org/api/teams", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Name string `json:"name"`
-			Slug string `json:"slug"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
-			http.Error(w, "name and slug required", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		team, err := orgStore.CreateTeam(ctx, orgID, req.Name, req.Slug)
-		if err != nil {
-			slog.Error("CreateTeam failed", "err", err)
-			http.Error(w, "create team failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"id": team.ID.String(), "org_id": team.OrgID.String(),
-			"name": team.Name, "slug": team.Slug,
-			"description": team.Description, "created_at": team.CreatedAt,
-		})
-	})))
-
-	mux.Handle("PATCH /org/api/teams/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid team id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Name        *string `json:"name"`
-			Slug        *string `json:"slug"`
-			Description *string `json:"description"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.UpdateTeam(ctx, id, req.Name, req.Slug, req.Description); err != nil {
-			slog.Error("UpdateTeam failed", "err", err)
-			http.Error(w, "update team failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("DELETE /org/api/teams/{id}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid team id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.DeleteTeam(ctx, id); err != nil {
-			slog.Error("DeleteTeam failed", "err", err)
-			http.Error(w, "delete team failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("POST /org/api/teams/{id}/members", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		teamID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid team id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			UserID string `json:"user_id"`
-			Role   string `json:"role"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
-			http.Error(w, "user_id required", http.StatusBadRequest)
-			return
-		}
-		userID, err := uuid.Parse(req.UserID)
-		if err != nil {
-			http.Error(w, "invalid user_id", http.StatusBadRequest)
-			return
-		}
-		if req.Role == "" {
-			req.Role = "member"
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.AddTeamMember(ctx, teamID, userID, req.Role); err != nil {
-			slog.Error("AddTeamMember failed", "err", err)
-			http.Error(w, "add team member failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("DELETE /org/api/teams/{id}/members/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		teamID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid team id", http.StatusBadRequest)
-			return
-		}
-		userID, err := uuid.Parse(r.PathValue("uid"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.RemoveTeamMember(ctx, teamID, userID); err != nil {
-			slog.Error("RemoveTeamMember failed", "err", err)
-			http.Error(w, "remove team member failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("GET /org/api/members", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		members, err := orgStore.ListOrgMembers(ctx, orgID)
-		if err != nil {
-			slog.Error("ListOrgMembers failed", "err", err)
-			http.Error(w, "list members failed", http.StatusInternalServerError)
-			return
-		}
-		items := make([]map[string]any, len(members))
-		for i, m := range members {
-			items[i] = map[string]any{
-				"user_id": m.UserID.String(), "email": m.Email,
-				"name": m.Name, "role": m.Role,
-				"created_at": m.CreatedAt,
-			}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]any{"members": items})
-	})))
-
-	mux.Handle("POST /org/api/members", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Email    string `json:"email"`
-			Name     string `json:"name"`
-			Password string `json:"password"`
-			Role     string `json:"role"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Name == "" || req.Password == "" {
-			http.Error(w, "email, name, and password required", http.StatusBadRequest)
-			return
-		}
-		if req.Role == "" {
-			req.Role = "member"
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		user, err := identityStore.CreateUser(ctx, req.Email, req.Name, req.Password, false)
-		if err != nil {
-			slog.Error("CreateUser for org member failed", "err", err)
-			http.Error(w, "create user failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := orgStore.AddOrgMember(ctx, orgID, user.ID, req.Role); err != nil {
-			slog.Error("AddOrgMember failed", "err", err)
-			http.Error(w, "add member failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"user_id": user.ID.String(), "email": user.Email,
-			"name": user.Name, "role": req.Role,
-		})
-	})))
-
-	mux.Handle("PATCH /org/api/members/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		userID, err := uuid.Parse(r.PathValue("uid"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Role string `json:"role"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Role == "" {
-			http.Error(w, "role required", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.UpdateOrgMemberRole(ctx, orgID, userID, req.Role); err != nil {
-			slog.Error("UpdateOrgMemberRole failed", "err", err)
-			http.Error(w, "update role failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	mux.Handle("DELETE /org/api/members/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		userID, err := uuid.Parse(r.PathValue("uid"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := orgStore.RemoveOrgMember(ctx, orgID, userID); err != nil {
-			slog.Error("RemoveOrgMember failed", "err", err)
-			http.Error(w, "remove member failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	// --- Org-Level Agent Creation ---
-
-	mux.Handle("POST /org/api/agents", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		userID := r.Header.Get("X-User-Id")
-		if userID == "" {
-			userID = r.URL.Query().Get("user_id")
-		}
-		if userID == "" {
-			http.Error(w, "user_id required (X-User-Id header or user_id query param)", http.StatusBadRequest)
-			return
-		}
-		ownerUUID, err := uuid.Parse(userID)
-		if err != nil {
-			http.Error(w, "invalid user_id", http.StatusBadRequest)
-			return
-		}
-
-		var req struct {
-			Name         string `json:"name"`
-			Visibility   string `json:"visibility"`
-			TeamID       string `json:"team_id"`
-			SystemPrompt string `json:"system_prompt"`
-			Config       string `json:"config"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if strings.HasPrefix(strings.ToLower(req.Name), "astra-global-") {
-			http.Error(w, `{"error":"agents with the astra-global- prefix can only be created by super admins"}`, http.StatusForbidden)
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		configBytes := []byte(req.Config)
-		resp, err := agentClient.SpawnActor(ctx, &kernel_pb.SpawnActorRequest{
-			ActorType: "agent",
-			Config:    configBytes,
-		})
-		if err != nil {
-			slog.Error("SpawnActor for org agent failed", "err", err)
-			http.Error(w, "spawn failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		agentUUID, err := uuid.Parse(resp.ActorId)
-		if err != nil {
-			http.Error(w, "invalid actor id from spawn", http.StatusInternalServerError)
-			return
-		}
-
-		if req.SystemPrompt != "" && docStore != nil {
-			_ = docStore.UpdateProfile(ctx, agentUUID, &req.SystemPrompt, nil)
-		}
-		if req.Name != "" && docStore != nil {
-			_ = docStore.UpdateAgentName(ctx, agentUUID, req.Name)
-		}
-
-		visibility := req.Visibility
-		if visibility == "" {
-			visibility = "private"
-		}
-
-		var teamID *uuid.UUID
-		if req.TeamID != "" {
-			t, err := uuid.Parse(req.TeamID)
-			if err != nil {
-				http.Error(w, "invalid team_id", http.StatusBadRequest)
-				return
-			}
-			teamID = &t
-		}
-
-		_, err = database.ExecContext(ctx,
-			`UPDATE agents SET org_id = $1, owner_id = $2, visibility = $3, team_id = $4 WHERE id = $5`,
-			orgID, ownerUUID, visibility, teamID, agentUUID)
-		if err != nil {
-			slog.Error("update agent org metadata failed", "err", err, "agent_id", agentUUID)
-			http.Error(w, "agent created but metadata update failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"actor_id":   resp.ActorId,
-			"org_id":     orgID.String(),
-			"owner_id":   ownerUUID.String(),
-			"visibility": visibility,
-		})
-	})))
-
-	// --- Agent Collaborator Routes ---
-
-	mux.Handle("POST /org/api/agents/{id}/collaborators", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid agent id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			CollaboratorType string `json:"collaborator_type"`
-			CollaboratorID   string `json:"collaborator_id"`
-			Permission       string `json:"permission"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if req.CollaboratorType != "user" && req.CollaboratorType != "team" {
-			http.Error(w, "collaborator_type must be 'user' or 'team'", http.StatusBadRequest)
-			return
-		}
-		collabID, err := uuid.Parse(req.CollaboratorID)
-		if err != nil {
-			http.Error(w, "invalid collaborator_id", http.StatusBadRequest)
-			return
-		}
-		perm := req.Permission
-		if perm == "" {
-			perm = "use"
-		}
-		if perm != "use" && perm != "edit" && perm != "admin" {
-			http.Error(w, "permission must be 'use', 'edit', or 'admin'", http.StatusBadRequest)
-			return
-		}
-
-		newID := uuid.New()
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		_, err = database.ExecContext(ctx,
-			`INSERT INTO agent_collaborators (id, agent_id, collaborator_type, collaborator_id, permission) VALUES ($1, $2, $3, $4, $5)`,
-			newID, agentID, req.CollaboratorType, collabID, perm)
-		if err != nil {
-			slog.Error("insert agent_collaborator failed", "err", err)
-			http.Error(w, "add collaborator failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"id": newID.String(), "agent_id": agentID.String(),
-			"collaborator_type": req.CollaboratorType, "collaborator_id": collabID.String(),
-			"permission": perm,
-		})
-	})))
-
-	mux.Handle("GET /org/api/agents/{id}/collaborators", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid agent id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		rows, err := database.QueryContext(ctx,
-			`SELECT ac.id, ac.collaborator_type, ac.collaborator_id, ac.permission, ac.created_at FROM agent_collaborators ac WHERE ac.agent_id = $1`,
-			agentID)
-		if err != nil {
-			slog.Error("query agent_collaborators failed", "err", err)
-			http.Error(w, "list collaborators failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-
-		var items []map[string]any
-		for rows.Next() {
-			var id, collabType, collabID, perm string
-			var createdAt time.Time
-			if err := rows.Scan(&id, &collabType, &collabID, &perm, &createdAt); err != nil {
-				slog.Error("scan agent_collaborator row failed", "err", err)
-				continue
-			}
-			items = append(items, map[string]any{
-				"id": id, "collaborator_type": collabType, "collaborator_id": collabID,
-				"permission": perm, "created_at": createdAt,
-			})
-		}
-		if err := rows.Err(); err != nil {
-			slog.Error("iterate agent_collaborators failed", "err", err)
-			http.Error(w, "list collaborators failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if items == nil {
-			items = []map[string]any{}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]any{"collaborators": items})
-	})))
-
-	mux.Handle("DELETE /org/api/agents/{id}/collaborators/{cid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid agent id", http.StatusBadRequest)
-			return
-		}
-		collabRowID, err := uuid.Parse(r.PathValue("cid"))
-		if err != nil {
-			http.Error(w, "invalid collaborator id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		result, err := database.ExecContext(ctx,
-			`DELETE FROM agent_collaborators WHERE id = $1 AND agent_id = $2`,
-			collabRowID, agentID)
-		if err != nil {
-			slog.Error("delete agent_collaborator failed", "err", err)
-			http.Error(w, "delete collaborator failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			http.Error(w, "collaborator not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	// --- Agent Admin Routes ---
-
-	mux.Handle("POST /org/api/agents/{id}/admins", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid agent id", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			UserID string `json:"user_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
-			http.Error(w, "user_id required", http.StatusBadRequest)
-			return
-		}
-		adminUserID, err := uuid.Parse(req.UserID)
-		if err != nil {
-			http.Error(w, "invalid user_id", http.StatusBadRequest)
-			return
-		}
-		newID := uuid.New()
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		_, err = database.ExecContext(ctx,
-			`INSERT INTO agent_admins (id, agent_id, user_id) VALUES ($1, $2, $3)`,
-			newID, agentID, adminUserID)
-		if err != nil {
-			slog.Error("insert agent_admin failed", "err", err)
-			http.Error(w, "add agent admin failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"id": newID.String(), "agent_id": agentID.String(), "user_id": adminUserID.String(),
-		})
-	})))
-
-	mux.Handle("DELETE /org/api/agents/{id}/admins/{uid}", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentID, err := uuid.Parse(r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "invalid agent id", http.StatusBadRequest)
-			return
-		}
-		adminUserID, err := uuid.Parse(r.PathValue("uid"))
-		if err != nil {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		result, err := database.ExecContext(ctx,
-			`DELETE FROM agent_admins WHERE agent_id = $1 AND user_id = $2`,
-			agentID, adminUserID)
-		if err != nil {
-			slog.Error("delete agent_admin failed", "err", err)
-			http.Error(w, "delete agent admin failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			http.Error(w, "agent admin not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	// --- Slack OAuth (org connect) ---
-	mux.Handle("GET /org/api/slack/connect", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		clientID, _ := slackStore.GetConfig(ctx, slack.ConfigKeyClientID)
-		redirectURL, _ := slackStore.GetConfig(ctx, slack.ConfigKeyOAuthRedirectURL)
-		if clientID == "" || redirectURL == "" {
-			http.Error(w, "Slack app not configured; set Client ID and OAuth Redirect URL in Super-Admin Slack settings", http.StatusBadRequest)
-			return
-		}
-		scope := "chat:write,channels:history,groups:history,im:history,app_mentions:read,channels:read,groups:read,im:read,users:read"
-		authURL := "https://slack.com/oauth/v2/authorize?client_id=" + clientID + "&scope=" + url.QueryEscape(scope) + "&redirect_uri=" + url.QueryEscape(redirectURL) + "&state=" + orgID.String()
-		http.Redirect(w, r, authURL, http.StatusFound)
-	})))
-
-	mux.Handle("GET /org/api/slack/workspace", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		ws, err := slackStore.GetWorkspaceByOrgID(ctx, orgID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		out := map[string]any{"connected": ws != nil}
-		if ws != nil {
-			out["slack_workspace_id"] = ws.SlackWorkspaceID
-			if ws.DefaultAgentID != nil {
-				out["default_agent_id"] = ws.DefaultAgentID.String()
-			}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(out)
-	})))
-
-	mux.Handle("PATCH /org/api/slack/workspace", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			DefaultAgentID *string `json:"default_agent_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		if body.DefaultAgentID == nil || *body.DefaultAgentID == "" {
-			_, _ = database.ExecContext(ctx, `UPDATE slack_workspaces SET default_agent_id = NULL, updated_at = now() WHERE org_id = $1`, orgID)
-		} else {
-			agentID, err := uuid.Parse(*body.DefaultAgentID)
-			if err != nil {
-				http.Error(w, "invalid default_agent_id", http.StatusBadRequest)
-				return
-			}
-			if err := slackStore.UpdateWorkspaceDefaultAgent(ctx, orgID, agentID); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-
-	// PUT /org/api/slack/workspace/tokens — manually set access + refresh token (e.g. from Slack App Configuration Tokens page)
-	mux.Handle("PUT /org/api/slack/workspace/tokens", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		orgID, err := extractOrgID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			SlackWorkspaceID string `json:"slack_workspace_id"` // optional; if empty we get it from auth.test
-			AccessToken      string `json:"access_token"`
-			RefreshToken     string `json:"refresh_token"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-		if body.AccessToken == "" {
-			http.Error(w, "access_token required", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		workspaceID := body.SlackWorkspaceID
-		if workspaceID == "" {
-			// Resolve team_id from Slack auth.test (may not work for App Configuration Tokens)
-			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://slack.com/api/auth.test", nil)
-			req.Header.Set("Authorization", "Bearer "+body.AccessToken)
-			resp, err := client.Do(req)
-			if err != nil {
-				http.Error(w, "failed to validate token: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			defer resp.Body.Close()
-			var testResult struct {
-				OK    bool   `json:"ok"`
-				Team  string `json:"team_id"`
-				Error string `json:"error"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&testResult)
-			if !testResult.OK || testResult.Team == "" {
-				msg := "invalid token or could not get workspace id"
-				if testResult.Error != "" {
-					msg = "Slack auth.test: " + testResult.Error + " — try entering your Slack Workspace ID above (find it in Slack: Settings & administration → Workspace settings → Workspace ID, or in your Slack app URL)."
-				}
-				http.Error(w, msg, http.StatusBadRequest)
-				return
-			}
-			workspaceID = testResult.Team
-		}
-		if err := slackStore.UpsertWorkspace(ctx, orgID, workspaceID, body.AccessToken, body.RefreshToken, nil); err != nil {
-			slog.Error("slack UpsertWorkspace tokens failed", "err", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeJSON)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "slack_workspace_id": workspaceID})
-	})))
-
-	mux.HandleFunc("GET /org/api/slack/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
-		state := r.URL.Query().Get("state")
-		if code == "" || state == "" {
-			http.Error(w, "missing code or state", http.StatusBadRequest)
-			return
-		}
-		orgID, err := uuid.Parse(state)
-		if err != nil {
-			http.Error(w, "invalid state", http.StatusBadRequest)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-		clientID, _ := slackStore.GetConfig(ctx, slack.ConfigKeyClientID)
-		clientSecret, _ := slackStore.GetConfig(ctx, slack.ConfigKeyClientSecret)
-		redirectURL, _ := slackStore.GetConfig(ctx, slack.ConfigKeyOAuthRedirectURL)
-		if clientID == "" || clientSecret == "" || redirectURL == "" {
-			http.Error(w, "Slack app not configured", http.StatusBadRequest)
-			return
-		}
-		form := url.Values{}
-		form.Set("client_id", clientID)
-		form.Set("client_secret", clientSecret)
-		form.Set("code", code)
-		form.Set("redirect_uri", redirectURL)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/oauth.v2.access", strings.NewReader(form.Encode()))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := client.Do(req)
-		if err != nil {
-			slog.Error("slack oauth exchange failed", "err", err)
-			http.Error(w, "OAuth exchange failed", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-		var result struct {
-			OK           bool   `json:"ok"`
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-			Team         struct {
-				ID string `json:"id"`
-			} `json:"team"`
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&result)
-		if !result.OK || result.AccessToken == "" {
-			slog.Error("slack oauth response error", "ok", result.OK, "error", result.Error)
-			http.Error(w, "Slack authorization failed: "+result.Error, http.StatusInternalServerError)
-			return
-		}
-		if err := slackStore.UpsertWorkspace(ctx, orgID, result.Team.ID, result.AccessToken, result.RefreshToken, nil); err != nil {
-			slog.Error("slack UpsertWorkspace failed", "err", err)
-			http.Error(w, "failed to save workspace link", http.StatusInternalServerError)
-			return
-		}
-		org, _ := orgStore.GetOrg(ctx, orgID)
-		redirectTo := "/"
-		if org != nil {
-			redirectTo = "/" + org.Slug + "/dashboard?slack=connected"
-		}
-		http.Redirect(w, r, redirectTo, http.StatusFound)
-	})
-}
 
 func proxyToIdentity(w http.ResponseWriter, r *http.Request, client *http.Client, identityAddr, method, path string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -3528,29 +1840,3 @@ func proxyToIdentityWithBody(w http.ResponseWriter, client *http.Client, identit
 	io.Copy(w, resp.Body)
 }
 
-func extractOrgID(r *http.Request) (uuid.UUID, error) {
-	id := r.Header.Get("X-Org-Id")
-	if id == "" {
-		id = r.URL.Query().Get("org_id")
-	}
-	if id == "" {
-		return uuid.Nil, fmt.Errorf("org_id required (X-Org-Id header or org_id query param)")
-	}
-	return uuid.Parse(id)
-}
-
-func parsePagination(r *http.Request) (limit, offset int) {
-	limit = 50
-	offset = 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = n
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			offset = n
-		}
-	}
-	return
-}
