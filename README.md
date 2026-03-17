@@ -637,6 +637,12 @@ Use **`PATCH /agents/{id}`** with a JWT in `Authorization: Bearer <token>`. Set 
 
 ---
 
+## Roadmap — Multi-channel (deferred)
+
+Broader **multi-channel** access (Slack beyond current partial flow, Microsoft Teams, email bots, unified webhook ingress for arbitrary channels) is **backlogged**—not part of the current agent-platform hardening track. Today: **dashboard chat**, **ingest bindings** (Redis / GCP Pub/Sub / WebSocket), and Slack-related pieces described in [docs/slack-integration-design.md](docs/slack-integration-design.md) and PRD Phase 12. Future work will extend channel bindings and session routing; track in [docs/PRD.md](docs/PRD.md) roadmap.
+
+---
+
 ## Documentation
 
 - **[docs/PRD.md](docs/PRD.md)** — Single source of truth: architecture, 16 canonical services, kernel APIs, database schema, Redis streams, deployment, security, and phased roadmap (v3.0 multi-tenant).

@@ -525,6 +525,34 @@ func (s *Store) AutoFinalizeGoal(ctx context.Context, goalID string) error {
 }
 
 func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error) {
+	ids, err := s.findReadyTasksByAgentPriority(ctx, limit)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "priority") {
+		return s.findReadyTasksFIFO(ctx, limit)
+	}
+	return ids, err
+}
+
+func (s *Store) findReadyTasksByAgentPriority(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id FROM tasks t
+		JOIN agents a ON a.id = t.agent_id
+		WHERE t.status = 'pending'
+		AND NOT EXISTS (
+			SELECT 1 FROM task_dependencies d
+			JOIN tasks td ON td.id = d.depends_on
+			WHERE d.task_id = t.id AND td.status != 'completed'
+		)
+		ORDER BY a.priority DESC, t.created_at ASC
+		FOR UPDATE OF t SKIP LOCKED
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTaskIDs(rows)
+}
+
+func (s *Store) findReadyTasksFIFO(ctx context.Context, limit int) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id FROM tasks t
 		WHERE t.status = 'pending'
@@ -533,13 +561,17 @@ func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error)
 			JOIN tasks td ON td.id = d.depends_on
 			WHERE d.task_id = t.id AND td.status != 'completed'
 		)
-		FOR UPDATE SKIP LOCKED
+		ORDER BY t.created_at ASC
+		FOR UPDATE OF t SKIP LOCKED
 		LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("tasks.FindReady: %w", err)
 	}
 	defer rows.Close()
+	return scanTaskIDs(rows)
+}
 
+func scanTaskIDs(rows *sql.Rows) ([]string, error) {
 	var ids []string
 	for rows.Next() {
 		var id string

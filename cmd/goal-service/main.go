@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"astra/internal/agentdocs"
 	"astra/internal/events"
+	"astra/internal/goaladmission"
 	"astra/internal/llm"
 	"astra/internal/planner"
 	"astra/internal/tasks"
@@ -273,6 +275,20 @@ func main() {
 		}
 		if req.GoalText == "" {
 			http.Error(w, `{"error":"goal_text required"}`, http.StatusBadRequest)
+			return
+		}
+		if err := goaladmission.CheckBeforeNewGoal(r.Context(), database, rdb, agentID); err != nil {
+			switch {
+			case errors.Is(err, goaladmission.ErrDrainMode):
+				http.Error(w, `{"error":"agent_draining","message":"agent is draining; no new goals accepted"}`, http.StatusServiceUnavailable)
+			case errors.Is(err, goaladmission.ErrConcurrentCap):
+				http.Error(w, `{"error":"concurrent_goals_cap"}`, http.StatusTooManyRequests)
+			case errors.Is(err, goaladmission.ErrTokenBudget):
+				http.Error(w, `{"error":"daily_token_budget_exceeded"}`, http.StatusTooManyRequests)
+			default:
+				slog.Error("goal admission failed", "err", err)
+				http.Error(w, `{"error":"admission failed"}`, http.StatusInternalServerError)
+			}
 			return
 		}
 		priority := req.Priority

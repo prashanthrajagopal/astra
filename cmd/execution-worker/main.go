@@ -172,7 +172,7 @@ func executeCodeGen(ctx context.Context, task *tasks.Task, wsRuntime *tools.Work
 	if task.Payload != nil {
 		_ = json.Unmarshal(task.Payload, &payload)
 	}
-	result, err := codegen.Process(ctx, payload, wsRuntime, llmClient)
+	result, err := codegen.Process(ctx, task.ID.String(), task.AgentID.String(), payload, wsRuntime, llmClient)
 	if err != nil {
 		return nil, err
 	}
