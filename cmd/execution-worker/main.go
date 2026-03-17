@@ -79,7 +79,7 @@ func main() {
 	slog.Info("execution worker started", "worker_id", w.ID, "hostname", hostname)
 
 	handler := newTaskHandler(taskStore, wsRuntime, legacyRuntime, llmClient, w.ID.String())
-	bus.Consume(ctx, "astra:tasks:shard:0", "worker-group", w.ID.String(), handler)
+	_ = bus.Consume(ctx, "astra:tasks:shard:0", "worker-group", w.ID.String(), handler)
 
 	_ = registry.MarkOffline(context.Background(), w.ID.String())
 	slog.Info("execution worker stopped", "worker_id", w.ID)

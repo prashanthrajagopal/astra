@@ -116,7 +116,7 @@ func TestAssembleContext_PrioritySorting(t *testing.T) {
 	}
 
 	for _, d := range ac.Rules {
-		store.DeleteDocument(ctx, d.ID)
+		_ = store.DeleteDocument(ctx, d.ID)
 	}
 	_, _ = db.ExecContext(ctx, `DELETE FROM agents WHERE id = $1`, agentID)
 }

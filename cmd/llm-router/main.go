@@ -142,7 +142,7 @@ func runUsageConsumer(ctx context.Context, bus *messaging.Bus, database *sql.DB,
 		return err
 	}
 
-	bus.Consume(ctx, usageStream, usageGroup, usageConsumerID, handler)
+	_ = bus.Consume(ctx, usageStream, usageGroup, usageConsumerID, handler)
 }
 
 func strVal(m map[string]interface{}, key string) string {

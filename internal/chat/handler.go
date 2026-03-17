@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	chunkSize      = 100
-	chunkDelayMs   = 30
+	chunkSize       = 100
+	chunkDelayMs    = 30
 	identityDefault = "http://localhost:8085"
 )
 
@@ -274,8 +274,8 @@ func NewWebSocketHandler(chatStore *Store, db *sql.DB, llmBackend *llm.EndpointB
 				}
 				processMessage(ctx, conn, chatStore, llmBackend, se, subject, systemPrompt, processOpts{
 					maxMsgLength: maxMsgLength,
-					tokenCap:    tokenCap,
-					memoryStore: memoryStore,
+					tokenCap:     tokenCap,
+					memoryStore:  memoryStore,
 				}, frame.Content, frame.ID)
 			default:
 				// Ignore unknown frame types
@@ -662,4 +662,3 @@ func ProcessGoalMessage(ctx context.Context, chatStore *Store, goalServiceAddr s
 
 	return msg, nil
 }
-

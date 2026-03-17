@@ -43,7 +43,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("POST /plan", func(w http.ResponseWriter, r *http.Request) {
 		var req planRequest
@@ -112,6 +112,6 @@ func main() {
 	slog.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(ctx)
+	_ = srv.Shutdown(ctx)
 	slog.Info("planner service stopped")
 }

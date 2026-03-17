@@ -29,12 +29,12 @@ import (
 
 // planPayloadSpec matches docs/approval-system-extension-spec.md §3.2.
 type planPayloadSpec struct {
-	GoalID       string              `json:"goal_id"`
-	GraphID      string              `json:"graph_id"`
-	AgentID      string              `json:"agent_id"`
-	GoalText     string              `json:"goal_text"`
-	Tasks        []planPayloadTask   `json:"tasks"`
-	Dependencies []planPayloadDep    `json:"dependencies"`
+	GoalID       string            `json:"goal_id"`
+	GraphID      string            `json:"graph_id"`
+	AgentID      string            `json:"agent_id"`
+	GoalText     string            `json:"goal_text"`
+	Tasks        []planPayloadTask `json:"tasks"`
+	Dependencies []planPayloadDep  `json:"dependencies"`
 }
 
 type planPayloadTask struct {
@@ -238,7 +238,7 @@ func main() {
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 
 	mux.HandleFunc("POST /internal/apply-plan", func(w http.ResponseWriter, r *http.Request) {
@@ -371,27 +371,27 @@ func main() {
 				http.Error(w, `{"error":"serialize plan failed"}`, http.StatusInternalServerError)
 				return
 			}
-		approvalID := uuid.New()
-		_, err = database.ExecContext(ctx,
-			`INSERT INTO approval_requests (id, request_type, goal_id, graph_id, plan_payload, status, requested_by)
+			approvalID := uuid.New()
+			_, err = database.ExecContext(ctx,
+				`INSERT INTO approval_requests (id, request_type, goal_id, graph_id, plan_payload, status, requested_by)
 			 VALUES ($1, 'plan', $2, $3, $4, 'pending', $5)`,
-			approvalID, goalID, graph.ID, planPayloadJSON, userVal)
-		if err != nil {
-			slog.Error("insert plan approval failed", "err", err)
-			http.Error(w, `{"error":"create approval request failed"}`, http.StatusInternalServerError)
-			return
-		}
+				approvalID, goalID, graph.ID, planPayloadJSON, userVal)
+			if err != nil {
+				slog.Error("insert plan approval failed", "err", err)
+				http.Error(w, `{"error":"create approval request failed"}`, http.StatusInternalServerError)
+				return
+			}
 
-		assignApprovalToAdmin(ctx, database, approvalID, agentID)
+			assignApprovalToAdmin(ctx, database, approvalID, agentID)
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"goal_id":             goalID.String(),
-			"approval_request_id": approvalID.String(),
-			"message":             "Plan pending approval",
-			"graph_id":            graph.ID.String(),
-		})
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"goal_id":             goalID.String(),
+				"approval_request_id": approvalID.String(),
+				"message":             "Plan pending approval",
+				"graph_id":            graph.ID.String(),
+			})
 			return
 		}
 
@@ -633,10 +633,10 @@ func main() {
 		stats := map[string]any{}
 
 		var totalGoals, activeGoals, completedGoals, failedGoals int
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals`).Scan(&totalGoals)
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'active'`).Scan(&activeGoals)
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'completed'`).Scan(&completedGoals)
-		database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'failed'`).Scan(&failedGoals)
+		_ = database.QueryRowContext(ctx, `SELECT count(*) FROM goals`).Scan(&totalGoals)
+		_ = database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'active'`).Scan(&activeGoals)
+		_ = database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'completed'`).Scan(&completedGoals)
+		_ = database.QueryRowContext(ctx, `SELECT count(*) FROM goals WHERE status = 'failed'`).Scan(&failedGoals)
 		stats["goals"] = map[string]int{
 			"total": totalGoals, "active": activeGoals,
 			"completed": completedGoals, "failed": failedGoals,
@@ -697,6 +697,6 @@ func main() {
 	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(shutdownCtx)
+	_ = srv.Shutdown(shutdownCtx)
 	slog.Info("goal service stopped")
 }

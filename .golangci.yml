@@ -1,11 +1,31 @@
-# Minimal config; CI runs golangci-lint. Tune linters as needed.
+# CI: golangci-lint-action. errcheck excludes JSON Encode — errors are rare and would require
+# touching every handler; defer Rollback/Consume patterns are excluded where idiomatic.
 run:
   timeout: 5m
   modules-download-mode: readonly
 
 linters:
+  disable-all: true
   enable:
     - errcheck
     - govet
     - ineffassign
     - gofmt
+    - unused
+    - staticcheck
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - (*encoding/json.Encoder).Encode
+      - (*github.com/gorilla/websocket.Conn).SetReadDeadline
+
+issues:
+  exclude-rules:
+    # Idiom: defer tx.Rollback() — commit overwrites or rollback on exit
+    - path: "_test\\.go"
+      linters: [errcheck]
+      text: "Rollback"
+    - path: "internal/tasks/store\\.go"
+      linters: [errcheck]
+      text: "Rollback"

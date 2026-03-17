@@ -64,7 +64,7 @@ func TestE2E_SpawnGoalScheduleComplete(t *testing.T) {
 
 	// 5. Create agent with all deps
 	ag := agent.New("test-agent", k, p, taskStore, database)
-	defer ag.Stop()
+	defer func() { _ = ag.Stop() }()
 
 	// Insert agent into agents table (goals FK requires it)
 	_, err = database.ExecContext(context.Background(),
@@ -138,7 +138,7 @@ func TestE2E_SpawnGoalScheduleComplete(t *testing.T) {
 	defer cancelExec()
 
 	go func() {
-		bus.Consume(execCtx, "astra:tasks:shard:0", "e2e-worker-group", "e2e-consumer-1", func(m redis.XMessage) error {
+		_ = bus.Consume(execCtx, "astra:tasks:shard:0", "e2e-worker-group", "e2e-consumer-1", func(m redis.XMessage) error {
 			taskIDVal, ok := m.Values["task_id"]
 			if !ok {
 				return nil

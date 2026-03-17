@@ -18,13 +18,13 @@ func TestBaseActor_ReceiveAndHandle(t *testing.T) {
 		mu.Unlock()
 		return nil
 	})
-	defer actor.Stop()
+	defer func() { _ = actor.Stop() }()
 
 	msg := Message{
-		ID:   "msg-1",
-		Type: "test",
-		Source: "sender",
-		Target: "test-actor",
+		ID:        "msg-1",
+		Type:      "test",
+		Source:    "sender",
+		Target:    "test-actor",
 		Timestamp: time.Now(),
 	}
 	if err := actor.Receive(context.Background(), msg); err != nil {
@@ -49,7 +49,7 @@ func TestBaseActor_Stop(t *testing.T) {
 	actor.Start(func(context.Context, Message) error { return nil })
 	done := make(chan struct{})
 	go func() {
-		actor.Stop()
+		_ = actor.Stop()
 		close(done)
 	}()
 	select {

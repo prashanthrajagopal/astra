@@ -125,7 +125,7 @@ func (s *Store) CreateSession(ctx context.Context, userID string, agentID uuid.U
 	se := &Session{
 		ID:      uuid.New(),
 		UserID:  userID,
-		AgentID:  agentID,
+		AgentID: agentID,
 		Title:   title,
 		Status:  "active",
 	}
@@ -247,7 +247,7 @@ func (s *Store) AppendMessage(ctx context.Context, sessionID uuid.UUID, userID s
 	if err != nil {
 		return nil, fmt.Errorf("chat.AppendMessage: %w", err)
 	}
-	s.db.ExecContext(ctx, `UPDATE chat_sessions SET updated_at = now() WHERE id = $1`, sessionID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE chat_sessions SET updated_at = now() WHERE id = $1`, sessionID)
 	_ = s.db.QueryRowContext(ctx, `SELECT created_at FROM chat_messages WHERE id = $1`, m.ID).Scan(&m.CreatedAt)
 	return m, nil
 }
