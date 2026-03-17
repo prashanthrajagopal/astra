@@ -8,6 +8,7 @@ Quick reference for the Astra Autonomous Agent OS repository structure. Read thi
 astra/
 ├── cmd/                        # Service entrypoints (one folder per service)
 │   ├── api-gateway/            # REST/gRPC gateway, auth, versioning
+│   │   └── dashboard/          # Super-admin UI: index.html, static/style.css, app.js
 │   ├── identity/               # User/service auth, tokens, audit log
 │   ├── access-control/         # RBAC, OPA policy enforcement
 │   ├── agent-service/          # Agent lifecycle, actor supervisor integration
@@ -62,7 +63,7 @@ astra/
 │       ├── values.yaml
 │       └── templates/
 ├── web/                        # Frontend (future)
-├── scripts/                    # Dev utilities
+├── scripts/                    # deploy.sh (local), gcp-deploy.sh (GCP/GKE/GCS), seed-agents.sh
 ├── docs/                       # Architecture docs, runbooks
 ├── tests/                      # Integration/e2e test fixtures
 ├── source/                     # PRD and reference scaffolds
@@ -99,4 +100,5 @@ astra/
 | PostgreSQL | Source of truth, pgvector | 5432 |
 | Redis | Streams, ephemeral state, locks | 6379 |
 | Memcached | LLM cache, embedding cache | 11211 |
-| MinIO/S3 | Artifact storage | 9000 |
+| MinIO (local/docker-compose) | Optional artifact storage | 9000 |
+| GCS (GCP) | Workspace/object bucket via `gcp-deploy.sh` (`gs://$PROJECT-astra-workspace`); MinIO not used on GCP deploy path | — |

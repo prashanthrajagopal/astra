@@ -7,7 +7,7 @@ Single-script local deployment with native-first infra and DevOps-only execution
 ## 1. One Script Only
 
 - **Single entry point:** `scripts/deploy.sh` (no `dev.sh`, `build-native.sh`, `run-dev.sh`, `migrate.sh`).
-- **Scope:** Local development deployment only. Cloud (K8s/Helm) is separate and documented in the DevOps skill.
+- **Scope:** Local development deployment only. **GCP:** use [`scripts/gcp-deploy.sh`](../scripts/gcp-deploy.sh) (GKE Autopilot, Cloud SQL, Memorystore). On GCP, workspace/object storage is **Google Cloud Storage** (bucket on `--setup`), not MinIO.
 - **Remove or consolidate:** Delete or replace `scripts/dev.sh` with `scripts/deploy.sh`. Migration execution lives inside `deploy.sh`; no standalone `migrate.sh`.
 
 ---
@@ -102,7 +102,7 @@ At the end of a successful run, the script must print:
 ### 9.1 Rule (New or Add to Existing)
 
 - **Add a rule** (e.g. in `.cursor/rules/` or extend an existing deployment-related rule) that states:
-  - **Only the DevOps agent may run deployment scripts or deployment commands** (e.g. `scripts/deploy.sh`, `docker compose` for Astra infra, `helm install`/`helm upgrade` for Astra).
+  - **Only the DevOps agent may run deployment scripts or deployment commands** (e.g. `scripts/deploy.sh`, `scripts/gcp-deploy.sh`, `docker compose` for Astra infra, `helm install`/`helm upgrade` for Astra).
   - **Other agents must not** run the deploy script, docker compose for Astra, or helm install/upgrade for Astra. They must **delegate deployment requests to DevOps** (e.g. via Project Manager → Tech Lead → DevOps, or via a `/deploy` command that routes to DevOps).
 
 ### 9.2 DevOps Agent Definition
