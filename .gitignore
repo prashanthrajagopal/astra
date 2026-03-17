@@ -37,3 +37,7 @@ logs/
 
 node_modules/
 workspace/node_modules/
+
+# prashantr.net — local-only Cursor agents & skill (do not commit)
+.cursor/agents/prashantr-*.md
+.cursor/skills/prashantr-site/
