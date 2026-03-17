@@ -40,12 +40,12 @@ type AgentDocument struct {
 
 // Result summarizes what the code generation step produced.
 type Result struct {
-	FilesWritten   []string          `json:"files_written"`
-	GeneratedFiles []GeneratedFile   `json:"generated_files,omitempty"` // path + content for dashboard display
-	LLMModel       string            `json:"llm_model"`
-	TokensIn       int               `json:"tokens_in"`
-	TokensOut      int               `json:"tokens_out"`
-	Error          string            `json:"error,omitempty"`
+	FilesWritten   []string        `json:"files_written"`
+	GeneratedFiles []GeneratedFile `json:"generated_files,omitempty"` // path + content for dashboard display
+	LLMModel       string          `json:"llm_model"`
+	TokensIn       int             `json:"tokens_in"`
+	TokensOut      int             `json:"tokens_out"`
+	Error          string          `json:"error,omitempty"`
 }
 
 // GeneratedFile holds path and content of one generated file (for UI display).

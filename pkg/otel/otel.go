@@ -29,5 +29,5 @@ func Init(ctx context.Context, serviceName, endpoint string) (func(), error) {
 	)
 	otel.SetTracerProvider(tp)
 
-	return func() { tp.Shutdown(ctx) }, nil
+	return func() { _ = tp.Shutdown(ctx) }, nil
 }

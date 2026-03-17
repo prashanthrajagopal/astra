@@ -104,7 +104,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET /workers", func(w http.ResponseWriter, r *http.Request) {
 		active, err := registry.ListActive(r.Context())
@@ -129,5 +129,5 @@ func main() {
 	slog.Info("shutting down worker manager")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	srv.Shutdown(shutdownCtx)
+	_ = srv.Shutdown(shutdownCtx)
 }

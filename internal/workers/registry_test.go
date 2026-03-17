@@ -36,7 +36,7 @@ func TestRegistryRegisterAndList(t *testing.T) {
 	ctx := t.Context()
 	id := "00000000-0000-0000-0000-000000000099"
 
-	defer db.ExecContext(ctx, "DELETE FROM workers WHERE id = $1::uuid", id)
+	defer func() { _, _ = db.ExecContext(ctx, "DELETE FROM workers WHERE id = $1::uuid", id) }()
 
 	err := reg.Register(ctx, id, "test-host", []string{"general", "gpu"})
 	if err != nil {
@@ -75,12 +75,15 @@ func TestRegistryHeartbeatAndStale(t *testing.T) {
 	ctx := t.Context()
 	id := "00000000-0000-0000-0000-000000000098"
 
-	defer db.ExecContext(ctx, "DELETE FROM workers WHERE id = $1::uuid", id)
+	defer func() { _, _ = db.ExecContext(ctx, "DELETE FROM workers WHERE id = $1::uuid", id) }()
 
 	_ = reg.Register(ctx, id, "stale-host", nil)
 
-	db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		"UPDATE workers SET last_heartbeat = now() - interval '60 seconds' WHERE id = $1::uuid", id)
+	if err != nil {
+		t.Fatalf("seed stale heartbeat: %v", err)
+	}
 
 	stale, err := reg.FindStaleWorkers(ctx, 30*time.Second)
 	if err != nil {

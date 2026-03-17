@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	ConfigKeySigningSecret   = "signing_secret"
-	ConfigKeyClientID        = "client_id"
-	ConfigKeyClientSecret    = "client_secret"
+	ConfigKeySigningSecret    = "signing_secret"
+	ConfigKeyClientID         = "client_id"
+	ConfigKeyClientSecret     = "client_secret"
 	ConfigKeyOAuthRedirectURL = "oauth_redirect_url"
 )
 

@@ -239,4 +239,3 @@ func (s *Store) Authenticate(ctx context.Context, email, password string) (*User
 	}
 	return u, nil
 }
-

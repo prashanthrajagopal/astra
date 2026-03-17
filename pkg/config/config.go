@@ -115,7 +115,7 @@ func Load() (*Config, error) {
 		ChatEnabled:           getEnvBool("CHAT_ENABLED", false),
 		ChatMaxMsgLength:      getEnvInt("CHAT_MAX_MSG_LENGTH", 65536),
 		ChatRateLimit:         getEnvInt("CHAT_RATE_LIMIT", 30),
-		ChatTokenCap:         getEnvInt("CHAT_TOKEN_CAP", 100000),
+		ChatTokenCap:          getEnvInt("CHAT_TOKEN_CAP", 100000),
 	}
 
 	if cfg.VaultAddr != "" && cfg.VaultToken != "" {
