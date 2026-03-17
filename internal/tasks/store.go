@@ -29,9 +29,9 @@ func parseNullableUUID(ns sql.NullString) uuid.UUID {
 
 func scanTaskRow(scanner interface{ Scan(...interface{}) error }) (*Task, error) {
 	var t Task
-	var goalID, orgID sql.NullString
+	var goalID sql.NullString
 	var idStr, graphIDStr, agentIDStr string
-	err := scanner.Scan(&idStr, &graphIDStr, &goalID, &agentIDStr, &orgID,
+	err := scanner.Scan(&idStr, &graphIDStr, &goalID, &agentIDStr,
 		&t.Type, &t.Status, &t.Payload, &t.Result,
 		&t.Priority, &t.Retries, &t.MaxRetries, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
@@ -41,7 +41,6 @@ func scanTaskRow(scanner interface{ Scan(...interface{}) error }) (*Task, error)
 	t.GraphID, _ = uuid.Parse(graphIDStr)
 	t.AgentID, _ = uuid.Parse(agentIDStr)
 	t.GoalID = parseNullableUUID(goalID)
-	t.OrgID = parseNullableUUID(orgID)
 	return &t, nil
 }
 
@@ -105,9 +104,9 @@ func (s *Store) CreateTask(ctx context.Context, t *Task) error {
 		payload = []byte("{}")
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO tasks (id, graph_id, goal_id, agent_id, org_id, type, status, payload, priority, retries, max_retries)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)`,
-		t.ID, t.GraphID, nullableUUID(t.GoalID), t.AgentID, nullableUUID(t.OrgID),
+		INSERT INTO tasks (id, graph_id, goal_id, agent_id, type, status, payload, priority, retries, max_retries)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+		t.ID, t.GraphID, nullableUUID(t.GoalID), t.AgentID,
 		t.Type, t.Status, payload, t.Priority, t.Retries, t.MaxRetries)
 	if err != nil {
 		return fmt.Errorf("tasks.CreateTask: %w", err)
@@ -149,9 +148,9 @@ func (s *Store) CreateGraph(ctx context.Context, graph *Graph) error {
 			payload = []byte("{}")
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO tasks (id, graph_id, goal_id, agent_id, org_id, type, status, payload, priority, retries, max_retries)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)`,
-			t.ID, t.GraphID, nullableUUID(t.GoalID), t.AgentID, nullableUUID(t.OrgID),
+			INSERT INTO tasks (id, graph_id, goal_id, agent_id, type, status, payload, priority, retries, max_retries)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+			t.ID, t.GraphID, nullableUUID(t.GoalID), t.AgentID,
 			t.Type, t.Status, payload, t.Priority, t.Retries, t.MaxRetries)
 		if err != nil {
 			return fmt.Errorf("tasks.CreateGraph: insert task %s: %w", t.ID, err)
@@ -182,7 +181,7 @@ func (s *Store) CreateGraph(ctx context.Context, graph *Graph) error {
 
 func (s *Store) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, graph_id, goal_id, agent_id, org_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
+		SELECT id, graph_id, goal_id, agent_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
 		FROM tasks WHERE id = $1`, taskID)
 	t, err := scanTaskRow(row)
 	if err == sql.ErrNoRows {
@@ -196,7 +195,7 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*Task, error) {
 
 func (s *Store) GetGraph(ctx context.Context, graphID string) (*Graph, []Dependency, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, graph_id, goal_id, agent_id, org_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
+		SELECT id, graph_id, goal_id, agent_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
 		FROM tasks WHERE graph_id = $1`, graphID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tasks.GetGraph: tasks: %w", err)
@@ -256,7 +255,7 @@ func (s *Store) GetGraph(ctx context.Context, graphID string) (*Graph, []Depende
 // ListTasksByGoalID returns all tasks for a goal (for dashboard goal-detail modal).
 func (s *Store) ListTasksByGoalID(ctx context.Context, goalID string) ([]*Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, graph_id, goal_id, agent_id, org_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
+		SELECT id, graph_id, goal_id, agent_id, type, status, payload, result, priority, retries, max_retries, created_at, updated_at
 		FROM tasks WHERE goal_id = $1 ORDER BY created_at`,
 		goalID)
 	if err != nil {

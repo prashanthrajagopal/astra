@@ -103,31 +103,9 @@ func (r *Registry) ListActive(ctx context.Context) ([]WorkerInfo, error) {
 	return result, rows.Err()
 }
 
-// ListActiveByOrg returns active workers scoped to a specific organization.
-func (r *Registry) ListActiveByOrg(ctx context.Context, orgID string) ([]WorkerInfo, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, hostname, status, capabilities, last_heartbeat
-		FROM workers
-		WHERE status = 'active' AND org_id = $1::uuid
-	`, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("workers.Registry.ListActiveByOrg: %w", err)
-	}
-	defer rows.Close()
-
-	var result []WorkerInfo
-	for rows.Next() {
-		var info WorkerInfo
-		var capJSON []byte
-		if err := rows.Scan(&info.ID, &info.Hostname, &info.Status, &capJSON, &info.LastHeartbeat); err != nil {
-			return nil, fmt.Errorf("workers.Registry.ListActiveByOrg: scan: %w", err)
-		}
-		if len(capJSON) > 0 {
-			_ = json.Unmarshal(capJSON, &info.Capabilities)
-		}
-		result = append(result, info)
-	}
-	return result, rows.Err()
+// ListActiveByOrg returns all active workers (single-platform: org_id removed; ignores orgID).
+func (r *Registry) ListActiveByOrg(ctx context.Context, _ string) ([]WorkerInfo, error) {
+	return r.ListActive(ctx)
 }
 
 // FindStaleWorkers returns worker IDs that are active but whose last heartbeat
