@@ -93,7 +93,9 @@ Each delegation must include:
 | Shared packages (pkg/) | **Go Engineer** |
 | Dockerfile, docker-compose, Helm | **DevOps Engineer** |
 | Go unit/integration tests, benchmarks | **QA Engineer** |
-| Dashboard design, Material UI, wireframes, front-end specs | **UI/UX Expert** |
+| Super-admin dashboard UI (pastel light/dark, `cmd/api-gateway/dashboard/`) | **UI/UX Expert** (PRD § Super-admin dashboard UI) |
+| GCP deploy (`gcp-deploy.sh`, GCS) | **DevOps Engineer** |
+| Other front-end / Material design | **UI/UX Expert** |
 | Running linters, tests, builds | **Terminal Agent** |
 
 ### Step 3: Review and Validate
