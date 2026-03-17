@@ -631,6 +631,12 @@ function fetchSnapshot() {
 
       document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toISOString();
     setStatus('Idle', false);
+      var ban = document.getElementById('llm-sat-banner');
+      if (ban) {
+        authFetch('/superadmin/api/dashboard/llm-saturation', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+          if (s && s.saturated) ban.hidden = false; else ban.hidden = true;
+        }).catch(function () { if (ban) ban.hidden = true; });
+      }
     })
     .catch(function (e) {
       setStatus('Error: ' + (e.message || e), true);
@@ -1416,9 +1422,47 @@ document.addEventListener('DOMContentLoaded', function () {
         var cfg = p.ingest_source_config;
         document.getElementById('agent-edit-ingest-source-config').value = (typeof cfg === 'object' && cfg !== null) ? JSON.stringify(cfg) : (typeof cfg === 'string' ? cfg : '');
         document.getElementById('agent-edit-prompt').value = p.system_prompt || '';
+        document.getElementById('agent-edit-drain').checked = !!p.drain_mode;
+        document.getElementById('agent-edit-max-goals').value = p.max_concurrent_goals != null ? p.max_concurrent_goals : '';
+        document.getElementById('agent-edit-budget').value = p.daily_token_budget != null ? p.daily_token_budget : '';
+        document.getElementById('agent-edit-priority').value = p.priority != null ? p.priority : 0;
         updateIngestSourceHint('agent-edit');
         if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
         if (saveBtn) saveBtn.disabled = false;
+        var allowed = Array.isArray(p.allowed_tools) ? p.allowed_tools : [];
+        authFetch('/superadmin/api/dashboard/tools', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (td) {
+          var wrap = document.getElementById('agent-edit-tools-wrap');
+          if (!wrap || !td.tools) return;
+          wrap.innerHTML = '';
+          td.tools.forEach(function (t) {
+            var id = 'tool-' + t.name + '-' + t.version;
+            var key = t.name + '@' + t.version;
+            var lab = document.createElement('label');
+            var cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.id = id; cb.value = key;
+            cb.checked = allowed.length === 0 || allowed.indexOf(key) >= 0 || allowed.indexOf(t.name + '@*') >= 0 || allowed.indexOf('*') >= 0;
+            lab.appendChild(cb);
+            lab.appendChild(document.createTextNode(' ' + t.name + '@' + t.version + ' (' + t.risk_tier + ')'));
+            wrap.appendChild(lab);
+          });
+        }).catch(function () {});
+        authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/revisions', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (rev) {
+          var ul = document.getElementById('agent-edit-rev-list');
+          if (!ul || !rev.revisions) return;
+          ul.innerHTML = '';
+          rev.revisions.forEach(function (x) {
+            var li = document.createElement('li');
+            li.textContent = 'rev ' + x.revision + ' — ' + (x.created_at || '');
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = 'Activate';
+            btn.addEventListener('click', function () {
+              authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentId) + '/revisions/' + x.revision + '/activate', { method: 'POST' }).then(function () { openEditAgentModal(agentId); });
+            });
+            li.appendChild(btn);
+            ul.appendChild(li);
+          });
+        }).catch(function () {});
       })
       .catch(function(e) {
         if (errEl) { errEl.textContent = e && e.message ? e.message : 'Failed to load profile'; errEl.hidden = false; }
@@ -1431,6 +1475,34 @@ document.addEventListener('DOMContentLoaded', function () {
   if (editIngestTypeSel) editIngestTypeSel.addEventListener('change', function() { updateIngestSourceHint('agent-edit'); });
 
   if (agentEditModal) {
+    var btnPlat = document.getElementById('agent-edit-save-platform');
+    if (btnPlat) btnPlat.addEventListener('click', function () {
+      if (!agentEditId) return;
+      var tools = [];
+      document.querySelectorAll('#agent-edit-tools-wrap input[type=checkbox]:checked').forEach(function (c) { tools.push(c.value); });
+      var body = {
+        drain_mode: document.getElementById('agent-edit-drain').checked,
+        max_concurrent_goals: parseInt(document.getElementById('agent-edit-max-goals').value, 10) || null,
+        daily_token_budget: parseInt(document.getElementById('agent-edit-budget').value, 10) || null,
+        priority: parseInt(document.getElementById('agent-edit-priority').value, 10) || 0,
+        allowed_tools: tools.length ? tools : null
+      };
+      authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentEditId) + '/platform', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(t); }); })
+        .then(function () { alert('Platform settings saved'); })
+        .catch(function (e) { alert(e.message || 'Failed'); });
+    });
+    var btnRev = document.getElementById('agent-edit-new-revision');
+    if (btnRev) btnRev.addEventListener('click', function () {
+      if (!agentEditId) return;
+      var prompt = document.getElementById('agent-edit-prompt').value;
+      authFetch('/superadmin/api/dashboard/agents/' + encodeURIComponent(agentEditId) + '/revisions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload: { system_prompt: prompt }, created_by: 'dashboard' })
+      }).then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(t); }); })
+        .then(function () { openEditAgentModal(agentEditId); })
+        .catch(function (e) { alert(e.message || 'Failed'); });
+    });
     document.getElementById('agent-edit-modal-close').addEventListener('click', function() { agentEditModal.hidden = true; });
     agentEditModal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { agentEditModal.hidden = true; });
     document.getElementById('agent-edit-modal-save').addEventListener('click', function() {

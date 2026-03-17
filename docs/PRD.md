@@ -2081,6 +2081,10 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 
 # 26. Implementation Roadmap
 
+## Agent platform hardening (migration 0024)
+
+Single-tenant controls: **`agent_config_revisions`** (payload JSON: `system_prompt`, optional `config`); **`agents.active_config_revision`**; **`tool_definitions`** (`name`, `version`, `risk_tier`, `sandbox`, `description`, `metadata`); **`agents.drain_mode`**, **`max_concurrent_goals`**, **`daily_token_budget`**, **`priority`** (scheduler ordering), **`allowed_tools`** JSON array (`name@version` or `*`); **`chat_sessions.retention_days`**, **`memories.expires_at`**. Goal admission uses Redis **`agent:{id}:tokens:YYYY-MM-DD`** (O(1)); LLM inflight cap **`ASTRA_LLM_MAX_INFLIGHT`**. **Audit export** (`GET .../audit.ndjson`) may contain PII — restrict to superadmin, define retention in ops. **Forget agent** removes chat + memories for GDPR-style requests.
+
 ## Phase 0 — Prep (2 weeks) ✅ COMPLETE
 
 **Goal:** Repository scaffolding and infrastructure.
@@ -2340,6 +2344,16 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 | 9 | Internal API: **POST /internal/slack/post** for proactive Slack messages; optional **notification_channel_id** per workspace. |
 
 **Acceptance:** Org admin connects a Slack workspace to an org; users in that workspace can message the bot in DMs or channels and receive agent replies. Replies are posted asynchronously; adapter responds to Slack within 3s. Design: **docs/slack-integration-design.md**.
+
+## Phase 12b (backlog): Multi-channel expansion — deferred
+
+| Item | Status |
+|------|--------|
+| Slack channels / DMs (full worker + OAuth parity) | Partial; see Phase 12 |
+| Microsoft Teams, email bots, additional messaging surfaces | Not started |
+| Unified multi-channel session routing (one agent, many surfaces) | Not started |
+
+**Scope when picked up:** Extend beyond single dashboard chat + ingest: channel registry, per-channel agent binding, shared session model. Single-tenant chat + external ingest remain until this phase.
 
 ---
 

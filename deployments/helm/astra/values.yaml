@@ -54,3 +54,8 @@ vault:
   addr: ""
   token: ""
   path: secret/data/astra
+
+# Agent platform hardening (execution-worker: GCS_BUCKET + ARTIFACT_DIR; llm-router: ASTRA_LLM_MAX_INFLIGHT)
+gcsBucket: ""
+artifactDir: "/workspace/artifacts"
+llmMaxInflight: ""

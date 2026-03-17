@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"astra/internal/toolregistry"
 	"astra/internal/tools"
 	"astra/pkg/config"
 	"astra/pkg/db"
@@ -39,6 +40,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer dbConn.Close()
+
+	if err := toolregistry.SeedKnownTools(context.Background(), dbConn); err != nil {
+		slog.Warn("tool registry seed failed", "err", err)
+	}
 
 	runtime := newToolRuntime()
 	httpClient, err := httpx.NewClient(cfg, 100*time.Millisecond)
@@ -76,6 +81,7 @@ func main() {
 			CPULimit       float64 `json:"cpu_limit"`
 			TaskID         string  `json:"task_id"`
 			WorkerID       string  `json:"worker_id"`
+			DryRun         bool    `json:"dry_run"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
@@ -109,6 +115,30 @@ func main() {
 			Timeout:     timeout,
 			MemoryLimit: memLimit,
 			CPULimit:    cpuLimit,
+		}
+
+		if req.TaskID != "" {
+			var allowed []byte
+			_ = dbConn.QueryRowContext(r.Context(), `
+				SELECT a.allowed_tools FROM tasks t JOIN agents a ON a.id = t.agent_id WHERE t.id = $1::uuid`, req.TaskID).Scan(&allowed)
+			if !toolregistry.ToolAllowed(req.Name, allowed) {
+				http.Error(w, `{"error":"tool not in agent allowlist"}`, http.StatusForbidden)
+				return
+			}
+		}
+
+		if req.DryRun {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"dry_run":       true,
+				"would_run":     req.Name,
+				"simulated":     true,
+				"exit_code":     0,
+				"duration_ms":   0,
+				"output":        base64.StdEncoding.EncodeToString([]byte(`{"message":"dry run — no side effects"}`)),
+				"artifacts":     []string{},
+			})
+			return
 		}
 
 		// Approval gate: check before execute

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"astra/internal/tools"
+	"astra/pkg/storage"
 	llmpb "astra/proto/llm"
 )
 
@@ -46,6 +47,7 @@ type Result struct {
 	TokensIn       int             `json:"tokens_in"`
 	TokensOut      int             `json:"tokens_out"`
 	Error          string          `json:"error,omitempty"`
+	ArtifactURI    string          `json:"artifact_uri,omitempty"`
 }
 
 // GeneratedFile holds path and content of one generated file (for UI display).
@@ -57,7 +59,8 @@ type GeneratedFile struct {
 var fileBlockRe = regexp.MustCompile("(?m)^```(?:(?:typescript|tsx|ts|javascript|jsx|js|json|css|html|md|sh|bash|text)?:)?([^\\s`]+)\\s*\\n")
 
 // Process handles a code_generate task: reads workspace context, calls LLM, writes files.
-func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceRuntime, llmClient llmpb.LLMRouterClient) (*Result, error) {
+// taskID and agentID are used for artifact URIs (GCS or local).
+func Process(ctx context.Context, taskID, agentID string, payload TaskPayload, runtime *tools.WorkspaceRuntime, llmClient llmpb.LLMRouterClient) (*Result, error) {
 	wsRuntime := workspaceScopedRuntime(runtime, payload.Workspace)
 	workspace := wsRuntime.Root
 
@@ -105,13 +108,24 @@ func Process(ctx context.Context, payload TaskPayload, runtime *tools.WorkspaceR
 		generatedFiles = append(generatedFiles, GeneratedFile{Path: path, Content: content})
 	}
 
-	return &Result{
+	out := &Result{
 		FilesWritten:   written,
 		GeneratedFiles: generatedFiles,
 		LLMModel:       resp.GetModel(),
 		TokensIn:       int(resp.GetTokensIn()),
 		TokensOut:      int(resp.GetTokensOut()),
-	}, nil
+	}
+	if taskID != "" {
+		summary, _ := json.Marshal(map[string]any{
+			"files_written": written, "llm_model": out.LLMModel, "tokens_in": out.TokensIn, "tokens_out": out.TokensOut,
+		})
+		if uri, err := storage.UploadCodegenJSON(ctx, os.Getenv("GCS_BUCKET"), agentID, taskID, summary); err == nil && uri != "" {
+			out.ArtifactURI = uri
+		} else if uri2, err2 := storage.WriteLocalArtifact(agentID, taskID, summary); err2 == nil && uri2 != "" {
+			out.ArtifactURI = uri2
+		}
+	}
+	return out, nil
 }
 
 // ProcessShellExec handles a shell_exec task from the planner.

@@ -43,6 +43,7 @@ var (
 	agentClient kernel_pb.KernelServiceClient
 	taskClient  tasks_pb.TaskServiceClient
 	docStore    *agentdocs.Store
+	gatewayDB   *sql.DB
 )
 
 const (
@@ -100,6 +101,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
+	gatewayDB = database
 	docStore = agentdocs.NewStore(database, rdb)
 	chatStore := chat.NewStore(database)
 	llmBackend := llm.NewEndpointBackendFromEnv()
@@ -130,7 +132,7 @@ func main() {
 			memoryStore = nil
 		}
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth)
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth, rdb)
 	mux.HandleFunc("GET /login", handleLoginPage)
 	mux.HandleFunc("POST /login", makeLoginProxyHandler(dashboardClient, cfg.IdentityAddr))
 	if cfg.ChatEnabled {
@@ -420,7 +422,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware, rdb *redis.Client) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -588,6 +590,7 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 		mux.Handle("POST /internal/ingest/event", handleInternalIngestEvent())
 	}
 	mux.Handle("GET /internal/ingest/bindings", handleInternalIngestBindings())
+	registerAgentPlatformRoutes(mux, auth, store, database, rdb)
 }
 
 func handleDashboardAgentStatus(w http.ResponseWriter, r *http.Request, store *agentdocs.Store) {
@@ -1517,6 +1520,26 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(profile.IngestSourceConfig) > 0 {
 		out["ingest_source_config"] = profile.IngestSourceConfig
+	}
+	if gatewayDB != nil {
+		var drain bool
+		var maxC, budget sql.NullInt64
+		var pri int
+		var allowed []byte
+		_ = gatewayDB.QueryRowContext(ctx,
+			`SELECT drain_mode, max_concurrent_goals, daily_token_budget, priority, allowed_tools FROM agents WHERE id = $1`, id).
+			Scan(&drain, &maxC, &budget, &pri, &allowed)
+		out["drain_mode"] = drain
+		if maxC.Valid {
+			out["max_concurrent_goals"] = maxC.Int64
+		}
+		if budget.Valid {
+			out["daily_token_budget"] = budget.Int64
+		}
+		out["priority"] = pri
+		if len(allowed) > 0 {
+			out["allowed_tools"] = json.RawMessage(allowed)
+		}
 	}
 	json.NewEncoder(w).Encode(out)
 }

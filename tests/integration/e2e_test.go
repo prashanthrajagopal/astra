@@ -43,6 +43,8 @@ func TestE2E_SpawnGoalScheduleComplete(t *testing.T) {
 		t.Skipf("requires postgres and redis: postgres connect failed: %v", err)
 	}
 	defer database.Close()
+	// Scheduler orders by agents.priority (migration 0024); keep E2E working on older DBs.
+	_, _ = database.ExecContext(context.Background(), `ALTER TABLE agents ADD COLUMN IF NOT EXISTS priority SMALLINT NOT NULL DEFAULT 0`)
 
 	// 3. Connect to Redis
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
