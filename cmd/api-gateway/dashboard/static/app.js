@@ -61,7 +61,7 @@ function renderSummary(data) {
   setText('sum-active-goals', goals.active || 0);
   setText('sum-completed-tasks', tasks.completed || 0);
   setText('sum-running-tasks', tasks.running || 0);
-  setText('sum-failed-tasks', tasks.failed || 0);
+  setText('sum-failed-goals', goals.failed || 0);
   var agentCount = data.agent_count != null ? data.agent_count : (Array.isArray(data.agents) ? data.agents.length : 0);
   setText('sum-agents', agentCount);
   setText('agents-badge', agentCount);
@@ -92,15 +92,15 @@ var serviceChart = null;
 var agentChart = null;
 var lastSnapshotAgents = [];
 
-/* Vibrant visualization palette — high-contrast on dark/light (cyan, purple, lime, amber, magenta) */
+/* Kapsicum-inspired palette — teal primary, calm contrast */
 var chartColors = {
-  created: '#80d8ff',
-  pending: '#b388ff',
-  queued: '#82b1ff',
-  scheduled: '#84ffff',
-  running: '#ffd740',
-  completed: '#00e676',
-  failed: '#ff5252'
+  created: '#22D3EE',
+  pending: '#38BDF8',
+  queued: '#2DD4BF',
+  scheduled: '#34D399',
+  running: '#FBBF24',
+  completed: '#34D399',
+  failed: '#F87171'
 };
 
 function renderTaskChart(tasks) {
@@ -108,7 +108,7 @@ function renderTaskChart(tasks) {
   if (!ctx) return;
   var labels = ['created', 'pending', 'queued', 'scheduled', 'running', 'completed', 'failed'];
   var values = labels.map(function (l) { return tasks[l] || 0; });
-  var colors = labels.map(function (l) { return chartColors[l] || '#b388ff'; });
+  var colors = labels.map(function (l) { return chartColors[l] || '#2DD4BF'; });
 
   if (taskChart) {
     taskChart.data.datasets[0].data = values;
@@ -136,7 +136,7 @@ function renderGoalChart(goals) {
   if (!ctx) return;
   var labels = ['active', 'completed', 'failed', 'pending'];
   var values = labels.map(function (l) { return goals[l] || 0; });
-  var colors = ['#ffd740', '#00e676', '#ff5252', '#b388ff'];
+  var colors = ['#FBBF24', '#34D399', '#F87171', '#2DD4BF'];
 
   if (goalChart) {
     goalChart.data.datasets[0].data = values;
@@ -181,8 +181,8 @@ function renderServiceChart(services) {
     data: {
       labels: labels,
       datasets: [
-        { label: 'Healthy', data: healthy, backgroundColor: '#00e676', borderWidth: 0 },
-        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#ff5252', borderWidth: 0 }
+        { label: 'Healthy', data: healthy, backgroundColor: '#34D399', borderWidth: 0 },
+        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#F87171', borderWidth: 0 }
       ]
     },
     options: {
@@ -209,9 +209,9 @@ function renderAgentChart(agents) {
   });
   var labels = Object.keys(byStatus).length ? Object.keys(byStatus) : ['none'];
   var values = labels.map(function (l) { return byStatus[l] || 0; });
-  var colors = ['#00e676', '#ffd740', '#82b1ff', '#b388ff', '#ff5252'];
+  var colors = ['#34D399', '#FBBF24', '#38BDF8', '#2DD4BF', '#F87171'];
   labels.forEach(function (_, i) {
-    if (!colors[i]) colors[i] = '#b388ff';
+    if (!colors[i]) colors[i] = '#2DD4BF';
   });
 
   if (agentChart) {
@@ -240,9 +240,9 @@ function renderAgentChart(agents) {
 function getChartTheme() {
   var light = document.documentElement.getAttribute('data-theme') === 'light';
   return {
-    legend: light ? '#6b6580' : '#d8cef0',
-    tick: light ? '#7a7494' : '#c8bcd8',
-    grid: light ? 'rgba(120,110,150,0.12)' : 'rgba(180,160,220,0.14)'
+    legend: light ? '#57534E' : '#A8A29E',
+    tick: light ? '#78716C' : '#78716C',
+    grid: light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)'
   };
 }
 
@@ -303,7 +303,7 @@ function renderHealthSummary(services) {
       labels: ['Healthy', 'Unhealthy'],
       datasets: [{
         data: [healthy, unhealthy],
-        backgroundColor: ['#00e676', '#ff5252'],
+        backgroundColor: ['#34D399', '#F87171'],
         borderWidth: 0
       }]
     },

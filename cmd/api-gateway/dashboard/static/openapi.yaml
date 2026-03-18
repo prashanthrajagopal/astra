@@ -772,8 +772,19 @@ paths:
 
         **E-Commerce example**: Submit a goal to build a full store with an
         inline PRD that describes all pages and features.
+
+        **Idempotency:** Send an `Idempotency-Key` header (opaque string, e.g. client-generated UUID).
+        Within 24 hours, a duplicate request with the same key returns the same `goal_id` and response
+        (201 or 202) without creating a new goal.
       servers:
         - url: http://localhost:8088
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Opaque key (e.g. UUID) for idempotent creation; same key within TTL returns same goal_id.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
