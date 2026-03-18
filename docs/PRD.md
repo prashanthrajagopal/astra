@@ -65,6 +65,20 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 - **Chat agents (design):** WebSocket-based chat agents with streaming, sessions, and optional tool/worker calls. Design: **docs/chat-agents-design.md**; implementation plan: **docs/chat-agents-implementation-plan.md**.
 - **Slack integration (design):** Connect Astra chat agents to Slack; one workspace → one org; slack-adapter service + Redis queue + worker; OAuth and Vault for tokens. Platform Slack app secrets (Signing Secret, Client ID, Client Secret, Redirect URL) configurable from super-admin UI (stored encrypted); env fallback. Design: **docs/slack-integration-design.md**.
 
+### Recent changes (v3.1) — Platform stability (P0–P2)
+
+- **Agent restore on startup (P0.1):** Agent-service loads all agents with `status = 'active'` from the DB at startup and spawns them into the kernel via `NewFromExisting` so restarts do not lose agents. Contract: **docs/agent-restore-contract.md**.
+- **Dead-letter for tasks (P0.2):** Task status `dead_letter` and migration `0025_tasks_dead_letter.sql`; when a task fails with `retries >= maxRetries`, it transitions to `dead_letter`. Execution-worker and browser-worker optionally publish to `astra:dead_letter` for alerting/repair.
+- **Redis consumer retry and reclaim (P0.3):** Messaging bus XAck only on handler success; per-message retry count in Redis; after N failures publish to `astra:dead_letter` then XAck; XAutoClaim for pending messages after MinIdle. Spec: **docs/messaging-consumer-retry-spec.md**.
+- **Readiness vs liveness (P1.4):** `GET /health` remains liveness; `GET /ready` added with DB/Redis ping (api-gateway, goal-service, access-control, worker-manager, identity). Helm readinessProbe uses `/ready`. Spec: **docs/readiness-liveness-spec.md**; **pkg/health.ReadyHandler**.
+- **Gateway circuit breakers (P1.5):** Circuit breakers for goal-service, agent-service (gRPC), and access-control; 503 and optional Retry-After when open. **internal/circuitbreaker**; spec: **docs/gateway-circuit-breaker-spec.md**.
+- **Goal idempotency (P1.6):** `Idempotency-Key` header on `POST /goals`; Redis-backed cache with 24h TTL; duplicate key returns same `goal_id`. Documented in OpenAPI.
+- **Shard ownership (P2.7):** Configurable `TASK_SHARD_COUNT`; scheduler and worker-manager assign tasks to `astra:tasks:shard:{i}` by hash(agent_id); execution-worker consumes all shards. Runbook: **docs/runbooks/shard-scaling.md**; spec: **docs/shard-ownership-spec.md**.
+- **Supervision wiring (P2.8):** Supervisor connected to agent actors in agent-service; handler wrapper recovers panics and calls `HandleFailure`; on Terminate, `kernel.Stop(agentID)`. Spec: **docs/supervisor-integration-spec.md**.
+- **Mailbox full handling (P2.9):** `ErrMailboxFull` and client retry guidance documented in **docs/kernel-api-mailbox-full.md**; SendMessage returns ResourceExhausted with gRPC trailer `retry-after` (seconds).
+
+Full plan and delegation: **.cursor/plans/p0-p2_platform_stability_todos_23840fb1.plan.md**.
+
 ---
 
 # 2. Core Capabilities & Non-Goals
@@ -85,6 +99,7 @@ The PRD (`docs/PRD.md`) is the **single source of truth** for Astra architecture
 - SDK for building agent applications in Go (bindings for Python/TS later)
 - **Platform-aware hardware acceleration:** On macOS, leverage Metal, Neural Engine, and GPU where beneficial for inference, embeddings, and compute; on Linux, support standard CPU and CUDA-based deployments. Astra can be deployed in production on both macOS (e.g. Mac Mini, Mac Studio) and Linux (e.g. Kubernetes, cloud, on-prem).
 - **Real-time chat agents** via WebSocket with streaming responses, tool invocation, and session management.
+- **Platform stability and resilience (P0–P2):** Agent restore on startup; task dead-letter and consumer retry/reclaim (Redis Streams); readiness vs liveness probes; gateway circuit breakers; goal idempotency; configurable task-stream sharding; supervisor wiring for agents; mailbox-full handling and client retry guidance.
 
 ## Non-Goals
 
@@ -1918,11 +1933,16 @@ When running on **linux**:
 | Failure | Detection | Recovery |
 |---|---|---|
 | Worker crash | Heartbeat lost (>30s) | Requeue in-flight tasks, restart worker |
-| Postgres outage | Connection error | Read-only mode, promote replica |
-| Redis failure | Connection error | Failover to replica, replay from `events` table |
+| Postgres outage | Connection error | Read-only mode, promote replica; readiness returns 503, LB stops traffic |
+| Redis failure | Connection error | Failover to replica, replay from `events` table; readiness returns 503 |
 | Task graph corruption | Inconsistent state | Reconstruct via event-sourcing replay |
+| Task final failure (max retries) | FailTask with retries ≥ maxRetries | Task status set to `dead_letter`; optional publish to `astra:dead_letter` for alerting/repair |
+| Agent-service restart | Process restart | Agent restore loads active agents from DB and spawns into kernel; no manual SpawnActor needed |
+| Downstream (goal/agent/access-control) overload | Circuit breaker opens | Gateway returns 503 and Retry-After; clients back off |
+| Duplicate POST /goals | Same Idempotency-Key within TTL | Goal-service returns cached 201 with same goal_id |
 | LLM cost spike | Budget alert | Disable premium model routing, enforce lower tiers |
-| Scheduler shard imbalance | Monitoring | Rebalance shards via consistent hashing |
+| Scheduler shard imbalance | Monitoring | Rebalance via TASK_SHARD_COUNT; see docs/runbooks/shard-scaling.md |
+| Actor mailbox full | Kernel returns ResourceExhausted | Client backs off; optional retry-after in gRPC trailer |
 
 ## Runbook: Worker Lost
 
@@ -2084,6 +2104,16 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 ## Agent platform hardening (migration 0024)
 
 Single-tenant controls: **`agent_config_revisions`** (payload JSON: `system_prompt`, optional `config`); **`agents.active_config_revision`**; **`tool_definitions`** (`name`, `version`, `risk_tier`, `sandbox`, `description`, `metadata`); **`agents.drain_mode`**, **`max_concurrent_goals`**, **`daily_token_budget`**, **`priority`** (scheduler ordering), **`allowed_tools`** JSON array (`name@version` or `*`); **`chat_sessions.retention_days`**, **`memories.expires_at`**. Goal admission uses Redis **`agent:{id}:tokens:YYYY-MM-DD`** (O(1)); LLM inflight cap **`ASTRA_LLM_MAX_INFLIGHT`**. **Audit export** (`GET .../audit.ndjson`) may contain PII — restrict to superadmin, define retention in ops. **Forget agent** removes chat + memories for GDPR-style requests.
+
+## P0–P2 Platform stability ✅ COMPLETE
+
+**Goal:** Strengthen core correctness, resilience, and operational clarity.
+
+- **P0 — Core correctness and stability:** Agent restore on startup (load active agents from DB, spawn into kernel); dead-letter task status and optional `astra:dead_letter` stream; Redis consumer retry (XAck only on success, retry count, XAutoClaim, publish to dead_letter after N failures).
+- **P1 — Resilience and operations:** Readiness vs liveness (`GET /ready` with DB/Redis ping, Helm readinessProbe); gateway circuit breakers (goal-service, agent-service, access-control) with 503 fallback; goal idempotency (`Idempotency-Key` on POST /goals, Redis TTL 24h).
+- **P2 — Scale and clarity:** Configurable task-stream sharding (`TASK_SHARD_COUNT`, hash by agent_id); Supervisor wired to agent actors (HandleFailure, Terminate); ErrMailboxFull documented and gRPC `retry-after` trailer on mailbox full.
+
+Specs and runbooks: **docs/agent-restore-contract.md**, **docs/messaging-consumer-retry-spec.md**, **docs/readiness-liveness-spec.md**, **docs/gateway-circuit-breaker-spec.md**, **docs/shard-ownership-spec.md**, **docs/supervisor-integration-spec.md**, **docs/kernel-api-mailbox-full.md**, **docs/runbooks/shard-scaling.md**. Plan: **.cursor/plans/p0-p2_platform_stability_todos_23840fb1.plan.md**.
 
 ## Phase 0 — Prep (2 weeks) ✅ COMPLETE
 
