@@ -90,6 +90,7 @@ var taskChart = null;
 var goalChart = null;
 var serviceChart = null;
 var agentChart = null;
+var lastSnapshotAgents = [];
 
 /* Vibrant visualization palette — high-contrast on dark/light (cyan, purple, lime, amber, magenta) */
 var chartColors = {
@@ -509,9 +510,10 @@ function renderApprovals(items) {
     var statusPill = '<span class="status ' + st + '"><span class="status-dot"></span>' + (a.status || '') + '</span>';
     tr.innerHTML = '<td class="td-type">' + typeLabel + '</td><td class="mono">' + (a.id ? a.id.substring(0, 8) : '') + '</td><td class="tool-summary-cell">' + escapeHtml((toolOrSummary || '').toString().substring(0, 80)) + (toolOrSummary && toolOrSummary.length > 80 ? '…' : '') + '</td><td>' + escapeHtml((a.action_summary || '').toString().substring(0, 60)) + '</td>' +
       '<td>' + statusPill + '</td><td class="mono" style="font-size:11px">' + (a.requested_at || '') + '</td>' +
-      '<td><div class="actions"><button type="button" class="action-btn view" data-id="' + (a.id || '') + '">View</button>' +
-      '<button type="button" class="action-btn approve" data-action="approve" data-id="' + (a.id || '') + '">Approve</button>' +
-      '<button type="button" class="action-btn reject" data-action="reject" data-id="' + (a.id || '') + '">Reject</button></div></td>';
+      '<td><div class="actions">' +
+      '<button type="button" class="action-btn approval-icon-btn approval-action-view view" data-id="' + (a.id || '') + '" title="View" aria-label="View">\uD83D\uDC41</button>' +
+      '<button type="button" class="action-btn approval-icon-btn approval-action-approve" data-action="approve" data-id="' + (a.id || '') + '" title="Approve" aria-label="Approve">\u2713</button>' +
+      '<button type="button" class="action-btn approval-icon-btn approval-action-reject" data-action="reject" data-id="' + (a.id || '') + '" title="Reject" aria-label="Reject">\u2715</button></div></td>';
     tbody.appendChild(tr);
   });
 }
@@ -609,6 +611,7 @@ function fetchSnapshot() {
       var goals = d.jobs && d.jobs.goals ? d.jobs.goals : {};
       var recentGoals = d.jobs && d.jobs.recent_goals ? d.jobs.recent_goals : [];
 
+      lastSnapshotAgents = d.agents || [];
       renderTaskChart(tasks);
       renderGoalChart(goals);
       renderServiceChart(d.services || []);
@@ -1617,6 +1620,79 @@ document.addEventListener('DOMContentLoaded', function () {
     updateIngestSourceHint('agent-create');
     agentModal.hidden = false;
   });
+
+  var goalCreateModal = document.getElementById('goal-create-modal');
+  var goalCreateAgentSelect = document.getElementById('goal-create-agent-id');
+  var goalCreateText = document.getElementById('goal-create-text');
+  var goalCreateWorkspace = document.getElementById('goal-create-workspace');
+  var goalCreateError = document.getElementById('goal-create-modal-error');
+  var goalCreateSaveBtn = document.getElementById('goal-create-modal-save');
+  if (document.getElementById('btn-create-goal')) {
+    document.getElementById('btn-create-goal').addEventListener('click', function() {
+      if (!goalCreateAgentSelect) return;
+      goalCreateAgentSelect.innerHTML = '<option value="">Select an agent…</option>';
+      lastSnapshotAgents.forEach(function(a) {
+        var id = (a.id || a.agent_id || '').toString();
+        var name = (a.name || a.actor_type || id || '—').toString();
+        if (id) {
+          var opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = name;
+          goalCreateAgentSelect.appendChild(opt);
+        }
+      });
+      if (goalCreateText) goalCreateText.value = '';
+      if (goalCreateWorkspace) goalCreateWorkspace.value = './workspace/demo';
+      if (goalCreateError) { goalCreateError.hidden = true; goalCreateError.textContent = ''; }
+      if (goalCreateModal) goalCreateModal.hidden = false;
+    });
+  }
+  if (document.getElementById('goal-create-modal-close')) {
+    document.getElementById('goal-create-modal-close').addEventListener('click', function() { if (goalCreateModal) goalCreateModal.hidden = true; });
+  }
+  if (goalCreateModal && goalCreateModal.querySelector('.goal-modal-backdrop')) {
+    goalCreateModal.querySelector('.goal-modal-backdrop').addEventListener('click', function() { goalCreateModal.hidden = true; });
+  }
+  if (goalCreateSaveBtn) {
+    goalCreateSaveBtn.addEventListener('click', function() {
+      var agentId = goalCreateAgentSelect && goalCreateAgentSelect.value ? goalCreateAgentSelect.value.trim() : '';
+      var text = goalCreateText ? goalCreateText.value.trim() : '';
+      var workspace = goalCreateWorkspace ? goalCreateWorkspace.value.trim() : '';
+      if (!agentId) { if (goalCreateError) { goalCreateError.textContent = 'Select an agent.'; goalCreateError.hidden = false; } return; }
+      if (!text) { if (goalCreateError) { goalCreateError.textContent = 'Enter a goal description.'; goalCreateError.hidden = false; } return; }
+      if (goalCreateError) goalCreateError.hidden = true;
+      goalCreateSaveBtn.disabled = true;
+      goalCreateSaveBtn.textContent = 'Creating…';
+      var payload = { goal_text: text };
+      if (workspace) payload.workspace = workspace;
+      authFetch('/agents/' + encodeURIComponent(agentId) + '/goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(function(r) {
+          if (r.ok) { if (goalCreateModal) goalCreateModal.hidden = true; fetchSnapshot(); return; }
+          return r.text().then(function(t) {
+            var msg = 'Create goal failed';
+            try {
+              var j = JSON.parse(t);
+              if (j && (j.error || j.message)) msg = j.message || j.error;
+              else if (t) msg = t;
+            } catch (e) {
+              if (t) msg = t;
+            }
+            throw new Error(msg);
+          });
+        })
+        .catch(function(e) {
+          if (goalCreateError) { goalCreateError.textContent = e && e.message ? e.message : 'Create goal failed'; goalCreateError.hidden = false; }
+        })
+        .finally(function() {
+          goalCreateSaveBtn.disabled = false;
+          goalCreateSaveBtn.textContent = 'Create Goal';
+        });
+    });
+  }
 
   var createIngestTypeSel = document.getElementById('agent-create-ingest-source-type');
   if (createIngestTypeSel) createIngestTypeSel.addEventListener('change', function() { updateIngestSourceHint('agent-create'); });

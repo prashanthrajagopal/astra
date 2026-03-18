@@ -138,6 +138,7 @@
               </div>
               <span class="section-name">Recent Goals</span>
             </div>
+            <button type="button" id="btn-create-goal" class="green-btn">+ Create Goal</button>
           </div>
           <div class="table-wrap">
             <table id="table-goals">
@@ -521,6 +522,50 @@
       </div>
       <div class="agent-create-submit">
         <button type="button" id="agent-modal-save" class="submit-btn">Create Agent</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Goal Modal -->
+  <div id="goal-create-modal" class="goal-modal agent-create-panel astra-glass-modal" hidden>
+    <div class="goal-modal-backdrop"></div>
+    <div class="goal-modal-content agent-create-content">
+      <div class="agent-create-header">
+        <h1 class="agent-create-title">Create Goal</h1>
+        <button type="button" class="agent-create-close" id="goal-create-modal-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+        </button>
+      </div>
+      <div class="agent-create-body">
+        <section class="agent-create-section">
+          <div class="agent-create-section-header">
+            <div class="agent-create-section-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <span class="agent-create-section-title">Goal</span>
+          </div>
+          <div class="form-group">
+            <label>Agent</label>
+            <div class="select-wrapper">
+              <select id="goal-create-agent-id">
+                <option value="">Select an agent…</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Goal description</label>
+            <textarea id="goal-create-text" rows="4" placeholder="Describe what you want the agent to accomplish…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Workspace <span class="optional">(optional)</span></label>
+            <input type="text" id="goal-create-workspace" placeholder="./workspace/demo"/>
+            <div class="hint">Path for generated files</div>
+          </div>
+        </section>
+        <div id="goal-create-modal-error" class="agent-modal-error" hidden></div>
+      </div>
+      <div class="agent-create-submit">
+        <button type="button" id="goal-create-modal-save" class="submit-btn">Create Goal</button>
       </div>
     </div>
   </div>

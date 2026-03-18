@@ -124,6 +124,11 @@ func main() {
 		slog.Error("failed to initialize dashboard action client", "err", err)
 		os.Exit(1)
 	}
+	goalServiceClient, err := httpx.NewClient(cfg, 30*time.Second)
+	if err != nil {
+		slog.Error("failed to initialize goal-service client", "err", err)
+		os.Exit(1)
+	}
 	var memoryStore *memory.Store
 	if cfg.ChatEnabled {
 		memoryStore, err = initMemoryStore(database)
@@ -152,7 +157,7 @@ func main() {
 	mux.Handle("POST /agents/{id}/documents", auth.protect(http.HandlerFunc(handleCreateDocument)))
 	mux.Handle("GET /agents/{id}/documents", auth.protect(http.HandlerFunc(handleListDocuments)))
 	mux.Handle("DELETE /agents/{id}/documents/{doc_id}", auth.protect(http.HandlerFunc(handleDeleteDocument)))
-	mux.Handle("POST /agents/{id}/goals", auth.protect(http.HandlerFunc(handleAgentGoals)))
+	mux.Handle("POST /agents/{id}/goals", auth.protect(handleAgentGoalsProxy(cfg.GoalServiceAddr, goalServiceClient)))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
 	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -1686,35 +1691,64 @@ func handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-func handleAgentGoals(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
-	if agentID == "" {
-		http.Error(w, "agent id required", http.StatusBadRequest)
-		return
+// handleAgentGoalsProxy proxies POST /agents/{id}/goals to the goal-service POST /goals so that
+// goal creation works for any agent in the DB without requiring the agent to be a live kernel actor.
+func handleAgentGoalsProxy(goalServiceAddr string, client *http.Client) http.HandlerFunc {
+	base := strings.TrimSuffix(goalServiceAddr, "/")
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		if agentID == "" {
+			http.Error(w, "agent id required", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			GoalText   string `json:"goal_text"`
+			Workspace  string `json:"workspace"`
+			Priority   int    `json:"priority"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.GoalText == "" {
+			writeJSONError(w, http.StatusBadRequest, "goal_text required")
+			return
+		}
+		priority := req.Priority
+		if priority <= 0 {
+			priority = 100
+		}
+		body := map[string]interface{}{
+			"agent_id":  agentID,
+			"goal_text": req.GoalText,
+			"priority":  priority,
+		}
+		if req.Workspace != "" {
+			body["workspace"] = req.Workspace
+		}
+		bodyBytes, _ := json.Marshal(body)
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		proxyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/goals", bytes.NewReader(bodyBytes))
+		if err != nil {
+			slog.Error("create goal proxy request build failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "create goal failed")
+			return
+		}
+		proxyReq.Header.Set(headerContentType, contentTypeJSON)
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			slog.Error("create goal proxy failed", "agent_id", agentID, "err", err)
+			writeJSONError(w, http.StatusBadGateway, "create goal failed: goal service unavailable")
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Warn("create goal proxy copy body failed", "err", err)
+		}
 	}
-	var req struct {
-		GoalText string `json:"goal_text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	payload, _ := json.Marshal(map[string]string{"goal_text": req.GoalText})
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	_, err := agentClient.SendMessage(ctx, &kernel_pb.SendMessageRequest{
-		TargetActorId: agentID,
-		MessageType:   "CreateGoal",
-		Source:        "api-gateway",
-		Payload:       payload,
-	})
-	if err != nil {
-		slog.Error("SendMessage CreateGoal failed", "agent_id", agentID, "err", err)
-		http.Error(w, "create goal failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set(headerContentType, contentTypeJSON)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func handleTasks(w http.ResponseWriter, r *http.Request) {

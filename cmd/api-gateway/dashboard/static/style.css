@@ -142,6 +142,8 @@ body {
 .field label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px; }
 .modal-label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px; margin-top: 12px; }
 .modal-label:first-child { margin-top: 0; }
+.section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.section-head-left { display: flex; align-items: center; gap: 8px; }
 .section-desc { font-size: 0.875rem; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px; line-height: 1.4; }
 .section-desc a { color: var(--md-sys-color-primary); }
 .slack-config-form { max-width: 480px; }
@@ -691,15 +693,19 @@ button#btn-refresh:focus-visible {
   border: none;
   border-radius: 6px;
   background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface-variant);
   font-size: 0.9rem;
   cursor: pointer;
   line-height: 1;
 }
+.agent-action-edit { color: var(--md-sys-color-primary); }
+.agent-action-enable { color: var(--md-ref-success); }
+.agent-action-disable { color: var(--md-ref-warning); }
+.agent-action-delete { color: var(--md-sys-color-error); }
 .agent-action-btn:hover {
   background: var(--md-sys-color-surface-container-highest, rgba(255,255,255,0.08));
-  color: var(--md-sys-color-on-surface);
+  filter: brightness(1.15);
 }
+.agent-action-edit:hover { color: var(--md-sys-color-primary); }
 .agent-action-enable:hover { color: var(--md-ref-success); }
 .agent-action-disable:hover { color: var(--md-ref-warning); }
 .agent-action-delete:hover { color: var(--md-sys-color-error); }
@@ -799,6 +805,28 @@ button#btn-refresh:focus-visible {
   margin-right: 0;
   flex-shrink: 0;
 }
+#table-approvals .approval-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  min-width: 28px;
+  border: none;
+  border-radius: 6px;
+  background: var(--md-sys-color-surface-container-high);
+  font-size: 0.9rem;
+  cursor: pointer;
+  line-height: 1;
+}
+#table-approvals .approval-action-view { color: var(--md-sys-color-primary); }
+#table-approvals .approval-action-approve { color: var(--md-ref-success); }
+#table-approvals .approval-action-reject { color: var(--md-sys-color-error); }
+#table-approvals .approval-icon-btn:hover { filter: brightness(1.15); }
+#table-approvals .approval-action-view:hover { color: var(--md-sys-color-primary); background: var(--md-sys-color-surface-container-highest, rgba(255,255,255,0.08)); }
+#table-approvals .approval-action-approve:hover { color: var(--md-ref-success); background: var(--md-sys-color-surface-container-highest, rgba(255,255,255,0.08)); }
+#table-approvals .approval-action-reject:hover { color: var(--md-sys-color-error); background: var(--md-sys-color-surface-container-highest, rgba(255,255,255,0.08)); }
 
 /* Chat section */
 .card-chat { margin-bottom: 24px; }
@@ -3525,6 +3553,17 @@ body.dashboard-redesign #sidebar-cost .sidebar-stat-value {
 }
 body.dashboard-redesign #health-summary-text,
 body.dashboard-redesign #worker-util-summary,
+body.dashboard-redesign #table-approvals .approval-icon-btn {
+  border: 1px solid var(--glass-border);
+  background: transparent;
+}
+body.dashboard-redesign #table-approvals .approval-action-view { color: var(--blue); }
+body.dashboard-redesign #table-approvals .approval-action-approve { color: var(--green); }
+body.dashboard-redesign #table-approvals .approval-action-reject { color: var(--red); }
+body.dashboard-redesign #table-approvals .approval-icon-btn:hover { background: var(--glass-hover); }
+body.dashboard-redesign #table-approvals .approval-action-view:hover { color: var(--blue); }
+body.dashboard-redesign #table-approvals .approval-action-approve:hover { color: var(--green); }
+body.dashboard-redesign #table-approvals .approval-action-reject:hover { color: var(--red); }
 body.dashboard-redesign #approvals-summary-text {
   font-size: 12px;
   color: var(--text-secondary);
@@ -3590,18 +3629,27 @@ body.dashboard-redesign .cancel-goal-btn {
   border-radius: 6px;
   border: 1px solid var(--glass-border);
   background: transparent;
-  color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
+body.dashboard-redesign .agent-action-edit { color: var(--blue); }
+body.dashboard-redesign .agent-action-enable { color: var(--green); }
+body.dashboard-redesign .agent-action-disable { color: var(--yellow); }
+body.dashboard-redesign .agent-action-delete { color: var(--red); }
+body.dashboard-redesign .cancel-goal-btn { color: var(--text-muted); }
 body.dashboard-redesign .agent-action-btn:hover,
 body.dashboard-redesign .cancel-goal-btn:hover {
   background: var(--glass-hover);
-  color: var(--text-primary);
+  filter: brightness(1.1);
 }
+body.dashboard-redesign .agent-action-edit:hover { color: var(--blue); }
+body.dashboard-redesign .agent-action-enable:hover { color: var(--green); }
+body.dashboard-redesign .agent-action-disable:hover { color: var(--yellow); }
+body.dashboard-redesign .agent-action-delete:hover { color: var(--red); }
+body.dashboard-redesign .cancel-goal-btn:hover { color: var(--text-primary); }
 body.dashboard-redesign #dashboard-meta.has-error .meta-text { color: #f87171; }
 body.dashboard-redesign .goal-text-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.dashboard-redesign .tool-summary-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
@@ -3902,13 +3950,22 @@ html[data-theme="light"] body.dashboard-redesign .td-status.status-active { back
 html[data-theme="light"] body.dashboard-redesign .agent-action-btn,
 html[data-theme="light"] body.dashboard-redesign .cancel-goal-btn {
   border-color: var(--border);
-  color: #5c5c7a;
 }
+html[data-theme="light"] body.dashboard-redesign .agent-action-edit { color: var(--blue); }
+html[data-theme="light"] body.dashboard-redesign .agent-action-enable { color: var(--green); }
+html[data-theme="light"] body.dashboard-redesign .agent-action-disable { color: var(--yellow); }
+html[data-theme="light"] body.dashboard-redesign .agent-action-delete { color: var(--red); }
+html[data-theme="light"] body.dashboard-redesign .cancel-goal-btn { color: #5c5c7a; }
 html[data-theme="light"] body.dashboard-redesign .agent-action-btn:hover,
 html[data-theme="light"] body.dashboard-redesign .cancel-goal-btn:hover {
   background: #f0f0f5;
-  color: #1a1a2e;
+  filter: brightness(1.05);
 }
+html[data-theme="light"] body.dashboard-redesign .agent-action-edit:hover { color: var(--blue); }
+html[data-theme="light"] body.dashboard-redesign .agent-action-enable:hover { color: var(--green); }
+html[data-theme="light"] body.dashboard-redesign .agent-action-disable:hover { color: var(--yellow); }
+html[data-theme="light"] body.dashboard-redesign .agent-action-delete:hover { color: var(--red); }
+html[data-theme="light"] body.dashboard-redesign .cancel-goal-btn:hover { color: #1a1a2e; }
 html[data-theme="light"] body.dashboard-redesign table + .table-footer {
   border-top-color: rgba(0,0,0,0.04);
 }
