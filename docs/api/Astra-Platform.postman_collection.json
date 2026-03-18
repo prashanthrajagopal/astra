@@ -1,0 +1,718 @@
+{
+  "info": {
+    "name": "Astra Platform API",
+    "description": "Full API collection for Astra — Autonomous Agent OS. Run **Auth > Get JWT token** first; the token is automatically saved to the collection variable `token` so all other requests use it. Base URL defaults to localhost; change `base_url`, `identity_url`, `goal_url` for other environments.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080" },
+    { "key": "identity_url", "value": "http://localhost:8085" },
+    { "key": "goal_url", "value": "http://localhost:8088" },
+    { "key": "access_control_url", "value": "http://localhost:8086" },
+    { "key": "tool_runtime_url", "value": "http://localhost:8083" },
+    { "key": "worker_manager_url", "value": "http://localhost:8082" },
+    { "key": "token", "value": "" },
+    { "key": "agent_id", "value": "" },
+    { "key": "goal_id", "value": "" },
+    { "key": "task_id", "value": "" },
+    { "key": "graph_id", "value": "" },
+    { "key": "doc_id", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "approval_id", "value": "" },
+    { "key": "revision", "value": "1" },
+    { "key": "audit_since", "value": "" },
+    { "key": "audit_until", "value": "" },
+    { "key": "ingest_secret", "value": "your-astra-ingest-secret" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth (Identity)",
+      "item": [
+        {
+          "name": "Get JWT token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.token) {",
+                  "  pm.collectionVariables.set('token', res.token);",
+                  "  console.log('Token saved to collection variable `token`');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"developer\",\n  \"scopes\": [\"admin\"],\n  \"ttl_seconds\": 3600\n}"
+            },
+            "url": "{{identity_url}}/tokens",
+            "description": "Get a JWT. On success, the token is automatically saved to the collection variable `token` so all other requests use it."
+          }
+        },
+        {
+          "name": "Validate token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{identity_url}}/validate"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agents",
+      "item": [
+        {
+          "name": "List agents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const list = res && res.agents;",
+                  "if (Array.isArray(list) && list.length > 0 && list[0].id) {",
+                  "  pm.collectionVariables.set('agent_id', list[0].id);",
+                  "  console.log('agent_id saved: ' + list[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/agents"
+          }
+        },
+        {
+          "name": "Create agent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && (res.actor_id || res.id)) {",
+                  "  const id = res.actor_id || res.id;",
+                  "  pm.collectionVariables.set('agent_id', id);",
+                  "  console.log('agent_id saved: ' + id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_type\": \"ecommerce-builder\",\n  \"name\": \"E-Commerce Builder\",\n  \"system_prompt\": \"You are a senior full-stack developer specializing in Next.js, TypeScript, and Tailwind CSS.\",\n  \"config\": {\"model_preference\": \"code\"}\n}"
+            },
+            "url": "{{base_url}}/agents"
+          }
+        },
+        {
+          "name": "Get agent profile",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/agents/{{agent_id}}/profile"
+          }
+        },
+        {
+          "name": "Update agent",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Agent Name\",\n  \"system_prompt\": \"Updated prompt.\",\n  \"chat_capable\": true\n}"
+            },
+            "url": "{{base_url}}/agents/{{agent_id}}"
+          }
+        },
+        {
+          "name": "Delete agent",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/agents/{{agent_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agent Documents",
+      "item": [
+        {
+          "name": "List documents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const docs = res && res.documents;",
+                  "if (Array.isArray(docs) && docs.length > 0 && docs[0].id) {",
+                  "  pm.collectionVariables.set('doc_id', docs[0].id);",
+                  "  console.log('doc_id saved: ' + docs[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/agents/{{agent_id}}/documents"
+          }
+        },
+        {
+          "name": "Create document",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.id) { pm.collectionVariables.set('doc_id', res.id); console.log('doc_id saved: ' + res.id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doc_type\": \"rule\",\n  \"name\": \"typescript-only\",\n  \"content\": \"All code must be TypeScript.\",\n  \"priority\": 100\n}"
+            },
+            "url": "{{base_url}}/agents/{{agent_id}}/documents"
+          }
+        },
+        {
+          "name": "Delete document",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/agents/{{agent_id}}/documents/{{doc_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Goals",
+      "item": [
+        {
+          "name": "Submit goal (via Gateway)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.goal_id) { pm.collectionVariables.set('goal_id', res.goal_id); }",
+                  "if (res && res.graph_id) { pm.collectionVariables.set('graph_id', res.graph_id); }",
+                  "if (res && res.approval_request_id) { pm.collectionVariables.set('approval_id', res.approval_request_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agent_id}}\",\n  \"goal_text\": \"Build a simple Next.js page with a counter component.\",\n  \"priority\": 100,\n  \"workspace\": \"./workspace/demo\",\n  \"auto_approve\": true\n}"
+            },
+            "url": "{{base_url}}/agents/{{agent_id}}/goals"
+          }
+        },
+        {
+          "name": "Create goal (Goal Service direct)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.goal_id) { pm.collectionVariables.set('goal_id', res.goal_id); }",
+                  "if (res && res.graph_id) { pm.collectionVariables.set('graph_id', res.graph_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agent_id}}\",\n  \"goal_text\": \"Build a simple Next.js page with a counter.\",\n  \"priority\": 100,\n  \"workspace\": \"./workspace/demo\",\n  \"documents\": []\n}"
+            },
+            "url": "{{goal_url}}/goals"
+          }
+        },
+        {
+          "name": "Get goal (Goal Service)",
+          "request": {
+            "method": "GET",
+            "url": "{{goal_url}}/goals/{{goal_id}}",
+            "description": "Returns basic goal: id, agent_id, goal_text, priority, status, created_at."
+          }
+        },
+        {
+          "name": "Get goal details with tasks (Goal Service)",
+          "request": {
+            "method": "GET",
+            "url": "{{goal_url}}/goals/{{goal_id}}/details",
+            "description": "Returns full goal + tasks array. Each task has id, type, status, payload, result. Use after approving a plan to see task progress and results."
+          }
+        },
+        {
+          "name": "Get goal details (Gateway proxy)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && Array.isArray(res.tasks) && res.tasks.length > 0 && res.tasks[0].id) {",
+                  "  pm.collectionVariables.set('task_id', res.tasks[0].id);",
+                  "  console.log('task_id saved: ' + res.tasks[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/goals/{{goal_id}}",
+            "description": "Same as Get goal details with tasks but via Gateway (JWT). Returns { goal, tasks } with task status and result. Use this after approving to get the goal response."
+          }
+        },
+        {
+          "name": "Cancel goal",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/goals/{{goal_id}}/cancel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tasks & Graphs",
+      "item": [
+        {
+          "name": "Get task",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/tasks/{{task_id}}"
+          }
+        },
+        {
+          "name": "Complete task",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{base_url}}/tasks/{{task_id}}/complete"
+          }
+        },
+        {
+          "name": "Get graph",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/graphs/{{graph_id}}"
+          }
+        },
+        {
+          "name": "Cancel task",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/tasks/{{task_id}}/cancel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Superadmin — Dashboard",
+      "item": [
+        {
+          "name": "Dashboard snapshot",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const approvals = res && res.approvals;",
+                  "if (Array.isArray(approvals) && approvals.length > 0 && approvals[0].id) {",
+                  "  pm.collectionVariables.set('approval_id', approvals[0].id);",
+                  "  console.log('approval_id saved: ' + approvals[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/snapshot"
+          }
+        },
+        {
+          "name": "Dashboard settings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/settings"
+          }
+        },
+        {
+          "name": "Get approval",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/approvals/{{approval_id}}"
+          }
+        },
+        {
+          "name": "Approve approval",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/approvals/{{approval_id}}/approve"
+          }
+        },
+        {
+          "name": "Reject approval",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/approvals/{{approval_id}}/reject"
+          }
+        },
+        {
+          "name": "Agent status (enable/disable)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"status\": \"active\"}" },
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/status"
+          }
+        },
+        {
+          "name": "Delete agent (superadmin)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Superadmin — Platform (revisions, tools, events)",
+      "item": [
+        {
+          "name": "List agent revisions",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/revisions"
+          }
+        },
+        {
+          "name": "Create revision",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payload\": {\"system_prompt\": \"Updated system prompt.\"},\n  \"created_by\": \"postman\"\n}"
+            },
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/revisions"
+          }
+        },
+        {
+          "name": "Activate revision",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/revisions/{{revision}}/activate"
+          }
+        },
+        {
+          "name": "PATCH platform (drain, quotas, tools)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"drain_mode\": false,\n  \"max_concurrent_goals\": 5,\n  \"daily_token_budget\": 100000,\n  \"priority\": 0,\n  \"allowed_tools\": [\"file_read@1\", \"file_write@1\"]\n}"
+            },
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/platform"
+          }
+        },
+        {
+          "name": "Tool catalog",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/tools"
+          }
+        },
+        {
+          "name": "Agent events",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/events?limit=50&offset=0"
+          }
+        },
+        {
+          "name": "Audit export (NDJSON)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/audit.ndjson?since={{audit_since}}&until={{audit_until}}"
+          }
+        },
+        {
+          "name": "Forget agent (memories + chat)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/forget"
+          }
+        },
+        {
+          "name": "LLM saturation",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/llm-saturation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "List chat-capable agents",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/chat/agents"
+          }
+        },
+        {
+          "name": "List chat sessions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const list = res && res.sessions;",
+                  "if (Array.isArray(list) && list.length > 0 && list[0].id) {",
+                  "  pm.collectionVariables.set('session_id', list[0].id);",
+                  "  console.log('session_id saved: ' + list[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/chat/sessions?agent_id={{agent_id}}"
+          }
+        },
+        {
+          "name": "Create chat session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.id) { pm.collectionVariables.set('session_id', res.id); console.log('session_id saved: ' + res.id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"agent_id\": \"{{agent_id}}\", \"title\": \"Test session\"}"
+            },
+            "url": "{{base_url}}/superadmin/api/dashboard/chat/sessions"
+          }
+        },
+        {
+          "name": "Get chat session",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/chat/sessions/{{session_id}}"
+          }
+        },
+        {
+          "name": "Get session messages",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/chat/sessions/{{session_id}}/messages"
+          }
+        },
+        {
+          "name": "Append message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"role\": \"user\", \"content\": \"Hello, list my tasks.\"}"
+            },
+            "url": "{{base_url}}/superadmin/api/dashboard/chat/sessions/{{session_id}}/messages"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Slack (Superadmin)",
+      "item": [
+        {
+          "name": "Get Slack config",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/slack/config"
+          }
+        },
+        {
+          "name": "Put Slack config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{base_url}}/superadmin/api/slack/config"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Internal (adapters)",
+      "item": [
+        {
+          "name": "Ingest event",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Ingest-Secret", "value": "{{ingest_secret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agent_id}}\",\n  \"message_type\": \"ExternalEvent\",\n  \"payload\": {}\n}"
+            },
+            "url": "{{base_url}}/internal/ingest/event"
+          }
+        },
+        {
+          "name": "Ingest bindings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Ingest-Secret", "value": "{{ingest_secret}}" }],
+            "url": "{{base_url}}/internal/ingest/bindings"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Access Control",
+      "item": [
+        {
+          "name": "Policy check",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"developer\",\n  \"action\": \"agent.create\",\n  \"resource\": \"agents\"\n}"
+            },
+            "url": "{{access_control_url}}/check"
+          }
+        },
+        {
+          "name": "Pending approvals",
+          "request": {
+            "method": "GET",
+            "url": "{{access_control_url}}/approvals/pending"
+          }
+        },
+        {
+          "name": "Approve",
+          "request": {
+            "method": "POST",
+            "url": "{{access_control_url}}/approvals/{{approval_id}}/approve"
+          }
+        },
+        {
+          "name": "Deny",
+          "request": {
+            "method": "POST",
+            "url": "{{access_control_url}}/approvals/{{approval_id}}/deny"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tool Runtime",
+      "item": [
+        {
+          "name": "Execute tool",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"file_read\",\n  \"input\": \"\",\n  \"timeout_seconds\": 30,\n  \"task_id\": \"{{task_id}}\",\n  \"worker_id\": \"test-worker\",\n  \"dry_run\": false\n}"
+            },
+            "url": "{{tool_runtime_url}}/execute"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workers",
+      "item": [
+        {
+          "name": "List workers",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/workers"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Gateway health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health"
+          }
+        }
+      ]
+    }
+  ]
+}

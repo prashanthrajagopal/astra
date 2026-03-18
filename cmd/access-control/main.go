@@ -291,16 +291,23 @@ func scanApprovalRows(rows *sql.Rows) []approvalRequest {
 	for rows.Next() {
 		var ar approvalRequest
 		var taskID, workerID, goalID, graphID sql.NullString
+		var toolName, actionSummary sql.NullString
 		var requestedBy, assignedTo sql.NullString
 		var decidedAt sql.NullTime
 		var decidedBy sql.NullString
 		var summary sql.NullString
-		err := rows.Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary,
+		err := rows.Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &toolName, &actionSummary,
 			&goalID, &graphID, &summary, &ar.Status,
 			&requestedBy, &assignedTo, &ar.RequestedAt, &decidedAt, &decidedBy)
 		if err != nil {
 			slog.Error("scan approval row failed", "err", err)
 			continue
+		}
+		if toolName.Valid {
+			ar.ToolName = toolName.String
+		}
+		if actionSummary.Valid {
+			ar.ActionSummary = actionSummary.String
 		}
 		if taskID.Valid {
 			ar.TaskID = &taskID.String
@@ -345,6 +352,7 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 
 	var ar approvalRequest
 	var taskID, workerID, goalID, graphID sql.NullString
+	var toolName, actionSummary sql.NullString
 	var requestedBy, assignedTo sql.NullString
 	var decidedAt sql.NullTime
 	var decidedBy sql.NullString
@@ -353,7 +361,7 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, COALESCE(request_type, 'risky_task'), task_id, worker_id, tool_name, action_summary,
 		 goal_id, graph_id, status, requested_by, assigned_to, requested_at, decided_at, decided_by, plan_payload
 		 FROM approval_requests WHERE id::text = $1`,
-		idStr).Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &ar.ToolName, &ar.ActionSummary,
+		idStr).Scan(&ar.ID, &ar.RequestType, &taskID, &workerID, &toolName, &actionSummary,
 		&goalID, &graphID, &ar.Status, &requestedBy, &assignedTo, &ar.RequestedAt, &decidedAt, &decidedBy, &planPayload)
 	if err == sql.ErrNoRows {
 		http.Error(w, "approval not found", http.StatusNotFound)
@@ -363,6 +371,12 @@ func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		slog.Error("get approval by id failed", "id", idStr, "err", err)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
+	}
+	if toolName.Valid {
+		ar.ToolName = toolName.String
+	}
+	if actionSummary.Valid {
+		ar.ActionSummary = actionSummary.String
 	}
 	if taskID.Valid {
 		ar.TaskID = &taskID.String

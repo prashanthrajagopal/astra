@@ -11,7 +11,7 @@
   --md-sys-color-on-secondary: #003258;
   --md-sys-color-tertiary: #c8b8ff;
   --md-sys-color-on-tertiary: #2e1065;
-  --md-sys-color-error: #f2b8b5;
+  --md-sys-color-error: #ff5252;
   --md-sys-color-on-error: #601410;
   --md-sys-color-error-container: #8c1d18;
   --md-sys-color-surface: #1c1b1f;
@@ -24,10 +24,10 @@
   --md-sys-color-on-surface-variant: #c4c6d0;
   --md-sys-color-outline: #8e9099;
   --md-sys-color-outline-variant: #44474e;
-  /* Semantic aliases */
-  --md-ref-success: #7dd87d;
-  --md-ref-warning: #e6c547;
-  --md-ref-error: #f2b8b5;
+  /* Semantic aliases — vibrant visualization palette */
+  --md-ref-success: #00e676;
+  --md-ref-warning: #ffd740;
+  --md-ref-error: #ff5252;
   /* Elevation */
   --md-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.3);
   --md-elevation-2: 0 2px 6px rgba(0, 0, 0, 0.4);
@@ -58,9 +58,9 @@
   --md-sys-color-on-primary: #ffffff;
   --md-sys-color-tertiary: #6750a4;
   --md-sys-color-error: #ba1a1a;
-  --md-ref-success: #2e7d32;
-  --md-ref-warning: #f9a825;
-  --md-ref-error: #ba1a1a;
+  --md-ref-success: #00c853;
+  --md-ref-warning: #ffab00;
+  --md-ref-error: #ff1744;
   --md-elevation-1: 0 1px 3px rgba(0, 0, 0, 0.12);
   --md-elevation-2: 0 2px 6px rgba(0, 0, 0, 0.16);
   --color-text: var(--md-sys-color-on-surface);
@@ -786,6 +786,19 @@ button#btn-refresh:focus-visible {
 .approval-detail-tasks li { margin-bottom: 6px; }
 #tbody-approvals tr.approval-row { cursor: pointer; }
 #tbody-approvals tr.approval-row:hover { background: var(--md-sys-color-surface-container-high); }
+
+#table-approvals .actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+#table-approvals .actions .action-btn {
+  margin-right: 0;
+  flex-shrink: 0;
+}
 
 /* Chat section */
 .card-chat { margin-bottom: 24px; }
@@ -2909,18 +2922,18 @@ body.dashboard-redesign {
   --accent: #c4b5fd;
   --accent-glow: rgba(196,181,253,0.28);
   --accent-soft: rgba(196,181,253,0.16);
-  --green: #9dd9c4;
-  --green-soft: rgba(157,217,196,0.18);
-  --blue: #a8d4ef;
-  --blue-soft: rgba(168,212,239,0.16);
-  --yellow: #f5e6a8;
-  --yellow-soft: rgba(245,230,168,0.18);
-  --red: #f0b8c8;
-  --red-soft: rgba(240,184,200,0.18);
-  --orange: #f5d4b8;
-  --orange-soft: rgba(245,212,184,0.16);
-  --cyan: #a8e8ea;
-  --cyan-soft: rgba(168,232,234,0.16);
+  --green: #00e676;
+  --green-soft: rgba(0,230,118,0.18);
+  --blue: #82b1ff;
+  --blue-soft: rgba(130,177,255,0.16);
+  --yellow: #ffd740;
+  --yellow-soft: rgba(255,215,64,0.18);
+  --red: #ff5252;
+  --red-soft: rgba(255,82,82,0.18);
+  --orange: #ffab40;
+  --orange-soft: rgba(255,171,64,0.16);
+  --cyan: #84ffff;
+  --cyan-soft: rgba(132,255,255,0.16);
   --radius: 14px;
   --radius-sm: 10px;
   --radius-xs: 8px;
@@ -3228,7 +3241,7 @@ body.dashboard-redesign .green-btn {
   font-family: inherit;
   border-radius: 7px;
   border: none;
-  background: linear-gradient(135deg, #9dd9c4 0%, #7ec8b0 100%);
+  background: linear-gradient(135deg, #00e676 0%, #00c853 100%);
   color: #1a2e28;
   cursor: pointer;
   transition: all 0.2s;
@@ -3612,26 +3625,26 @@ html[data-theme="light"] body.dashboard-redesign {
   --accent-glow: rgba(169,156,240,0.28);
   --accent-soft: rgba(169,156,240,0.14);
   --accent-text: #7c6ec8;
-  --green: #6aab8f;
-  --green-soft: #eef8f2;
-  --green-bg: #eef8f2;
-  --green-border: rgba(106,171,143,0.22);
-  --blue: #6fa3c8;
-  --blue-soft: #eef6fb;
-  --blue-bg: #eef6fb;
-  --blue-border: rgba(111,163,200,0.22);
-  --yellow: #c4a85c;
-  --yellow-soft: #fdf8ea;
-  --yellow-bg: #fdf8ea;
-  --yellow-border: rgba(196,168,92,0.22);
-  --red: #c87888;
-  --red-soft: #fdf0f3;
-  --red-bg: #fdf0f3;
-  --red-border: rgba(200,120,136,0.22);
-  --orange: #c99878;
-  --orange-soft: #fdf6f0;
-  --cyan: #5eb0c0;
-  --cyan-soft: #eef9fb;
+  --green: #00c853;
+  --green-soft: #e8f5e9;
+  --green-bg: #e8f5e9;
+  --green-border: rgba(0,200,83,0.28);
+  --blue: #2962ff;
+  --blue-soft: #e3f2fd;
+  --blue-bg: #e3f2fd;
+  --blue-border: rgba(41,98,255,0.22);
+  --yellow: #ffab00;
+  --yellow-soft: #fff8e1;
+  --yellow-bg: #fff8e1;
+  --yellow-border: rgba(255,171,0,0.28);
+  --red: #ff1744;
+  --red-soft: #ffebee;
+  --red-bg: #ffebee;
+  --red-border: rgba(255,23,68,0.22);
+  --orange: #ff9100;
+  --orange-soft: #fff3e0;
+  --cyan: #00b8d4;
+  --cyan-soft: #e0f7fa;
   --dash-glass-bg: linear-gradient(165deg, rgba(255,255,255,0.82) 0%, rgba(255,255,255,0.58) 100%);
   --dash-glass-border: rgba(255,255,255,0.95);
   --dash-glass-blur: 20px;

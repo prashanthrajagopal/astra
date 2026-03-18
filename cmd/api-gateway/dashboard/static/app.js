@@ -91,15 +91,15 @@ var goalChart = null;
 var serviceChart = null;
 var agentChart = null;
 
-/* Pastel palette for Chart.js (aligned with dashboard style.css) */
+/* Vibrant visualization palette — high-contrast on dark/light (cyan, purple, lime, amber, magenta) */
 var chartColors = {
-  created: '#a8a4b8',
-  pending: '#c4b5fd',
-  queued: '#a8d4ef',
-  scheduled: '#9ecbf5',
-  running: '#f5e6a8',
-  completed: '#9dd9c4',
-  failed: '#f0b8c8'
+  created: '#80d8ff',
+  pending: '#b388ff',
+  queued: '#82b1ff',
+  scheduled: '#84ffff',
+  running: '#ffd740',
+  completed: '#00e676',
+  failed: '#ff5252'
 };
 
 function renderTaskChart(tasks) {
@@ -107,7 +107,7 @@ function renderTaskChart(tasks) {
   if (!ctx) return;
   var labels = ['created', 'pending', 'queued', 'scheduled', 'running', 'completed', 'failed'];
   var values = labels.map(function (l) { return tasks[l] || 0; });
-  var colors = labels.map(function (l) { return chartColors[l] || '#a8a4b8'; });
+  var colors = labels.map(function (l) { return chartColors[l] || '#b388ff'; });
 
   if (taskChart) {
     taskChart.data.datasets[0].data = values;
@@ -135,7 +135,7 @@ function renderGoalChart(goals) {
   if (!ctx) return;
   var labels = ['active', 'completed', 'failed', 'pending'];
   var values = labels.map(function (l) { return goals[l] || 0; });
-  var colors = ['#f5e6a8', '#9dd9c4', '#f0b8c8', '#c4b5fd'];
+  var colors = ['#ffd740', '#00e676', '#ff5252', '#b388ff'];
 
   if (goalChart) {
     goalChart.data.datasets[0].data = values;
@@ -180,8 +180,8 @@ function renderServiceChart(services) {
     data: {
       labels: labels,
       datasets: [
-        { label: 'Healthy', data: healthy, backgroundColor: '#9dd9c4', borderWidth: 0 },
-        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#f0b8c8', borderWidth: 0 }
+        { label: 'Healthy', data: healthy, backgroundColor: '#00e676', borderWidth: 0 },
+        { label: 'Unhealthy', data: unhealthy, backgroundColor: '#ff5252', borderWidth: 0 }
       ]
     },
     options: {
@@ -208,9 +208,9 @@ function renderAgentChart(agents) {
   });
   var labels = Object.keys(byStatus).length ? Object.keys(byStatus) : ['none'];
   var values = labels.map(function (l) { return byStatus[l] || 0; });
-  var colors = ['#9dd9c4', '#f5e6a8', '#a8a4b8', '#c4b5fd', '#f0b8c8'];
+  var colors = ['#00e676', '#ffd740', '#82b1ff', '#b388ff', '#ff5252'];
   labels.forEach(function (_, i) {
-    if (!colors[i]) colors[i] = '#a8a4b8';
+    if (!colors[i]) colors[i] = '#b388ff';
   });
 
   if (agentChart) {
@@ -302,7 +302,7 @@ function renderHealthSummary(services) {
       labels: ['Healthy', 'Unhealthy'],
       datasets: [{
         data: [healthy, unhealthy],
-        backgroundColor: ['#9dd9c4', '#f0b8c8'],
+        backgroundColor: ['#00e676', '#ff5252'],
         borderWidth: 0
       }]
     },

@@ -52,7 +52,7 @@ Creates a default set of agents (Python Expert, Backend Dev, Frontend Dev, E-Com
 ### Verify
 
 - **Dashboard:** `api-gateway` at `/superadmin/dashboard/` — summary stats, goals, tasks, approvals, chat widget (for chat-capable agents).
-- **API:** `GET /agents` to list agents; `GET /tasks/{id}`, `GET /graphs/{id}` for results. See [docs/api/openapi.yaml](docs/api/openapi.yaml).
+- **API:** `GET /agents` to list agents; `GET /tasks/{id}`, `GET /graphs/{id}` for results. See [docs/api/openapi.yaml](docs/api/openapi.yaml). For Postman, import [docs/api/Astra-Platform.postman_collection.json](docs/api/Astra-Platform.postman_collection.json) to get a full collection of all Astra APIs.
 
 ### MLX setup (Apple Silicon)
 
