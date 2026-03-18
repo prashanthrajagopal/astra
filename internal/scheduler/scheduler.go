@@ -3,7 +3,10 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"hash/fnv"
 	"log/slog"
+	"os"
+	"strconv"
 	"time"
 
 	"astra/internal/messaging"
@@ -53,13 +56,14 @@ func (s *Scheduler) tick(ctx context.Context) error {
 		slog.Info("recovered stale queued tasks", "count", n)
 	}
 
-	ready, err := s.store.FindReadyTasks(ctx, 100)
+	shardCount := getTaskShardCount()
+	ready, err := s.store.FindReadyTasksWithAgentIDs(ctx, 100)
 	if err != nil {
 		return err
 	}
-	for _, taskID := range ready {
-		if err := s.dispatch(ctx, taskID); err != nil {
-			slog.Error("dispatch failed", "task_id", taskID, "err", err)
+	for _, r := range ready {
+		if err := s.dispatchToShard(ctx, r.TaskID, r.AgentID, shardCount); err != nil {
+			slog.Error("dispatch failed", "task_id", r.TaskID, "err", err)
 		}
 	}
 
@@ -78,11 +82,34 @@ func (s *Scheduler) tick(ctx context.Context) error {
 	return nil
 }
 
-func (s *Scheduler) dispatch(ctx context.Context, taskID string) error {
+func getTaskShardCount() int {
+	if s := os.Getenv("TASK_SHARD_COUNT"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+func shardForAgent(agentID string, count int) int {
+	if count <= 1 {
+		return 0
+	}
+	h := fnv.New32a()
+	h.Write([]byte(agentID))
+	return int(h.Sum32()%uint32(count)) % count
+}
+
+func taskStreamForShard(shard int) string {
+	return "astra:tasks:shard:" + strconv.Itoa(shard)
+}
+
+func (s *Scheduler) dispatchToShard(ctx context.Context, taskID, agentID string, shardCount int) error {
 	if err := s.store.Transition(ctx, taskID, tasks.StatusPending, tasks.StatusQueued, nil); err != nil {
 		return err
 	}
-	return s.bus.Publish(ctx, "astra:tasks:shard:0", map[string]interface{}{
+	shard := shardForAgent(agentID, shardCount)
+	return s.bus.Publish(ctx, taskStreamForShard(shard), map[string]interface{}{
 		"task_id": taskID,
 	})
 }

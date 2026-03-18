@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Grilled Chicken Sandwich",
+    "category": "lunch",
+    "ingredients": ["grilled chicken breast", "whole wheat bun", "lettuce", "tomato", "mayonnaise"]
+  },
+  {
+    "name": "Vegetable Stir Fry",
+    "category": "lunch",
+    "ingredients": ["bell peppers", "carrots", "snap peas", "soy sauce", "brown rice"]
+  },
+  {
+    "name": "PBJ Sandwich",
+    "category": "lunch",
+    "ingredients": ["peanut butter", "jelly", "white bread"]
+  },
+  {
+    "name": "Caesar Salad",
+    "category": "lunch",
+    "ingredients": ["romaine lettuce", "caesar dressing", "croutons"]
+  },
+  {
+    "name": "Turkey Club Sandwich",
+    "category": "lunch",
+    "ingredients": ["sliced turkey", "swiss cheese", "ham", "lettuce", "tomato", "whole wheat bread"]
+  }
+]

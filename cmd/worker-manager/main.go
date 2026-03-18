@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"astra/internal/workers"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/health"
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
 
@@ -86,12 +88,14 @@ func main() {
 				if err != nil {
 					slog.Error("find orphaned tasks failed", "err", err)
 				}
+				shardCount := getTaskShardCount()
 				for _, taskID := range orphaned {
 					if err := taskStore.RequeueTask(ctx, taskID); err != nil {
 						slog.Error("requeue task failed", "task_id", taskID, "err", err)
 						continue
 					}
-					if err := bus.Publish(ctx, "astra:tasks:shard:0", map[string]interface{}{"task_id": taskID}); err != nil {
+					stream := taskStreamForShardFromTask(ctx, taskStore, taskID, shardCount)
+					if err := bus.Publish(ctx, stream, map[string]interface{}{"task_id": taskID}); err != nil {
 						slog.Error("republish requeued task failed", "task_id", taskID, "err", err)
 						continue
 					}
@@ -106,6 +110,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET /ready", health.ReadyHandler(database, redisClient))
 	mux.HandleFunc("GET /workers", func(w http.ResponseWriter, r *http.Request) {
 		active, err := registry.ListActive(r.Context())
 		if err != nil {
@@ -130,4 +135,35 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+func getTaskShardCount() int {
+	if s := os.Getenv("TASK_SHARD_COUNT"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+func taskStreamForShard(shard int) string {
+	return "astra:tasks:shard:" + strconv.Itoa(shard)
+}
+
+func shardForAgent(agentID string, count int) int {
+	if count <= 1 {
+		return 0
+	}
+	h := fnv.New32a()
+	h.Write([]byte(agentID))
+	return int(h.Sum32()%uint32(count)) % count
+}
+
+func taskStreamForShardFromTask(ctx context.Context, taskStore *tasks.Store, taskID string, shardCount int) string {
+	task, err := taskStore.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return taskStreamForShard(0)
+	}
+	shard := shardForAgent(task.AgentID.String(), shardCount)
+	return taskStreamForShard(shard)
 }

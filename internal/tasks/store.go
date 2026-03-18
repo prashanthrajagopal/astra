@@ -54,7 +54,7 @@ type TaskStore interface {
 	CreateGraph(ctx context.Context, graph *Graph) error
 	Transition(ctx context.Context, taskID string, from, to Status, eventPayload json.RawMessage) error
 	CompleteTask(ctx context.Context, taskID string, result []byte) error
-	FailTask(ctx context.Context, taskID string, errMsg string) error
+	FailTask(ctx context.Context, taskID string, errMsg string) (movedToDeadLetter bool, err error)
 	FindReadyTasks(ctx context.Context, limit int) ([]string, error)
 	SetWorkerID(ctx context.Context, taskID, workerID string) error
 	FindOrphanedRunningTasks(ctx context.Context) ([]string, error)
@@ -330,20 +330,22 @@ func promoteUnblockedTasks(tx *sql.Tx, ctx context.Context, completedTaskID stri
 	return err
 }
 
-func (s *Store) FailTask(ctx context.Context, taskID string, errMsg string) error {
+// FailTask transitions a running task to either queued (retry) or dead_letter (final failure).
+// It returns (true, nil) when the task was moved to dead_letter so callers can e.g. publish to astra:dead_letter.
+func (s *Store) FailTask(ctx context.Context, taskID string, errMsg string) (movedToDeadLetter bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("tasks.FailTask: begin: %w", err)
+		return false, fmt.Errorf("tasks.FailTask: begin: %w", err)
 	}
 	defer tx.Rollback()
 
 	var retries, maxRetries int
 	err = tx.QueryRowContext(ctx, `SELECT retries, max_retries FROM tasks WHERE id = $1 AND status = $2`, taskID, StatusRunning).Scan(&retries, &maxRetries)
 	if err == sql.ErrNoRows {
-		return ErrInvalidTransition
+		return false, ErrInvalidTransition
 	}
 	if err != nil {
-		return fmt.Errorf("tasks.FailTask: select: %w", err)
+		return false, fmt.Errorf("tasks.FailTask: select: %w", err)
 	}
 
 	eventPayload := json.RawMessage(fmt.Sprintf(`{"error":%q}`, errMsg))
@@ -352,30 +354,31 @@ func (s *Store) FailTask(ctx context.Context, taskID string, errMsg string) erro
 			`UPDATE tasks SET status = $1, retries = retries + 1, updated_at = now() WHERE id = $2 AND status = $3`,
 			StatusQueued, taskID, StatusRunning)
 		if err != nil {
-			return fmt.Errorf("tasks.FailTask: retry update: %w", err)
+			return false, fmt.Errorf("tasks.FailTask: retry update: %w", err)
 		}
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ($1, $2, $3, now())`,
 			"TaskRetry", taskID, eventPayload)
 		if err != nil {
-			return fmt.Errorf("tasks.FailTask: event: %w", err)
+			return false, fmt.Errorf("tasks.FailTask: event: %w", err)
 		}
 	} else {
 		_, err = tx.ExecContext(ctx,
 			`UPDATE tasks SET status = $1, updated_at = now() WHERE id = $2 AND status = $3`,
-			StatusFailed, taskID, StatusRunning)
+			StatusDeadLetter, taskID, StatusRunning)
 		if err != nil {
-			return fmt.Errorf("tasks.FailTask: fail update: %w", err)
+			return false, fmt.Errorf("tasks.FailTask: fail update: %w", err)
 		}
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO events (event_type, actor_id, payload, created_at) VALUES ($1, $2, $3, now())`,
-			"Task"+string(StatusFailed), taskID, eventPayload)
+			"TaskDeadLetter", taskID, eventPayload)
 		if err != nil {
-			return fmt.Errorf("tasks.FailTask: event: %w", err)
+			return false, fmt.Errorf("tasks.FailTask: event: %w", err)
 		}
+		movedToDeadLetter = true
 	}
 
-	return tx.Commit()
+	return movedToDeadLetter, tx.Commit()
 }
 
 func (s *Store) SetWorkerID(ctx context.Context, taskID, workerID string) error {
@@ -524,17 +527,35 @@ func (s *Store) AutoFinalizeGoal(ctx context.Context, goalID string) error {
 	return nil
 }
 
-func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error) {
-	ids, err := s.findReadyTasksByAgentPriority(ctx, limit)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "priority") {
-		return s.findReadyTasksFIFO(ctx, limit)
-	}
-	return ids, err
+// ReadyTask identifies a task and its agent for shard routing.
+type ReadyTask struct {
+	TaskID  string
+	AgentID string
 }
 
-func (s *Store) findReadyTasksByAgentPriority(ctx context.Context, limit int) ([]string, error) {
+func (s *Store) FindReadyTasks(ctx context.Context, limit int) ([]string, error) {
+	pairs, err := s.FindReadyTasksWithAgentIDs(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(pairs))
+	for i := range pairs {
+		ids[i] = pairs[i].TaskID
+	}
+	return ids, nil
+}
+
+func (s *Store) FindReadyTasksWithAgentIDs(ctx context.Context, limit int) ([]ReadyTask, error) {
+	pairs, err := s.findReadyTasksByAgentPriorityWithAgentID(ctx, limit)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "priority") {
+		return s.findReadyTasksFIFOWithAgentID(ctx, limit)
+	}
+	return pairs, err
+}
+
+func (s *Store) findReadyTasksByAgentPriorityWithAgentID(ctx context.Context, limit int) ([]ReadyTask, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.id FROM tasks t
+		SELECT t.id, t.agent_id FROM tasks t
 		JOIN agents a ON a.id = t.agent_id
 		WHERE t.status = 'pending'
 		AND NOT EXISTS (
@@ -549,12 +570,12 @@ func (s *Store) findReadyTasksByAgentPriority(ctx context.Context, limit int) ([
 		return nil, err
 	}
 	defer rows.Close()
-	return scanTaskIDs(rows)
+	return scanReadyTasks(rows)
 }
 
-func (s *Store) findReadyTasksFIFO(ctx context.Context, limit int) ([]string, error) {
+func (s *Store) findReadyTasksFIFOWithAgentID(ctx context.Context, limit int) ([]ReadyTask, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.id FROM tasks t
+		SELECT t.id, t.agent_id FROM tasks t
 		WHERE t.status = 'pending'
 		AND NOT EXISTS (
 			SELECT 1 FROM task_dependencies d
@@ -568,20 +589,21 @@ func (s *Store) findReadyTasksFIFO(ctx context.Context, limit int) ([]string, er
 		return nil, fmt.Errorf("tasks.FindReady: %w", err)
 	}
 	defer rows.Close()
-	return scanTaskIDs(rows)
+	return scanReadyTasks(rows)
 }
 
-func scanTaskIDs(rows *sql.Rows) ([]string, error) {
-	var ids []string
+func scanReadyTasks(rows *sql.Rows) ([]ReadyTask, error) {
+	var out []ReadyTask
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("tasks.FindReady: scan: %w", err)
+		var t ReadyTask
+		if err := rows.Scan(&t.TaskID, &t.AgentID); err != nil {
+			return nil, fmt.Errorf("tasks.scanReadyTasks: %w", err)
 		}
-		ids = append(ids, id)
+		out = append(out, t)
 	}
-	return ids, rows.Err()
+	return out, rows.Err()
 }
+
 
 // FindStaleQueuedTasks returns tasks stuck in 'queued' for more than 30 seconds
 // (their Redis message was likely lost). Resets them to 'pending' for re-dispatch.

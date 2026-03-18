@@ -15,6 +15,7 @@ import (
 	"astra/internal/identity"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/health"
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
@@ -129,6 +130,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
+	mux.HandleFunc("GET /ready", health.ReadyHandler(database, nil))
 	mux.HandleFunc("POST /tokens", handleIssueServiceToken(cfg.JWTSecret))
 	mux.HandleFunc("POST /validate", handleValidate(cfg.JWTSecret))
 	mux.HandleFunc("POST /users/login", handleLogin(cfg.JWTSecret, store))

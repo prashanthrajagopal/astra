@@ -91,7 +91,7 @@ func (s *GRPCServer) FailTask(ctx context.Context, req *tasks_pb.FailTaskRequest
 	if req == nil || req.TaskId == "" {
 		return nil, status.Error(codes.InvalidArgument, errTaskIDRequired)
 	}
-	if err := s.store.FailTask(ctx, req.TaskId, req.Error); err != nil {
+	if _, err := s.store.FailTask(ctx, req.TaskId, req.Error); err != nil {
 		if err == ErrInvalidTransition {
 			return nil, status.Error(codes.FailedPrecondition, "invalid state transition")
 		}

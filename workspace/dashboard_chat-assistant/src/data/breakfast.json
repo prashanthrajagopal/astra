@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Avocado Toast",
+    "ingredients": ["avocado", "bagel", "butter"],
+    "instructions": "Toast the bagel, mash avocado on top with butter."
+  },
+  {
+    "name": "Bacon & Eggs",
+    "ingredients": ["bacon", "eggs"],
+    "instructions": "Fry the bacon, then scramble the eggs with it."
+  }
+]

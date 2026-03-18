@@ -1,0 +1,61 @@
+[
+  {
+    "name": "Grilled Chicken Thighs",
+    "category": "dinner",
+    "ingredients": [
+      "4 chicken thighs",
+      "2 tbsp olive oil",
+      "1 tsp garlic powder",
+      "1 tsp smoked paprika",
+      "salt and pepper to taste"
+    ]
+  },
+  {
+    "name": "Baked Salmon Fillets",
+    "category": "dinner",
+    "ingredients": [
+      "4 salmon fillets",
+      "2 tbsp lemon juice",
+      "2 tsp Dijon mustard",
+      "1 tsp honey",
+      "1/4 cup chopped fresh parsley"
+    ]
+  },
+  {
+    "name": "Vegetable Stir-Fry",
+    "category": "dinner",
+    "ingredients": [
+      "1 red bell pepper, sliced",
+      "1 yellow onion, sliced",
+      "2 cups broccoli florets",
+      "2 cups carrots, julienned",
+      "1 tbsp soy sauce",
+      "2 tbsp vegetable oil"
+    ]
+  },
+  {
+    "name": "Beef Stew",
+    "category": "dinner",
+    "ingredients": [
+      "1 lb beef stew meat, cut into cubes",
+      "2 potatoes, peeled and diced",
+      "1 carrot, peeled and sliced",
+      "1 onion, chopped",
+      "2 cups beef broth",
+      "1 tbsp tomato paste",
+      "2 tsp dried thyme",
+      "salt and pepper to taste"
+    ]
+  },
+  {
+    "name": "Italian Sausage with Zucchini",
+    "category": "dinner",
+    "ingredients": [
+      "1 lb Italian sausage, sliced",
+      "4 zucchinis, sliced",
+      "2 cups cherry tomatoes, halved",
+      "1/4 cup chopped fresh basil",
+      "1/2 cup grated parmesan cheese"
+    ]
+  }
+]

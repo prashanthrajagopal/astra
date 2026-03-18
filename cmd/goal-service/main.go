@@ -21,6 +21,7 @@ import (
 	"astra/internal/tasks"
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/health"
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
 
@@ -242,12 +243,23 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET /ready", health.ReadyHandler(database, rdb))
 
 	mux.HandleFunc("POST /internal/apply-plan", func(w http.ResponseWriter, r *http.Request) {
 		handleApplyPlan(w, r, database, taskStore)
 	})
 
 	mux.HandleFunc("POST /goals", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey != "" {
+			if statusCode, body := getCachedGoalResponse(r.Context(), rdb, idempotencyKey); statusCode != 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(statusCode)
+				_, _ = w.Write([]byte(body))
+				return
+			}
+		}
+
 		var req struct {
 			AgentID     string `json:"agent_id"`
 			GoalText    string `json:"goal_text"`
@@ -400,14 +412,18 @@ func main() {
 
 			assignApprovalToAdmin(ctx, database, approvalID, agentID)
 
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			resp202 := map[string]interface{}{
 				"goal_id":             goalID.String(),
 				"approval_request_id": approvalID.String(),
 				"message":             "Plan pending approval",
 				"graph_id":            graph.ID.String(),
-			})
+			}
+			if idempotencyKey != "" {
+				setCachedGoalResponse(r.Context(), rdb, idempotencyKey, http.StatusAccepted, resp202)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(resp202)
 			return
 		}
 
@@ -428,6 +444,9 @@ func main() {
 			"phase_run_id": phaseRunID.String(),
 			"task_count":   len(graph.Tasks),
 			"graph_id":     graph.ID.String(),
+		}
+		if idempotencyKey != "" {
+			setCachedGoalResponse(r.Context(), rdb, idempotencyKey, http.StatusCreated, resp)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -715,4 +734,40 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	slog.Info("goal service stopped")
+}
+
+const idempotencyKeyPrefix = "idempotency:goal:"
+const idempotencyTTL = 24 * time.Hour
+
+func getCachedGoalResponse(ctx context.Context, rdb *redis.Client, key string) (statusCode int, body string) {
+	if rdb == nil || key == "" {
+		return 0, ""
+	}
+	val, err := rdb.Get(ctx, idempotencyKeyPrefix+key).Result()
+	if err != nil {
+		return 0, ""
+	}
+	var cached struct {
+		StatusCode int    `json:"status_code"`
+		Body       string `json:"body"`
+	}
+	if json.Unmarshal([]byte(val), &cached) != nil || cached.StatusCode < 200 || cached.StatusCode >= 300 {
+		return 0, ""
+	}
+	return cached.StatusCode, cached.Body
+}
+
+func setCachedGoalResponse(ctx context.Context, rdb *redis.Client, key string, statusCode int, resp interface{}) {
+	if rdb == nil || key == "" {
+		return
+	}
+	bodyBytes, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"status_code": statusCode,
+		"body":        string(bodyBytes),
+	})
+	rdb.Set(ctx, idempotencyKeyPrefix+key, payload, idempotencyTTL)
 }

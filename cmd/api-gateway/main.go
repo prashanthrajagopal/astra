@@ -19,6 +19,7 @@ import (
 
 	"astra/internal/agentdocs"
 	"astra/internal/chat"
+	"astra/internal/circuitbreaker"
 	"astra/internal/dashboard"
 	"astra/internal/llm"
 	"astra/internal/memory"
@@ -26,6 +27,7 @@ import (
 	"astra/pkg/config"
 	"astra/pkg/db"
 	astraGrpc "astra/pkg/grpc"
+	"astra/pkg/health"
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
 
@@ -35,6 +37,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	gogrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -56,6 +60,98 @@ func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	if s := os.Getenv(key); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			return n
+		}
+	}
+	return defaultVal
+}
+
+func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	if s := os.Getenv(key); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultVal
+}
+
+type kernelClientWithBreaker struct {
+	client  kernel_pb.KernelServiceClient
+	breaker *circuitbreaker.Breaker
+}
+
+func wrapKernelClientWithBreaker(client kernel_pb.KernelServiceClient, b *circuitbreaker.Breaker) kernel_pb.KernelServiceClient {
+	return &kernelClientWithBreaker{client: client, breaker: b}
+}
+
+func (w *kernelClientWithBreaker) SpawnActor(ctx context.Context, in *kernel_pb.SpawnActorRequest, opts ...gogrpc.CallOption) (*kernel_pb.SpawnActorResponse, error) {
+	if !w.breaker.Allow() {
+		return nil, status.Error(codes.Unavailable, "circuit open")
+	}
+	resp, err := w.client.SpawnActor(ctx, in, opts...)
+	if err != nil {
+		w.breaker.RecordFailure()
+		return nil, err
+	}
+	w.breaker.RecordSuccess()
+	return resp, nil
+}
+
+func (w *kernelClientWithBreaker) SendMessage(ctx context.Context, in *kernel_pb.SendMessageRequest, opts ...gogrpc.CallOption) (*kernel_pb.SendMessageResponse, error) {
+	if !w.breaker.Allow() {
+		return nil, status.Error(codes.Unavailable, "circuit open")
+	}
+	resp, err := w.client.SendMessage(ctx, in, opts...)
+	if err != nil {
+		w.breaker.RecordFailure()
+		return nil, err
+	}
+	w.breaker.RecordSuccess()
+	return resp, nil
+}
+
+func (w *kernelClientWithBreaker) QueryState(ctx context.Context, in *kernel_pb.QueryStateRequest, opts ...gogrpc.CallOption) (*kernel_pb.QueryStateResponse, error) {
+	if !w.breaker.Allow() {
+		return nil, status.Error(codes.Unavailable, "circuit open")
+	}
+	resp, err := w.client.QueryState(ctx, in, opts...)
+	if err != nil {
+		w.breaker.RecordFailure()
+		return nil, err
+	}
+	w.breaker.RecordSuccess()
+	return resp, nil
+}
+
+func (w *kernelClientWithBreaker) SubscribeStream(ctx context.Context, in *kernel_pb.SubscribeStreamRequest, opts ...gogrpc.CallOption) (gogrpc.ServerStreamingClient[kernel_pb.Event], error) {
+	if !w.breaker.Allow() {
+		return nil, status.Error(codes.Unavailable, "circuit open")
+	}
+	resp, err := w.client.SubscribeStream(ctx, in, opts...)
+	if err != nil {
+		w.breaker.RecordFailure()
+		return nil, err
+	}
+	w.breaker.RecordSuccess()
+	return resp, nil
+}
+
+func (w *kernelClientWithBreaker) PublishEvent(ctx context.Context, in *kernel_pb.PublishEventRequest, opts ...gogrpc.CallOption) (*kernel_pb.PublishEventResponse, error) {
+	if !w.breaker.Allow() {
+		return nil, status.Error(codes.Unavailable, "circuit open")
+	}
+	resp, err := w.client.PublishEvent(ctx, in, opts...)
+	if err != nil {
+		w.breaker.RecordFailure()
+		return nil, err
+	}
+	w.breaker.RecordSuccess()
+	return resp, nil
 }
 
 //go:embed dashboard
@@ -88,7 +184,22 @@ func main() {
 	}
 	defer taskConn.Close()
 
-	agentClient = kernel_pb.NewKernelServiceClient(agentConn)
+	agentBreaker := circuitbreaker.New(
+		getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 5),
+		getEnvDuration("CIRCUIT_BREAKER_WINDOW_SEC", 30*time.Second),
+		getEnvDuration("CIRCUIT_BREAKER_COOLDOWN_SEC", 10*time.Second),
+	)
+	goalBreaker := circuitbreaker.New(
+		getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 5),
+		getEnvDuration("CIRCUIT_BREAKER_WINDOW_SEC", 30*time.Second),
+		getEnvDuration("CIRCUIT_BREAKER_COOLDOWN_SEC", 10*time.Second),
+	)
+	accessControlBreaker := circuitbreaker.New(
+		getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 5),
+		getEnvDuration("CIRCUIT_BREAKER_WINDOW_SEC", 30*time.Second),
+		getEnvDuration("CIRCUIT_BREAKER_COOLDOWN_SEC", 10*time.Second),
+	)
+	agentClient = wrapKernelClientWithBreaker(kernel_pb.NewKernelServiceClient(agentConn), agentBreaker)
 	taskClient = tasks_pb.NewTaskServiceClient(taskConn)
 
 	database, err := db.Connect(cfg.PostgresDSN())
@@ -106,7 +217,7 @@ func main() {
 	chatStore := chat.NewStore(database)
 	llmBackend := llm.NewEndpointBackendFromEnv()
 
-	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr)
+	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr, accessControlBreaker)
 	if err != nil {
 		slog.Error("failed to initialize auth middleware client", "err", err)
 		os.Exit(1)
@@ -119,6 +230,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
+	mux.HandleFunc("GET /ready", health.ReadyHandler(database, rdb))
 	dashboardClient, err := httpx.NewClient(cfg, 500*time.Millisecond)
 	if err != nil {
 		slog.Error("failed to initialize dashboard action client", "err", err)
@@ -157,7 +269,7 @@ func main() {
 	mux.Handle("POST /agents/{id}/documents", auth.protect(http.HandlerFunc(handleCreateDocument)))
 	mux.Handle("GET /agents/{id}/documents", auth.protect(http.HandlerFunc(handleListDocuments)))
 	mux.Handle("DELETE /agents/{id}/documents/{doc_id}", auth.protect(http.HandlerFunc(handleDeleteDocument)))
-	mux.Handle("POST /agents/{id}/goals", auth.protect(handleAgentGoalsProxy(cfg.GoalServiceAddr, goalServiceClient)))
+	mux.Handle("POST /agents/{id}/goals", auth.protect(handleAgentGoalsProxy(cfg.GoalServiceAddr, goalServiceClient, goalBreaker)))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
 	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -182,20 +294,22 @@ func initMemoryStore(db *sql.DB) (*memory.Store, error) {
 }
 
 type authMiddleware struct {
-	identityAddr      string
-	accessControlAddr string
-	client            *http.Client
+	identityAddr         string
+	accessControlAddr    string
+	client               *http.Client
+	accessControlBreaker *circuitbreaker.Breaker
 }
 
-func newAuthMiddleware(cfg *config.Config, identityAddr, accessControlAddr string) (*authMiddleware, error) {
+func newAuthMiddleware(cfg *config.Config, identityAddr, accessControlAddr string, accessControlBreaker *circuitbreaker.Breaker) (*authMiddleware, error) {
 	client, err := httpx.NewClient(cfg, 100*time.Millisecond)
 	if err != nil {
 		return nil, err
 	}
 	return &authMiddleware{
-		identityAddr:      strings.TrimSuffix(identityAddr, "/"),
-		accessControlAddr: strings.TrimSuffix(accessControlAddr, "/"),
-		client:            client,
+		identityAddr:         strings.TrimSuffix(identityAddr, "/"),
+		accessControlAddr:    strings.TrimSuffix(accessControlAddr, "/"),
+		client:                client,
+		accessControlBreaker: accessControlBreaker,
 	}, nil
 }
 
@@ -242,6 +356,13 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 			return
 		}
 
+		if a.accessControlBreaker != nil && !a.accessControlBreaker.Allow() {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "service temporarily unavailable"})
+			return
+		}
 		action := r.Method + " " + r.URL.Path
 		checkBody, _ := json.Marshal(map[string]interface{}{
 			"subject":        valRes.Subject,
@@ -254,11 +375,21 @@ func (a *authMiddleware) protect(next http.Handler) http.Handler {
 		checkReq.Header.Set(headerContentType, contentTypeJSON)
 		checkResp, err := a.client.Do(checkReq)
 		if err != nil {
+			if a.accessControlBreaker != nil {
+				a.accessControlBreaker.RecordFailure()
+			}
 			slog.Warn("access-control check failed", "err", err)
 			http.Error(w, "authorization check failed", http.StatusInternalServerError)
 			return
 		}
 		defer checkResp.Body.Close()
+		if a.accessControlBreaker != nil {
+			if checkResp.StatusCode >= 500 {
+				a.accessControlBreaker.RecordFailure()
+			} else {
+				a.accessControlBreaker.RecordSuccess()
+			}
+		}
 		var checkRes struct {
 			Allowed          bool   `json:"allowed"`
 			ApprovalRequired bool   `json:"approval_required"`
@@ -1693,9 +1824,16 @@ func handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentGoalsProxy proxies POST /agents/{id}/goals to the goal-service POST /goals so that
 // goal creation works for any agent in the DB without requiring the agent to be a live kernel actor.
-func handleAgentGoalsProxy(goalServiceAddr string, client *http.Client) http.HandlerFunc {
+func handleAgentGoalsProxy(goalServiceAddr string, client *http.Client, breaker *circuitbreaker.Breaker) http.HandlerFunc {
 	base := strings.TrimSuffix(goalServiceAddr, "/")
 	return func(w http.ResponseWriter, r *http.Request) {
+		if breaker != nil && !breaker.Allow() {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "service temporarily unavailable"})
+			return
+		}
 		agentID := r.PathValue("id")
 		if agentID == "" {
 			http.Error(w, "agent id required", http.StatusBadRequest)
@@ -1738,11 +1876,21 @@ func handleAgentGoalsProxy(goalServiceAddr string, client *http.Client) http.Han
 		proxyReq.Header.Set(headerContentType, contentTypeJSON)
 		resp, err := client.Do(proxyReq)
 		if err != nil {
+			if breaker != nil {
+				breaker.RecordFailure()
+			}
 			slog.Error("create goal proxy failed", "agent_id", agentID, "err", err)
 			writeJSONError(w, http.StatusBadGateway, "create goal failed: goal service unavailable")
 			return
 		}
 		defer resp.Body.Close()
+		if breaker != nil {
+			if resp.StatusCode >= 500 {
+				breaker.RecordFailure()
+			} else {
+				breaker.RecordSuccess()
+			}
+		}
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {

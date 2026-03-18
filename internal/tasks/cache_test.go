@@ -96,7 +96,7 @@ func TestCachedStore_NilRedis_WriteMethods_Delegate(t *testing.T) {
 	}
 
 	// FailTask for nonexistent task should return ErrInvalidTransition
-	err = cached.FailTask(ctx, "00000000-0000-0000-0000-000000000001", "err")
+	_, err = cached.FailTask(ctx, "00000000-0000-0000-0000-000000000001", "err")
 	if err != ErrInvalidTransition {
 		t.Errorf("FailTask: want ErrInvalidTransition, got %v", err)
 	}

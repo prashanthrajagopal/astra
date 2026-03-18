@@ -1,0 +1,22 @@
+export const cities = [
+    new City(0, "New York", { x: -73.935242, y: 40.730610 }),
+    new City(1, "Los Angeles", { x: -118.243685, y: 34.052235 }),
+    new City(2, "Chicago", { x: -87.629798, y: 41.878114 }),
+    new City(3, "Houston", { x: -95.369852, y: 29.760427 }),
+    new City(4, "Phoenix", { x: -112.074039, y: 33.546281 }),
+    new City(5, "Philadelphia", { x: -75.165222, y: 39.952584 }),
+    new City(6, "San Antonio", { x: -98.493502, y: 29.424176 }),
+    new City(7, "San Diego", { x: -116.832059, y: 32.715733 }),
+    new City(8, "Dallas", { x: -96.797014, y: 32.776668 }),
+    new City(9, "San Jose", { x: -121.887531, y: 37.339608 }),
+    new City(10, "Austin", { x: -97.743061, y: 30.267153 }),
+    new City(11, "Jacksonville", { x: -81.659304, y: 30.332187 }),
+    new City(12, "San Francisco", { x: -122.419416, y: 37.774930 }),
+    new City(13, "Indianapolis", { x: -86.158049, y: 39.768372 }),
+    new City(14, "Columbus", { x: -82.986231, y: 40.015174 }),
+    new City(15, "Charlotte", { x: -80.843127, y: 35.227096 }),
+    new City(16, "Seattle", { x: -122.331359, y: 47.603835 }),
+    new City(17, "Denver", { x: -104.985263, y: 39.739235 }),
+    new City(18, "Washington", { x: -77.036564, y: 38.912809 }),
+    new City(19, "Boston", { x: -71.058642, y: 42.360083 })
+];

@@ -94,12 +94,14 @@ func main() {
 		task, err := taskStore.GetTask(runCtx, taskID)
 		if err != nil {
 			slog.Error("get task failed", "task_id", taskID, "err", err)
-			_ = taskStore.FailTask(runCtx, taskID, err.Error())
+			moved, _ := taskStore.FailTask(runCtx, taskID, err.Error())
+			publishDeadLetterIf(bus, runCtx, taskID, "", err.Error(), moved)
 			return nil
 		}
 		if task == nil {
 			slog.Warn("task not found", "task_id", taskID)
-			_ = taskStore.FailTask(runCtx, taskID, "task not found")
+			moved, _ := taskStore.FailTask(runCtx, taskID, "task not found")
+			publishDeadLetterIf(bus, runCtx, taskID, "", "task not found", moved)
 			return nil
 		}
 
@@ -119,7 +121,8 @@ func main() {
 		toolResult, err := runtime.Execute(runCtx, toolReq)
 		if err != nil {
 			slog.Error("tool execution failed", "task_id", taskID, "err", err)
-			_ = taskStore.FailTask(runCtx, taskID, err.Error())
+			moved, _ := taskStore.FailTask(runCtx, taskID, err.Error())
+			publishDeadLetterIf(bus, runCtx, taskID, task.GoalID.String(), err.Error(), moved)
 			return nil
 		}
 
@@ -138,10 +141,8 @@ func main() {
 			if errMsg == "" {
 				errMsg = "tool exited with non-zero code"
 			}
-			if err := taskStore.FailTask(runCtx, taskID, errMsg); err != nil {
-				slog.Error("fail task failed", "task_id", taskID, "err", err)
-				return nil
-			}
+			moved, _ := taskStore.FailTask(runCtx, taskID, errMsg)
+			publishDeadLetterIf(bus, runCtx, taskID, task.GoalID.String(), errMsg, moved)
 			slog.Info("task failed", "task_id", taskID, "error", errMsg)
 		}
 		return nil
@@ -149,6 +150,25 @@ func main() {
 
 	_ = registry.MarkOffline(context.Background(), w.ID.String())
 	slog.Info("browser worker stopped", "worker_id", w.ID)
+}
+
+const deadLetterStream = "astra:dead_letter"
+
+func publishDeadLetterIf(bus *messaging.Bus, ctx context.Context, taskID, goalID, errMsg string, movedToDeadLetter bool) {
+	if !movedToDeadLetter || bus == nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"task_id":   taskID,
+		"error":     errMsg,
+		"timestamp": time.Now().Unix(),
+	}
+	if goalID != "" {
+		payload["goal_id"] = goalID
+	}
+	if err := bus.Publish(ctx, deadLetterStream, payload); err != nil {
+		slog.Warn("publish to dead_letter stream failed", "task_id", taskID, "err", err)
+	}
 }
 
 func runRegistryHeartbeat(ctx context.Context, registry *workers.Registry, workerID string) {

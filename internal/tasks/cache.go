@@ -137,12 +137,13 @@ func (c *CachedStore) CompleteTask(ctx context.Context, taskID string, result []
 	return nil
 }
 
-func (c *CachedStore) FailTask(ctx context.Context, taskID string, errMsg string) error {
-	if err := c.store.FailTask(ctx, taskID, errMsg); err != nil {
-		return err
+func (c *CachedStore) FailTask(ctx context.Context, taskID string, errMsg string) (bool, error) {
+	moved, err := c.store.FailTask(ctx, taskID, errMsg)
+	if err != nil {
+		return false, err
 	}
 	c.InvalidateTask(ctx, taskID)
-	return nil
+	return moved, nil
 }
 
 func (c *CachedStore) FindReadyTasks(ctx context.Context, limit int) ([]string, error) {

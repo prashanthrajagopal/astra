@@ -9,13 +9,14 @@ import (
 type Status string
 
 const (
-	StatusCreated   Status = "created"
-	StatusPending   Status = "pending"
-	StatusQueued    Status = "queued"
-	StatusScheduled Status = "scheduled"
-	StatusRunning   Status = "running"
-	StatusCompleted Status = "completed"
-	StatusFailed    Status = "failed"
+	StatusCreated    Status = "created"
+	StatusPending    Status = "pending"
+	StatusQueued     Status = "queued"
+	StatusScheduled  Status = "scheduled"
+	StatusRunning    Status = "running"
+	StatusCompleted  Status = "completed"
+	StatusFailed     Status = "failed"
+	StatusDeadLetter Status = "dead_letter"
 )
 
 type Task struct {

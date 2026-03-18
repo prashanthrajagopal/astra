@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -76,22 +77,29 @@ func main() {
 	go w.StartHeartbeat(ctx)
 	go runRegistryHeartbeat(ctx, registry, w.ID.String())
 
-	slog.Info("execution worker started", "worker_id", w.ID, "hostname", hostname)
+	shardCount := getTaskShardCount()
+	slog.Info("execution worker started", "worker_id", w.ID, "hostname", hostname, "shard_count", shardCount)
 
-	handler := newTaskHandler(taskStore, wsRuntime, legacyRuntime, llmClient, w.ID.String())
-	_ = bus.Consume(ctx, "astra:tasks:shard:0", "worker-group", w.ID.String(), handler)
+	handler := newTaskHandler(bus, taskStore, wsRuntime, legacyRuntime, llmClient, w.ID.String())
+	for shard := 0; shard < shardCount; shard++ {
+		s := shard
+		go func() {
+			_ = bus.Consume(ctx, taskStreamForShard(s), "worker-group", w.ID.String()+"-shard-"+strconv.Itoa(s), handler)
+		}()
+	}
+	<-ctx.Done()
 
 	_ = registry.MarkOffline(context.Background(), w.ID.String())
 	slog.Info("execution worker stopped", "worker_id", w.ID)
 }
 
-func newTaskHandler(taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID string) func(redis.XMessage) error {
+func newTaskHandler(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID string) func(redis.XMessage) error {
 	return func(msg redis.XMessage) error {
 		taskID := extractTaskID(msg)
 		if taskID == "" {
 			return nil
 		}
-		return processTask(taskStore, wsRuntime, legacyRuntime, llmClient, workerID, taskID)
+		return processTask(bus, taskStore, wsRuntime, legacyRuntime, llmClient, workerID, taskID)
 	}
 }
 
@@ -109,7 +117,39 @@ func extractTaskID(msg redis.XMessage) string {
 	return taskID
 }
 
-func processTask(taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID, taskID string) error {
+const deadLetterStream = "astra:dead_letter"
+
+func getTaskShardCount() int {
+	if s := os.Getenv("TASK_SHARD_COUNT"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+func taskStreamForShard(shard int) string {
+	return "astra:tasks:shard:" + strconv.Itoa(shard)
+}
+
+func publishDeadLetterIf(bus *messaging.Bus, ctx context.Context, taskID, goalID, errMsg string, movedToDeadLetter bool) {
+	if !movedToDeadLetter || bus == nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"task_id":   taskID,
+		"error":     errMsg,
+		"timestamp": time.Now().Unix(),
+	}
+	if goalID != "" {
+		payload["goal_id"] = goalID
+	}
+	if err := bus.Publish(ctx, deadLetterStream, payload); err != nil {
+		slog.Warn("publish to dead_letter stream failed", "task_id", taskID, "err", err)
+	}
+}
+
+func processTask(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID, taskID string) error {
 	runCtx := context.Background()
 
 	if err := taskStore.Transition(runCtx, taskID, tasks.StatusQueued, tasks.StatusScheduled, nil); err != nil {
@@ -129,19 +169,22 @@ func processTask(taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, lega
 	task, err := taskStore.GetTask(runCtx, taskID)
 	if err != nil {
 		slog.Error("get task failed", "task_id", taskID, "err", err)
-		_ = taskStore.FailTask(runCtx, taskID, err.Error())
+		moved, _ := taskStore.FailTask(runCtx, taskID, err.Error())
+		publishDeadLetterIf(bus, runCtx, taskID, "", err.Error(), moved)
 		return nil
 	}
 	if task == nil {
 		slog.Warn("task not found", "task_id", taskID)
-		_ = taskStore.FailTask(runCtx, taskID, "task not found")
+		moved, _ := taskStore.FailTask(runCtx, taskID, "task not found")
+		publishDeadLetterIf(bus, runCtx, taskID, "", "task not found", moved)
 		return nil
 	}
 
 	result, taskErr := executeTask(runCtx, task, wsRuntime, legacyRuntime, llmClient)
 	if taskErr != nil {
 		slog.Error("task execution failed", "task_id", taskID, "type", task.Type, "err", taskErr)
-		_ = taskStore.FailTask(runCtx, taskID, taskErr.Error())
+		moved, _ := taskStore.FailTask(runCtx, taskID, taskErr.Error())
+		publishDeadLetterIf(bus, runCtx, taskID, task.GoalID.String(), taskErr.Error(), moved)
 		return nil
 	}
 

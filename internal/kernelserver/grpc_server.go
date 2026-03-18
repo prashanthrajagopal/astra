@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"astra/internal/actors"
@@ -15,7 +17,9 @@ import (
 
 	kernel_pb "astra/proto/kernel"
 
+	gogrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -70,6 +74,11 @@ func (s *KernelGRPCServer) SendMessage(ctx context.Context, req *kernel_pb.SendM
 		Timestamp: time.Now(),
 	}
 	if err := s.kernel.Send(ctx, target, msg); err != nil {
+		if errors.Is(err, actors.ErrMailboxFull) {
+			const retryAfterSec = 5
+			gogrpc.SetTrailer(ctx, metadata.Pairs("retry-after", strconv.Itoa(retryAfterSec)))
+			return nil, status.Errorf(codes.ResourceExhausted, "actor mailbox full: %v", err)
+		}
 		return nil, status.Errorf(codes.NotFound, "send: %v", err)
 	}
 	return &kernel_pb.SendMessageResponse{}, nil

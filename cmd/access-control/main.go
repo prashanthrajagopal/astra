@@ -16,6 +16,7 @@ import (
 
 	"astra/pkg/config"
 	"astra/pkg/db"
+	"astra/pkg/health"
 	"astra/pkg/httpx"
 	"astra/pkg/logger"
 )
@@ -85,6 +86,7 @@ func main() {
 	srv := &server{db: dbConn, goalServiceAddr: goalServiceAddr, client: httpClient}
 
 	mux.HandleFunc("GET /health", handleHealth)
+	mux.HandleFunc("GET /ready", health.ReadyHandler(dbConn, nil))
 	mux.HandleFunc("POST /check", srv.handleCheck)
 	mux.HandleFunc("POST /approvals/{id}/approve", srv.handleApprove)
 	mux.HandleFunc("POST /approvals/{id}/deny", srv.handleDeny)

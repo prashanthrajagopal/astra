@@ -1,0 +1,59 @@
+[
+  {
+    "name": "Avocado Toast",
+    "category": "breakfast",
+    "ingredients": [
+      "2 slices of whole-grain bread",
+      "1 ripe avocado, mashed",
+      "Salt and pepper to taste",
+      "A dash of red pepper flakes (optional)"
+    ]
+  },
+  {
+    "name": "Omelette",
+    "category": "breakfast",
+    "ingredients": [
+      "2 fresh eggs",
+      "1 small onion, finely chopped",
+      "1 bell pepper, finely chopped",
+      "2 cloves garlic, minced",
+      "Salt and pepper to taste",
+      "2 tablespoons of olive oil"
+    ]
+  },
+  {
+    "name": "Smoothie Bowl",
+    "category": "breakfast",
+    "ingredients": [
+      "1 frozen banana",
+      "Half a cup of mixed berries, fresh or frozen",
+      "½ cup of spinach leaves",
+      "¼ avocado",
+      "½ cup of Greek yogurt or coconut yoghurt (optional)",
+      "1 tablespoon of chia seeds",
+      "Pomegranate arils, coconut flakes or other toppings (optional)"
+    ]
+  },
+  {
+    "name": "Scrambled Eggs with Spinach",
+    "category": "breakfast",
+    "ingredients": [
+      "2 large eggs, beaten",
+      "1 cup of fresh spinach leaves",
+      "Salt and pepper to taste",
+      "A dash of nutmeg (optional)",
+      "1 tablespoon of olive oil"
+    ]
+  },
+  {
+    "name": "Fruit and Yogurt Parfait",
+    "category": "breakfast",
+    "ingredients": [
+      "200g of Greek yogurt or natural yogurt",
+      "1 cup of mixed fresh berries (strawberries, blueberries, raspberries)",
+      "1/2 cup of granola",
+      "A drizzle of honey or maple syrup (optional)",
+      "Fruits (strawberries, mango slices) for garnish"
+    ]
+  }
+]

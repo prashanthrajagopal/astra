@@ -1,5 +1,6 @@
 # Astra Runbooks
 
+- `shard-scaling.md` — task stream shard count and scaling
 - `worker-lost.md` — worker heartbeat and re-queue recovery
 - `high-error-rate.md` — elevated failures and mitigation
 - `db-redis.md` — Postgres/Redis outage or latency handling

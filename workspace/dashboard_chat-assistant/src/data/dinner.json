@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Steak",
+    "ingredients": ["steak", "salt", "pepper"],
+    "instructions": "Season and grill the steak."
+  },
+  {
+    "name": "Stew",
+    "ingredients": ["beef", "carrots", "potatoes"],
+    "instructions": "Simmer the beef with vegetables."
+  }
+]

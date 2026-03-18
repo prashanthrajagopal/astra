@@ -1,0 +1,27 @@
+[
+    {
+        "name": "Avocado Toast",
+        "category": "breakfast",
+        "ingredients": ["avocado", "bread", "salt", "pepper", "lemon juice"]
+    },
+    {
+        "name": "French Toast",
+        "category": "breakfast",
+        "ingredients": ["bread", "eggs", "milk", "vanilla extract", "sugar"]
+    },
+    {
+        "name": "Scrambled Eggs",
+        "category": "breakfast",
+        "ingredients": ["eggs", "milk", "salt", "pepper", "onion", "bell pepper"]
+    },
+    {
+        "name": "Oatmeal",
+        "category": "breakfast",
+        "ingredients": ["oats", "almond milk", "honey", "banana", "peanut butter"]
+    },
+    {
+        "name": "Yogurt Parfait",
+        "category": "breakfast",
+        "ingredients": ["yogurt", "granola", "fresh berries", "honey", "almonds"]
+    }
+]

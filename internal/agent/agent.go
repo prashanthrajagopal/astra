@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"astra/internal/actors"
@@ -15,18 +16,42 @@ import (
 )
 
 type Agent struct {
-	ID        uuid.UUID
-	Name      string
-	Status    string
-	actor     *actors.BaseActor
-	kernel    *kernel.Kernel
-	planner   *planner.Planner
-	taskStore *tasks.Store
-	db        *sql.DB
+	ID          uuid.UUID
+	Name        string
+	Status      string
+	actor       *actors.BaseActor
+	kernel      *kernel.Kernel
+	planner     *planner.Planner
+	taskStore   *tasks.Store
+	db          *sql.DB
+	supervisor  *actors.Supervisor
+	onTerminate func(agentID string)
 }
 
-func New(name string, k *kernel.Kernel, p *planner.Planner, store *tasks.Store, db *sql.DB) *Agent {
+// AgentOption configures an agent (e.g. supervisor wiring).
+type AgentOption func(*Agent)
+
+// WithSupervisor wires the agent to a supervisor: on handler panic or error, HandleFailure is called;
+// if the policy is Terminate, onTerminate(agentID) is invoked (e.g. kernel.Stop).
+func WithSupervisor(supervisor *actors.Supervisor, onTerminate func(agentID string)) AgentOption {
+	return func(a *Agent) {
+		a.supervisor = supervisor
+		a.onTerminate = onTerminate
+	}
+}
+
+func New(name string, k *kernel.Kernel, p *planner.Planner, store *tasks.Store, db *sql.DB, opts ...AgentOption) *Agent {
 	id := uuid.New()
+	return newAgent(id, name, k, p, store, db, opts...)
+}
+
+// NewFromExisting builds an agent with an existing ID and name (e.g. from DB on restore).
+// The agent is started and spawned into the kernel; no DB insert is performed.
+func NewFromExisting(id uuid.UUID, name string, k *kernel.Kernel, p *planner.Planner, store *tasks.Store, db *sql.DB, opts ...AgentOption) *Agent {
+	return newAgent(id, name, k, p, store, db, opts...)
+}
+
+func newAgent(id uuid.UUID, name string, k *kernel.Kernel, p *planner.Planner, store *tasks.Store, db *sql.DB, opts ...AgentOption) *Agent {
 	a := &Agent{
 		ID:        id,
 		Name:      name,
@@ -37,10 +62,39 @@ func New(name string, k *kernel.Kernel, p *planner.Planner, store *tasks.Store, 
 		taskStore: store,
 		db:        db,
 	}
-
-	a.actor.Start(a.handleMessage)
+	for _, opt := range opts {
+		opt(a)
+	}
+	handler := a.handleMessage
+	if a.supervisor != nil {
+		a.supervisor.Watch(a.actor)
+		handler = a.wrappedHandler()
+	}
+	a.actor.Start(handler)
 	k.Spawn(a.actor)
 	return a
+}
+
+func (a *Agent) wrappedHandler() func(context.Context, actors.Message) error {
+	return func(ctx context.Context, msg actors.Message) error {
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("agent handler panic", "agent_id", a.ID, "panic", r)
+					err = fmt.Errorf("panic: %v", r)
+				}
+			}()
+			err = a.handleMessage(ctx, msg)
+		}()
+		if err != nil && a.supervisor != nil {
+			policy := a.supervisor.HandleFailure(a.ID.String())
+			if policy == actors.Terminate && a.onTerminate != nil {
+				a.onTerminate(a.ID.String())
+			}
+		}
+		return err
+	}
 }
 
 type createGoalPayload struct {

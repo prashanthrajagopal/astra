@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Sandwich",
+    "ingredients": ["ham", "turkey", "cheese"],
+    "instructions": "Place ham and turkey between two slices of cheese."
+  },
+  {
+    "name": "Salad",
+    "ingredients": ["lettuce", "tomato", "cucumber"],
+    "instructions": "Slice the veggies and toss them in a bowl."
+  }
+]
