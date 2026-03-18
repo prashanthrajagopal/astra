@@ -1087,20 +1087,25 @@ function widgetToggle() {
     widgetLoadMessages();
     var badge = document.getElementById('chat-widget-badge');
     if (badge) badge.hidden = true;
+  } else {
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
   }
 }
 
 function widgetLoadMessages() {
-  if (!widgetSessionId) return;
+  if (!widgetSessionId) return Promise.resolve([]);
   var container = document.getElementById('chat-widget-messages');
-  if (!container) return;
-  authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
+  if (!container) return Promise.resolve([]);
+  return authFetch('/superadmin/api/dashboard/chat/sessions/' + encodeURIComponent(widgetSessionId) + '/messages', { cache: 'no-store' })
     .then(function (res) { return res.ok ? res.json() : Promise.reject('load failed'); })
     .then(function (d) {
-      widgetRenderMessages(d.messages || []);
+      var messages = d.messages || [];
+      widgetRenderMessages(messages);
+      return messages;
     })
     .catch(function () {
       container.innerHTML = '<div class="chat-widget-msg chat-widget-msg-system">Could not load messages.</div>';
+      return [];
     });
 }
 
@@ -1157,6 +1162,14 @@ function widgetSend() {
       if (!res.ok) throw new Error('status ' + res.status);
       return widgetLoadMessages();
     })
+    .then(function (messages) {
+      if (getTTSEnabled() && messages && messages.length > 0) {
+        var last = messages[messages.length - 1];
+        if (last.role === 'assistant' && (last.content || '').trim()) {
+          widgetSpeak((last.content || '').trim());
+        }
+      }
+    })
     .catch(function (e) {
       typing.textContent = 'Failed: ' + (e.message || e);
       typing.className = 'chat-widget-msg chat-widget-msg-system';
@@ -1165,6 +1178,64 @@ function widgetSend() {
       if (sendBtn) sendBtn.disabled = false;
       if (typing.parentNode) typing.remove();
     });
+}
+
+function getTTSEnabled() {
+  return localStorage.getItem('astra_chat_tts_enabled') === 'true';
+}
+function setTTSEnabled(on) {
+  if (on) localStorage.setItem('astra_chat_tts_enabled', 'true');
+  else localStorage.removeItem('astra_chat_tts_enabled');
+}
+function widgetSpeak(text) {
+  if (!text || !text.trim()) return;
+  if (typeof speechSynthesis === 'undefined') return;
+  speechSynthesis.cancel();
+  var u = new SpeechSynthesisUtterance(text);
+  u.lang = navigator.language || 'en-US';
+  speechSynthesis.speak(u);
+}
+
+var widgetRecognition = null;
+var widgetListening = false;
+function widgetMicClick() {
+  var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionAPI) {
+    widgetSetStatus('Voice not supported');
+    return;
+  }
+  var input = document.getElementById('chat-widget-input');
+  var micBtn = document.getElementById('chat-widget-mic');
+  if (widgetListening && widgetRecognition) {
+    widgetRecognition.stop();
+    return;
+  }
+  var previousStatus = (document.getElementById('chat-widget-status') || {}).textContent || '';
+  widgetRecognition = new SpeechRecognitionAPI();
+  widgetRecognition.continuous = false;
+  widgetRecognition.interimResults = false;
+  widgetRecognition.lang = navigator.language || 'en-US';
+  widgetRecognition.onresult = function (e) {
+    var transcript = '';
+    if (e.results && e.results.length > 0 && e.results[e.results.length - 1].length > 0) {
+      transcript = e.results[e.results.length - 1][0].transcript || '';
+    }
+    if (input && transcript) input.value = transcript;
+  };
+  widgetRecognition.onend = function () {
+    widgetListening = false;
+    if (micBtn) micBtn.classList.remove('listening');
+    widgetSetStatus(previousStatus || 'Connected');
+  };
+  widgetRecognition.onerror = function (e) {
+    widgetListening = false;
+    if (micBtn) micBtn.classList.remove('listening');
+    widgetSetStatus(e.error === 'not-allowed' ? 'Microphone access denied' : 'Voice input failed');
+  };
+  widgetListening = true;
+  if (micBtn) micBtn.classList.add('listening');
+  widgetSetStatus('Listening…');
+  widgetRecognition.start();
 }
 
 function applyDashboardTheme(theme) {
@@ -1310,6 +1381,23 @@ document.addEventListener('DOMContentLoaded', function () {
   if (widgetInput) {
     widgetInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); widgetSend(); }
+    });
+  }
+  var chatWidgetMic = document.getElementById('chat-widget-mic');
+  if (chatWidgetMic) {
+    if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      chatWidgetMic.style.display = 'none';
+    } else {
+      chatWidgetMic.addEventListener('click', widgetMicClick);
+    }
+  }
+  var chatWidgetTts = document.getElementById('chat-widget-tts-toggle');
+  if (chatWidgetTts) {
+    chatWidgetTts.classList.toggle('tts-on', getTTSEnabled());
+    chatWidgetTts.addEventListener('click', function () {
+      var on = !getTTSEnabled();
+      setTTSEnabled(on);
+      chatWidgetTts.classList.toggle('tts-on', on);
     });
   }
   initChatWidget();

@@ -707,11 +707,15 @@
       <div class="chat-widget-header">
         <span class="chat-widget-title">Chat Assistant</span>
         <span id="chat-widget-status" class="chat-widget-header-status"></span>
+        <button id="chat-widget-tts-toggle" class="chat-widget-tts-toggle" type="button" aria-label="Speak replies" title="Speak replies">&#128266;</button>
         <button id="chat-widget-minimize" class="chat-widget-minimize" aria-label="Minimize">&minus;</button>
       </div>
       <div id="chat-widget-messages" class="chat-widget-messages"></div>
       <div class="chat-widget-input-row">
         <textarea id="chat-widget-input" class="chat-widget-input" rows="2" placeholder="Ask anything..." maxlength="65536"></textarea>
+        <button id="chat-widget-mic" class="chat-widget-mic" type="button" aria-label="Voice input" title="Voice input">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
         <button id="chat-widget-send" class="chat-widget-send" aria-label="Send">&#9654;</button>
       </div>
     </div>

@@ -2046,6 +2046,44 @@ button#btn-refresh:focus-visible {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.chat-widget-mic {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.chat-widget-mic:hover {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.chat-widget-mic.listening {
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+}
+.chat-widget-tts-toggle {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  opacity: 0.8;
+}
+.chat-widget-tts-toggle:hover {
+  opacity: 1;
+}
+.chat-widget-tts-toggle.tts-on {
+  opacity: 1;
+}
 
 .chat-widget-panel[hidden] {
   display: none !important;
@@ -2132,6 +2170,26 @@ body.dashboard-redesign .chat-widget-send {
 body.dashboard-redesign .chat-widget-send:hover:not(:disabled) {
   background: #14B8A6;
 }
+body.dashboard-redesign .chat-widget-mic {
+  background: var(--glass);
+  color: var(--text-secondary);
+  border: 1px solid var(--dash-glass-border);
+}
+body.dashboard-redesign .chat-widget-mic:hover {
+  background: var(--glass-hover);
+  color: var(--text-primary);
+}
+body.dashboard-redesign .chat-widget-mic.listening {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red);
+}
+body.dashboard-redesign .chat-widget-tts-toggle {
+  color: var(--text-secondary);
+}
+body.dashboard-redesign .chat-widget-tts-toggle.tts-on {
+  color: var(--accent);
+}
 
 /* Chat widget light theme */
 html[data-theme="light"] body.dashboard-redesign .chat-widget-toggle {
@@ -2179,6 +2237,23 @@ html[data-theme="light"] body.dashboard-redesign .chat-widget-send {
 }
 html[data-theme="light"] body.dashboard-redesign .chat-widget-send:hover:not(:disabled) {
   background: #0D5C55;
+}
+html[data-theme="light"] body.dashboard-redesign .chat-widget-mic {
+  background: #F5F5F4;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+html[data-theme="light"] body.dashboard-redesign .chat-widget-mic:hover {
+  background: #E7E5E4;
+  color: var(--text-primary);
+}
+html[data-theme="light"] body.dashboard-redesign .chat-widget-mic.listening {
+  background: var(--red-bg);
+  color: var(--red);
+  border-color: var(--red);
+}
+html[data-theme="light"] body.dashboard-redesign .chat-widget-tts-toggle.tts-on {
+  color: var(--accent);
 }
 
 /* ─── Agent modals (Create Agent & Edit Agent) ─────────────────────────── */
