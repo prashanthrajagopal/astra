@@ -16,7 +16,7 @@
 6. [Actor Framework — Interface, Patterns, Supervision](#6-actor-framework--interface-patterns-supervision)
 7. [Task Graph Engine — Model, Lifecycle, Algorithms](#7-task-graph-engine--model-lifecycle-algorithms)
 8. [Scheduler — Sharding, Ready Detection, Dispatch](#8-scheduler--sharding-ready-detection-dispatch)
-9. [Services — 16 Canonical Microservices](#9-services--16-canonical-microservices)
+9. [Services — 21 Canonical Microservices](#9-services--21-canonical-microservices)
 10. [Protobuf & gRPC Contracts](#10-protobuf--grpc-contracts)
 11. [Database Schema, Indexes & Migrations](#11-database-schema-indexes--migrations)
 12. [Message & Event Protocols](#12-message--event-protocols)
@@ -649,9 +649,21 @@ func (s *Scheduler) enqueue(ctx context.Context, taskID string) error {
 - If heartbeat not received within 30s, scheduler marks in-flight tasks as `queued` and re-pushes
 - Tasks exceeding `max_retries` move to dead-letter queue
 
+## Goal Priority & Agent Concurrency Limits (Phase 12)
+
+**Priority-aware dispatch:** tasks carry a `priority` field (int, 1-10; lower = higher priority). The execution-worker maintains a local reorder buffer, elevating tasks with `priority > 5` ahead of lower-priority tasks. Best-effort ordering -- strict global ordering is not guaranteed across shards.
+
+**Agent concurrency limits:** each agent may define `config.max_concurrent_goals` (default: unlimited). On `POST /goals`:
+1. `SELECT COUNT(*) FROM goals WHERE agent_id=$1 AND status NOT IN ('completed','failed')` (cached in Redis key `agent:active_goals:<agent_id>`, TTL 30s)
+2. If `count >= max_concurrent_goals`: return `429 Too Many Requests`
+   ```json
+   {"error": "agent at concurrency limit", "active_goals": 5, "limit": 5}
+   ```
+3. Cache invalidated on any goal terminal transition (completed/failed)
+
 ---
 
-# 9. Services — 16 Canonical Microservices
+# 9. Services — 21 Canonical Microservices
 
 Each service runs as an independent process in the monorepo (`cmd/<service>/main.go`). Each can scale horizontally.
 
@@ -673,6 +685,11 @@ Each service runs as an independent process in the monorepo (`cmd/<service>/main
 | 14 | `browser-worker` | Headless browser automation worker (Playwright/Puppeteer) | workers |
 | 15 | `tool-runtime` | Tool sandbox controller (WASM/Docker/Firecracker lifecycle) | workers |
 | 16 | `memory-service` | Episodic/semantic memory, embedding pipeline, pgvector search | kernel |
+| 17 | `cost-tracker` | LLM token cost tracking, per-agent/org billing aggregation | workers |
+| 18 | `slack-adapter` | Slack Events API receiver, HMAC verification, slash command dispatch | integrations |
+| 19 | `slack-worker` | Redis stream consumer for astra:slack:incoming; routes to goal-service and access-control | integrations |
+| 20 | `webhook-ingest` | Generic external webhook receiver; HMAC validation; publishes to astra:webhooks:raw | integrations |
+| 21 | `dtec-adapter` | D.TEC external agent ecosystem adapter (DispatchGoal, PollStatus, HandleCallback) | integrations |
 
 **Chat (v1):** Chat capability is built into `api-gateway`; there is no separate chat service for v1.
 
@@ -778,6 +795,115 @@ Org endpoints live under `/org/api/` and require valid org JWT.
 | `DELETE` | `/org/api/agents/{id}/collaborators/{cid}` | Remove collaborator |
 | `POST` | `/org/api/agents/{id}/admins` | Add agent admin (receives approve/reject requests) |
 | `DELETE` | `/org/api/agents/{id}/admins/{uid}` | Remove agent admin |
+
+## Slack Integration (Phase 13)
+
+Primary operator interaction surface. Two services: `slack-adapter` (HTTP receiver) and `slack-worker` (stream consumer).
+
+**Architecture:**
+```
+Slack API ──POST /slack/events──> cmd/slack-adapter (HMAC verified)
+                                        │
+                             XADD astra:slack:incoming
+                                        │
+                             cmd/slack-worker (consumer group)
+                                        │
+                     ┌──────────────────┴───────────────────┐
+              POST /goals                       POST /approvals/{id}/decide
+```
+
+**Endpoints (api-gateway):**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/slack/events` | Slack Events API webhook receiver (HMAC-SHA256 verified) |
+| `POST` | `/slack/oauth/callback` | OAuth 2.0 callback for workspace installation |
+| `POST` | `/internal/slack/post` | Proactive post to Slack channel/thread (service-to-service JWT) |
+
+**Slash commands handled by slack-worker:**
+- `/olympus-trigger <text>` → `POST /goals` with `goal_text`
+- Reaction ✅ on approval message → `POST /approvals/{id}/decide` (approve)
+- Reaction ❌ on approval message → `POST /approvals/{id}/decide` (reject)
+
+**Go packages:** `cmd/slack-adapter/`, `cmd/slack-worker/`, `internal/slack/`
+
+**Secrets:** Slack Bot Token, App Token, Signing Secret — injected from Vault at runtime.
+
+## External Agent Adapter Framework (Phase 14)
+
+Delegates tasks to external agent ecosystems (D.TEC, AgentForce, Workday) via a standard Go interface.
+
+**Adapter interface (`internal/adapters/adapter.go`):**
+
+```go
+type Adapter interface {
+    DispatchGoal(ctx context.Context, ref AdapterRef, goal AdapterGoal, agentCtx AgentContext) (jobID string, err error)
+    PollStatus(ctx context.Context, jobID string) (status AdapterStatus, result string, err error)
+    HandleCallback(ctx context.Context, payload []byte) error
+    ListCapabilities(ctx context.Context) ([]Capability, error)
+    HealthCheck(ctx context.Context) (HealthStatus, error)
+}
+```
+
+**execution-worker integration:** when `task.payload.provider_type != "astra_agent"`, execution-worker calls `adapters.Registry.Get(providerType).DispatchGoal(...)` instead of running the task locally.
+
+**Services:** `cmd/dtec-adapter` (June 1 target); `cmd/agentforce-adapter`, `cmd/workday-adapter` (EOY).
+
+## Webhook Ingest Service (Phase 13)
+
+Generic webhook receiver for IOC, weather, security, and transport feeds.
+
+**Endpoint:**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/webhooks/{source_id}` | Receive external payload; validate HMAC; publish to astra:webhooks:raw |
+
+**Processing flow:**
+1. Look up `webhook_sources` by `source_id`
+2. Validate HMAC-SHA256 signature (`X-Hub-Signature-256` header against `hmac_secret`)
+3. Assign `trigger_id = gen_random_uuid()`
+4. `XADD astra:webhooks:raw * source_id {id} trigger_id {trigger_id} payload {body}`
+5. Return `202 Accepted` with `{"trigger_id": "..."}`
+
+## Chat External Message Injection (Phase 12)
+
+Injects messages into active chat sessions programmatically, without a WebSocket connection.
+
+**Endpoint:**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/chat/sessions/{session_id}/messages` | Inject a message from a service into an existing chat session |
+
+**Request body:** `{"role": "system"|"assistant", "content": "...", "source_service": "cascade-engine"}`
+
+**Authorization:** Service-to-service JWT (`aud=api-gateway`). No LLM call -- message is persisted directly and pushed to active WebSocket subscribers.
+
+## Approval REST API (Phase 12)
+
+Programmatic approve/reject endpoint for external services (Slack worker, cascade engine) alongside the dashboard UI.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/approvals/{id}/decide` | Record approval decision (approved\|rejected); integrates with dual-approval threshold |
+| `GET` | `/approvals` | List approvals; filterable by `?status=pending&org_id=` |
+| `GET` | `/approvals/{id}` | Get approval detail |
+
+**Request body:** `{"decision": "approved"|"rejected", "note": "optional"}`
+
+**Response:**
+```json
+{
+  "approval_id": "...",
+  "status": "pending|approved|rejected",
+  "approvals_received": 1,
+  "approvals_required": 2,
+  "can_execute": false
+}
+```
+
+**Idempotency:** duplicate decide calls (same user, same decision) are no-ops. **Authorization:** user JWT or service-to-service JWT; service decisions recorded as `decided_by = "service:<name>"`.
 
 ---
 
@@ -920,6 +1046,30 @@ message TaskDependency {
   string depends_on = 2;
 }
 ```
+
+## goal.proto — Phase 12 Additions
+
+```protobuf
+// Additions to existing CreateGoalRequest
+message CreateGoalRequest {
+  // ... existing fields (agent_id, goal_text, priority, documents) ...
+  string cascade_id                    = 10; // optional: parent cascade UUID
+  repeated string depends_on_goal_ids  = 11; // optional: block until these goals complete
+  string source_agent_id               = 12; // optional: set by agent-to-agent posting
+}
+
+// New event published to astra:goals:completed when a goal reaches terminal state
+message GoalCompletedEvent {
+  string goal_id        = 1;
+  string cascade_id     = 2; // empty if standalone goal
+  string org_id         = 3;
+  string status         = 4; // "completed" | "failed"
+  string result_summary = 5; // truncated at 500 chars
+  int64  completed_at   = 6; // unix milliseconds
+}
+```
+
+**goal-service behavior:** when all tasks in a goal graph reach terminal state, goal-service publishes `GoalCompletedEvent` to `astra:goals:completed` and calls `DependencyEngine.OnGoalCompleted` to unblock waiting goals.
 
 ---
 
@@ -1331,6 +1481,97 @@ CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 ```
 
+## Migration 0019: Webhook Sources
+
+```sql
+CREATE TABLE IF NOT EXISTS webhook_sources (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_id   TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    hmac_secret TEXT NOT NULL,
+    schema_type TEXT NOT NULL DEFAULT 'generic',
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    org_id      UUID REFERENCES organizations(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_sources_org ON webhook_sources(org_id);
+```
+
+## Migration 0020: Goal Dependencies
+
+```sql
+ALTER TABLE goals
+    ADD COLUMN IF NOT EXISTS cascade_id          UUID,
+    ADD COLUMN IF NOT EXISTS depends_on_goal_ids UUID[] DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS completed_at        TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS source_agent_id     UUID REFERENCES agents(id);
+
+CREATE INDEX IF NOT EXISTS idx_goals_cascade_id   ON goals(cascade_id) WHERE cascade_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_goals_source_agent ON goals(source_agent_id) WHERE source_agent_id IS NOT NULL;
+```
+
+## Migration 0021: Agent Tags & Trust
+
+```sql
+ALTER TABLE agents
+    ADD COLUMN IF NOT EXISTS tags        TEXT[]  DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS metadata    JSONB   DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS trust_score FLOAT   DEFAULT 0.5
+                             CHECK (trust_score >= 0.0 AND trust_score <= 1.0);
+
+CREATE INDEX IF NOT EXISTS idx_agents_tags     ON agents USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_agents_metadata ON agents USING GIN(metadata);
+
+CREATE TABLE IF NOT EXISTS agent_trust_events (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id    UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    org_id      UUID NOT NULL REFERENCES organizations(id),
+    event_type  TEXT NOT NULL,
+    delta       FLOAT NOT NULL,
+    new_score   FLOAT NOT NULL,
+    metadata    JSONB DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_trust_events_agent ON agent_trust_events(agent_id, created_at DESC);
+```
+
+## Migration 0022: Dual Approval
+
+```sql
+ALTER TABLE approval_requests
+    ADD COLUMN IF NOT EXISTS required_approvals INT  NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS approvals          JSONB NOT NULL DEFAULT '[]';
+
+-- approvals JSONB schema: [{"user_id": "uuid", "decision": "approved"|"rejected", "decided_at": "RFC3339", "note": ""}]
+```
+
+## Migration 0023: Tool Definitions
+
+```sql
+CREATE TABLE IF NOT EXISTS tool_definitions (
+    id          UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT    NOT NULL,
+    version     TEXT    NOT NULL DEFAULT '1.0.0',
+    risk_tier   TEXT    NOT NULL DEFAULT 'low'
+                        CHECK (risk_tier IN ('low','medium','high','critical')),
+    sandbox     TEXT    NOT NULL DEFAULT 'wasm'
+                        CHECK (sandbox IN ('wasm','docker','firecracker','none')),
+    description TEXT,
+    metadata    JSONB   DEFAULT '{}',
+    org_id      UUID    REFERENCES organizations(id),
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_defs_org  ON tool_definitions(org_id);
+CREATE INDEX IF NOT EXISTS idx_tool_defs_risk ON tool_definitions(risk_tier);
+```
+
 ---
 
 # 12. Message & Event Protocols
@@ -1353,7 +1594,7 @@ CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations
 
 | Category | Types |
 |---|---|
-| Goal lifecycle | `GoalCreated`, `PlanRequested`, `PlanGenerated` |
+| Goal lifecycle | `GoalCreated`, `PlanRequested`, `PlanGenerated`, `GoalCompleted` |
 | Task lifecycle | `TaskCreated`, `TaskScheduled`, `TaskStarted`, `TaskCompleted`, `TaskFailed` |
 | Phase lifecycle | `PhaseStarted`, `PhaseCompleted`, `PhaseFailed`, `PhaseSummary` |
 | LLM usage & audit | `LLMUsage` (model, tokens in/out, latency, cost; appended to `events` for audit) |
@@ -1396,6 +1637,49 @@ Fields: `task_id`, `evaluator_id`, `result`, `metadata`, `timestamp`
 
 ### 6. `astra:usage` — LLM usage (async persistence for audit)
 Fields: `request_id`, `agent_id`, `task_id`, `org_id`, `user_id`, `model`, `tokens_in`, `tokens_out`, `latency_ms`, `cost_dollars`, `timestamp`. Consumer writes to `llm_usage` and appends to `events` with type `LLMUsage`. Keeps API under 10 ms (no synchronous DB write on LLM response path).
+
+### 7. `astra:goals:completed` — Goal completion events (Phase 12)
+| Field | Type | Description |
+|---|---|---|
+| `goal_id` | UUID | Completed goal |
+| `cascade_id` | UUID | Parent cascade (empty if standalone) |
+| `org_id` | UUID | Organization scope |
+| `status` | string | `"completed"` or `"failed"` |
+| `result_summary` | string | Short result (truncated at 500 chars) |
+| `completed_at` | RFC3339 | Completion timestamp |
+
+Consumer: `internal/goals/deps.go` `DependencyEngine` unblocks waiting goals. Olympus cascade engine tracks progress.
+
+### 8. `astra:slack:incoming` — Raw Slack events (Phase 13)
+| Field | Type | Description |
+|---|---|---|
+| `event_type` | string | `"slash_command"`, `"reaction"`, `"message"` |
+| `user_id` | string | Slack user ID |
+| `channel` | string | Slack channel ID |
+| `text` | string | Message or command text |
+| `payload` | JSON | Full Slack event payload |
+| `timestamp` | RFC3339 | Event time |
+
+### 9. `astra:slack:outgoing` — Outbound Slack messages (Phase 13)
+Fields: `channel`, `thread_ts`, `text`, `blocks` (Slack Block Kit JSON), `timestamp`
+
+### 10. `astra:webhooks:raw` — External webhook payloads (Phase 13)
+| Field | Type | Description |
+|---|---|---|
+| `source_id` | string | webhook_sources.source_id |
+| `trigger_id` | UUID | Assigned trigger ID |
+| `payload` | JSON | Raw normalized payload |
+| `timestamp` | RFC3339 | Receipt time |
+
+Consumer: Olympus trigger classifier (not Astra-owned).
+
+### Phase 12 Redis Keys
+
+| Key | TTL | Purpose |
+|---|---|---|
+| `agent:trust:<agent_id>` | 5 min | Cached trust score; invalidated on `POST /agents/{id}/trust` |
+| `agent:goalpost:rate:<agent_id>` | 60s | Agent-to-agent goal-post rate limit counter (max 10 per task) |
+| `agent:active_goals:<agent_id>` | 30s | Active goal count for concurrency admission control |
 
 ### Multi-tenancy stream fields
 All streams carry `org_id` when available. `astra:tasks:shard:<n>` includes `org_id` from the task. `astra:usage` includes `org_id` and `user_id`. `astra:agent:events` includes `org_id`. This enables org-scoped consumers and audit filtering.
@@ -1560,6 +1844,22 @@ type Runtime interface {
 }
 ```
 
+## Tool Definitions Registry (Phase 12)
+
+Tool registry with risk classification, stored in `tool_definitions` (migration 0023).
+
+**API:**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/tools/definitions` | Register a tool definition |
+| `GET` | `/tools/definitions` | List definitions; filterable by `?risk_tier=`, `?org_id=` |
+| `GET` | `/tools/definitions/{id}` | Get definition |
+| `PATCH` | `/tools/definitions/{id}` | Update definition |
+| `DELETE` | `/tools/definitions/{id}` | Remove definition |
+
+**Risk-tier gating:** `tool-runtime` looks up `tool_definitions` by name before execution. If `risk_tier IN ('high','critical')`, an approved `approval_request` is required. Agents with `trust_score >= 0.8` bypass the gate for `high` tier only. `critical` always requires approval.
+
 ---
 
 # 15. Astra SDK — Agent API
@@ -1609,6 +1909,57 @@ func (a *SimpleAgent) Reflect(ctx AgentContext, outcome Outcome) error {
     // Learn from outcome, update memory
 }
 ```
+
+## Agent-to-Agent Goal Posting (Phase 12)
+
+Agents post goals to other agents during task execution via `AgentContext.PostGoal`.
+
+```go
+// PostGoal allows an agent to post a goal to another agent.
+// Internally uses service-to-service gRPC with a short-lived JWT (TTL 60s, aud=goal-service).
+// The posted goal records source_agent_id = caller's agent ID.
+// Rate limited: max 10 PostGoal calls per task execution.
+// Cascade depth guard: rejected if originating goal's cascade depth > 5.
+func (ctx *AgentContext) PostGoal(
+    targetAgentID string,
+    goalText       string,
+    priority       int,
+    opts           ...PostGoalOption,
+) (goalID string, err error)
+```
+
+**Auth:** execution-worker mints a short-lived JWT (`sub=agent:<agent_id>`, `aud=goal-service`, TTL 60s). goal-service validates and records `goals.source_agent_id`.
+
+**Rate limit:** `INCR agent:goalpost:rate:<agent_id>` in Redis, TTL 60s, max 10. Exceeded calls return error without aborting the parent task.
+
+## External Agent Adapter Interface (Phase 14)
+
+```go
+// internal/adapters/adapter.go
+type Adapter interface {
+    DispatchGoal(ctx context.Context, ref AdapterRef, goal AdapterGoal, agentCtx AgentContext) (jobID string, err error)
+    PollStatus(ctx context.Context, jobID string) (status AdapterStatus, result string, err error)
+    HandleCallback(ctx context.Context, payload []byte) error
+    ListCapabilities(ctx context.Context) ([]Capability, error)
+    HealthCheck(ctx context.Context) (HealthStatus, error)
+}
+
+type AdapterRef struct {
+    AdapterID string
+    Ecosystem string // "dtec" | "agentforce" | "workday"
+    Endpoint  string
+    AuthRef   string // Vault path to credentials
+}
+
+type AdapterStatus string
+const (
+    AdapterStatusRunning   AdapterStatus = "running"
+    AdapterStatusCompleted AdapterStatus = "completed"
+    AdapterStatusFailed    AdapterStatus = "failed"
+)
+```
+
+**Registry:** `adapters.Registry` maps `provider_type` strings to `Adapter` implementations. execution-worker checks `task.payload.provider_type`; if not `"astra_agent"`, delegates to the registered adapter.
 
 ---
 
@@ -1751,6 +2102,29 @@ Every request that triggers an LLM call returns **token/LLM usage** in the respo
 - All state transitions logged with actor_id and timestamp.
 
 Full design: **docs/phase-history-usage-audit-design.md**.
+
+## Dual-Approval (Two-Person Rule) (Phase 12)
+
+Critical-tier actions require two independent approvals before execution. Controlled by `approval_requests.required_approvals` (default 1; set to 2 for critical tier).
+
+**Logic (`internal/rbac` / `cmd/access-control`):**
+- `POST /approvals/{id}/decide` appends to `approvals JSONB[]` — does **not** overwrite `status` immediately
+- Status transitions to `approved` only when `count(decision=="approved") >= required_approvals`
+- **Fail-fast rejection:** any single `"rejected"` decision transitions status to `rejected` immediately — the second approver is not required to confirm rejection
+- Dashboard shows `"1 of 2 approved"` for pending dual-approval items
+
+**Decide API response:**
+```json
+{
+  "approval_id": "...",
+  "status": "pending|approved|rejected",
+  "approvals_received": 1,
+  "approvals_required": 2,
+  "can_execute": false
+}
+```
+
+**Idempotency:** duplicate decide calls (same `user_id`, same decision) return current state without appending to `approvals[]`.
 
 ---
 
@@ -2370,6 +2744,54 @@ Detect → Triage → Contain → Remediate → Postmortem → Remediation Revie
 - [ ] Update `.env` / `.env.example` with `ASTRA_SUPER_ADMIN_EMAIL`, `ASTRA_SUPER_ADMIN_PASSWORD`
 
 **Acceptance:** Organizations, teams, and users can be managed. Agents have tiered visibility (global/public/team/private) with collaborator support. Org data is strictly isolated. Super-admins see platform-wide metrics (redacted) and manage all users. Org-admins see 100% of their org's data. Private agents are invisible to non-collaborators. Approval routing goes to agent admins.
+
+## Phase 12 — Olympus Integration Foundation (6-8 weeks)
+
+Schema extensions, goal dependencies, agent metadata, concurrency controls, and approval enhancements for Olympus orchestration.
+
+- [ ] Migration 0019: `webhook_sources` table
+- [ ] Migration 0020: goal dependencies (`cascade_id`, `depends_on_goal_ids`, `source_agent_id`, `completed_at`) on `goals`
+- [ ] Migration 0021: agent tags, `metadata`, `trust_score` + `agent_trust_events` table
+- [ ] Migration 0022: dual-approval (`required_approvals`, `approvals JSONB`) on `approval_requests`
+- [ ] Migration 0023: `tool_definitions` registry table
+- [ ] `internal/goals/` -- **new package** (`deps.go` with `DependencyEngine.OnGoalCompleted`); goal logic currently lives in `cmd/goal-service/`. Add `internal/goals` to Section 27 Build Order.
+- [ ] `GoalCompleted` event publication: goal-service publishes to `astra:goals:completed` on goal terminal transition
+- [ ] Agent-to-agent `PostGoal` in `pkg/sdk` (service-to-service JWT, rate limiting, cascade depth guard)
+- [ ] Agent tags/metadata/trust_score API extensions (`PATCH /agents/{id}`, `GET /agents?tag=`, `POST /agents/{id}/trust`)
+- [ ] Dual-approval logic in `internal/rbac` / `cmd/access-control`
+- [ ] Approval REST API: `POST /approvals/{id}/decide`, `GET /approvals` (programmatic decide, not just dashboard UI)
+- [ ] Tool definitions registry API + risk-tier gating in `cmd/tool-runtime`
+- [ ] Goal priority reorder buffer in `cmd/scheduler-service`
+- [ ] Agent concurrency limits (`max_concurrent_goals` admission control in `cmd/goal-service`)
+- [ ] Chat external message injection: `POST /chat/sessions/{session_id}/messages`
+
+**Acceptance:** All migrations applied idempotently. Goal dependency engine unblocks waiting goals. Agent-to-agent posting rate-limited to 10/task. Dual-approval enforced. Tool registry gates high/critical risk tools.
+
+## Phase 13 — External Integrations (4-6 weeks)
+
+Slack integration and webhook ingestion for event-driven external triggers.
+
+- [ ] `cmd/slack-adapter` (port 8091) — Slack Events API receiver with HMAC-SHA256 verification
+- [ ] `cmd/slack-worker` — Redis stream consumer for `astra:slack:incoming`; routes slash commands to goal-service, reactions to access-control
+- [ ] `internal/slack/` — Slack API client, message formatting, OAuth token management
+- [ ] Redis streams: `astra:slack:incoming`, `astra:slack:outgoing`
+- [ ] `POST /slack/events`, `POST /slack/oauth/callback`, `POST /internal/slack/post` endpoints
+- [ ] `cmd/webhook-ingest` (port 8092) — Generic webhook receiver with HMAC validation
+- [ ] Redis stream: `astra:webhooks:raw`
+- [ ] `POST /webhooks/{source_id}` endpoint
+
+**Acceptance:** `/olympus-trigger <text>` creates a goal. Reactions on approval messages call decide endpoint. Valid-HMAC webhook POST publishes to `astra:webhooks:raw` (returns `202` with `trigger_id`). Invalid HMAC returns `401`.
+
+## Phase 14 — Adapter Framework (4-6 weeks)
+
+External agent adapter framework for cross-platform orchestration (D.TEC, AgentForce, Workday).
+
+- [ ] `internal/adapters/` — new package with `Adapter` interface (`DispatchGoal`, `PollStatus`, `HandleCallback`, `ListCapabilities`, `HealthCheck`) and `Registry`
+- [ ] `cmd/dtec-adapter` — D.TEC ecosystem adapter (June 1 target)
+- [ ] execution-worker adapter dispatch: check `task.payload.provider_type`; delegate to `adapters.Registry.Get(providerType)` if not `"astra_agent"`
+- [ ] `cmd/agentforce-adapter`, `cmd/workday-adapter` — deferred to EOY
+
+**Acceptance:** `provider_type="dtec"` tasks dispatch via D.TEC adapter, poll until completion, and persist results. Unknown `provider_type` returns error. Adapter health check endpoint available.
 
 ---
 

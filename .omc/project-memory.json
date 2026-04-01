@@ -1,0 +1,258 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775040970931,
+  "projectRoot": "/Users/prajagopal/Developer/Work/astra",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Go",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "go.mod"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "go",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "bin",
+      "docs",
+      "examples",
+      "scripts",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "bin": {
+      "path": "bin",
+      "purpose": "Executable scripts",
+      "fileCount": 17,
+      "lastAccessed": 1775040970915,
+      "keyFiles": [
+        "access-control",
+        "agent-service",
+        "api-gateway",
+        "browser-worker",
+        "cost-tracker"
+      ]
+    },
+    "cmd": {
+      "path": "cmd",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970915,
+      "keyFiles": []
+    },
+    "deployments": {
+      "path": "deployments",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970916,
+      "keyFiles": []
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 21,
+      "lastAccessed": 1775040970916,
+      "keyFiles": [
+        "PRD.md",
+        "api-list-agents-workers-spec.md",
+        "approval-system-extension-spec.md",
+        "chat-agents-design.md",
+        "chat-agents-implementation-plan.md"
+      ]
+    },
+    "examples": {
+      "path": "examples",
+      "purpose": "Example code",
+      "fileCount": 2,
+      "lastAccessed": 1775040970916,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "internal": {
+      "path": "internal",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970917,
+      "keyFiles": []
+    },
+    "logs": {
+      "path": "logs",
+      "purpose": null,
+      "fileCount": 34,
+      "lastAccessed": 1775040970917,
+      "keyFiles": [
+        "access-control.log",
+        "access-control.pid",
+        "agent-service.log",
+        "agent-service.pid",
+        "api-gateway.log"
+      ]
+    },
+    "migrations": {
+      "path": "migrations",
+      "purpose": "Database migrations",
+      "fileCount": 19,
+      "lastAccessed": 1775040970917,
+      "keyFiles": [
+        "0000_extensions.sql",
+        "0001_initial_schema.sql",
+        "0002_task_dependencies.sql",
+        "0003_memories.sql",
+        "0004_artifacts.sql"
+      ]
+    },
+    "packages": {
+      "path": "packages",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970917,
+      "keyFiles": []
+    },
+    "pkg": {
+      "path": "pkg",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970917,
+      "keyFiles": []
+    },
+    "proto": {
+      "path": "proto",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775040970917,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 7,
+      "lastAccessed": 1775040970917,
+      "keyFiles": [
+        "create-python-expert-agent.sh",
+        "dedup-agents-by-name.sql",
+        "deploy.sh",
+        "proto-generate.sh",
+        "seed-agents.sh"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 1,
+      "lastAccessed": 1775040970917,
+      "keyFiles": []
+    },
+    "web": {
+      "path": "web",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970918,
+      "keyFiles": []
+    },
+    "workspace": {
+      "path": "workspace",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775040970918,
+      "keyFiles": [
+        "typescript"
+      ]
+    },
+    "docs/api": {
+      "path": "docs/api",
+      "purpose": "API routes",
+      "fileCount": 1,
+      "lastAccessed": 1775040970918,
+      "keyFiles": [
+        "openapi.yaml"
+      ]
+    },
+    "pkg/config": {
+      "path": "pkg/config",
+      "purpose": "Configuration files",
+      "fileCount": 2,
+      "lastAccessed": 1775040970918,
+      "keyFiles": [
+        "config.go",
+        "config_test.go"
+      ]
+    },
+    "pkg/models": {
+      "path": "pkg/models",
+      "purpose": "Data models",
+      "fileCount": 1,
+      "lastAccessed": 1775040970919,
+      "keyFiles": [
+        "models.go"
+      ]
+    },
+    "workspace/src": {
+      "path": "workspace/src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1775040970919,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "docs/PRD.md",
+      "accessCount": 62,
+      "lastAccessed": 1775041420917,
+      "type": "directory"
+    },
+    {
+      "path": "docs/olympus-implementation-status.md",
+      "accessCount": 9,
+      "lastAccessed": 1775041420224,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 2,
+      "lastAccessed": 1775041654056,
+      "type": "directory"
+    },
+    {
+      "path": "scripts/seed-agents.sh",
+      "accessCount": 1,
+      "lastAccessed": 1775041648011,
+      "type": "directory"
+    },
+    {
+      "path": "scripts",
+      "accessCount": 1,
+      "lastAccessed": 1775041653464,
+      "type": "directory"
+    }
+  ],
+  "userDirectives": []
+}

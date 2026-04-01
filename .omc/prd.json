@@ -1,0 +1,83 @@
+{
+  "task": "Astra-Olympus Gap Closure: PRD updates + implementation status doc",
+  "plan": ".omc/plans/astra-olympus-gap-closure.md",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Create docs/olympus-implementation-status.md",
+      "priority": 1,
+      "passes": true,
+      "acceptanceCriteria": [
+        "File docs/olympus-implementation-status.md exists",
+        "File contains a 'Completed Phases' table with Phases 9, 10, 11 each marked COMPLETE with evidence (migration file + package path)",
+        "File contains a 'Partially Implemented' table covering agent-to-agent goal posting (has CreateGoal, missing source_agent_id/service JWT/rate limiting) and approval system (has approval_requests table, missing required_approvals/approvals JSONB)",
+        "File contains a 'Remaining Gaps' table with all 14 gaps listing: gap number, name, category, PRD sections, migration needed (Y/N)",
+        "File contains a 'Migration Sequence' section listing 0019-0023 with filenames",
+        "File contains a 'New Redis Keys/Streams' section listing all 7 new streams/keys",
+        "File contains a 'New Services/Packages' section listing the 3 new services + 1 new package"
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "Update PRD Section 11 — Migrations 0019-0023 DDL",
+      "priority": 2,
+      "passes": true,
+      "acceptanceCriteria": [
+        "docs/PRD.md contains '## Migration 0019' subsection with webhook_sources table DDL including columns: id, source_id, name, hmac_secret, schema_type, enabled, org_id, created_at, updated_at",
+        "docs/PRD.md contains '## Migration 0020' subsection with ALTER TABLE goals adding cascade_id UUID, depends_on_goal_ids UUID[], completed_at TIMESTAMPTZ, source_agent_id UUID",
+        "docs/PRD.md contains '## Migration 0021' subsection with ALTER TABLE agents adding tags TEXT[], metadata JSONB, trust_score FLOAT and CREATE TABLE agent_trust_events",
+        "docs/PRD.md contains '## Migration 0022' subsection with ALTER TABLE approval_requests adding required_approvals INT DEFAULT 1 and approvals JSONB DEFAULT '[]'",
+        "docs/PRD.md contains '## Migration 0023' subsection with tool_definitions table DDL including columns: id, name, version, risk_tier CHECK, sandbox CHECK, description, metadata, org_id, enabled",
+        "All 5 migration subsections use idempotent DDL (IF NOT EXISTS or ADD COLUMN IF NOT EXISTS)",
+        "All 5 migration subsections are inside Section 11 (appear after existing '## Migration 0018' content)",
+        "git diff docs/PRD.md shows only additions (no deleted lines)"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Update PRD Section 9 — Service specs (Slack, webhook, chat injection, approval REST, service table)",
+      "priority": 3,
+      "passes": true,
+      "acceptanceCriteria": [
+        "docs/PRD.md Section 9 header updated from '16 Canonical Microservices' to '21 Canonical Microservices'",
+        "docs/PRD.md Table of Contents anchor for Section 9 updated to match '21 Canonical Microservices'",
+        "docs/PRD.md service table includes cost-tracker (port 8090) as a listed service",
+        "docs/PRD.md service table includes 4 new entries: slack-adapter (8091), slack-worker, webhook-ingest (8092), dtec-adapter",
+        "docs/PRD.md contains 'Slack Integration (Phase 12)' subsection within Section 9 covering slack-adapter architecture, slash commands (/olympus-trigger), and Go packages (cmd/slack-adapter, cmd/slack-worker, internal/slack)",
+        "docs/PRD.md contains 'Webhook Ingest Service' subsection within Section 9 with POST /webhooks/{source_id} endpoint, HMAC validation, and Redis stream reference",
+        "docs/PRD.md contains 'Chat External Message Injection' subsection within Section 9 with POST /chat/sessions/{session_id}/messages endpoint spec",
+        "docs/PRD.md contains 'Approval REST API' subsection within Section 9 with POST /approvals/{id}/decide and GET /approvals endpoint specs and idempotency note"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Update PRD Sections 8, 10, 12, 14, 15, 18 — Scheduler, gRPC, Streams, Tool Runtime, SDK, Security",
+      "priority": 4,
+      "passes": true,
+      "acceptanceCriteria": [
+        "docs/PRD.md Section 8 contains goal priority reorder buffer spec and agent concurrency limit (max_concurrent_goals, 429 response, agent:active_goals:<id> Redis key)",
+        "docs/PRD.md Section 10 contains GoalService proto additions: CreateGoalRequest fields cascade_id, depends_on_goal_ids, source_agent_id and GoalCompletedEvent message",
+        "docs/PRD.md Section 12 contains stream specs for astra:goals:completed, astra:slack:incoming, astra:slack:outgoing, astra:webhooks:raw each with a field table",
+        "docs/PRD.md Section 12 Core Message Types table includes GoalCompleted in the Goal lifecycle row",
+        "docs/PRD.md Section 12 contains new Redis keys: agent:trust:<id>, agent:goalpost:rate:<id>, agent:active_goals:<id>",
+        "docs/PRD.md Section 14 contains tool_definitions registry API table and risk-tier gating logic (trust score bypass for high-trust agents)",
+        "docs/PRD.md Section 15 contains PostGoal SDK method signature with service-to-service auth, rate limiting (max 10/task), and cascade depth guard (max depth 5)",
+        "docs/PRD.md Section 15 contains External Agent Adapter interface with DispatchGoal, PollStatus, HandleCallback, ListCapabilities, HealthCheck signatures",
+        "docs/PRD.md Section 18 contains dual-approval (two-person rule) spec with required_approvals logic, fail-fast rejection on any single reject, and API response shape showing approvals_received/approvals_required"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Update PRD Section 26 — Phase 12-14 Roadmap",
+      "priority": 5,
+      "passes": true,
+      "acceptanceCriteria": [
+        "docs/PRD.md Section 26 contains '## Phase 12' block after Phase 11 with Goal line and checklist items covering all 15 Phase 12 items from the plan",
+        "docs/PRD.md Section 26 contains '## Phase 13' block covering Slack (slack-adapter, slack-worker) and webhook-ingest with Redis streams",
+        "docs/PRD.md Section 26 contains '## Phase 14' block covering internal/adapters, cmd/dtec-adapter, and execution-worker integration",
+        "Phase 12 checklist includes internal/goals/ new package note and Build Order reference",
+        "All 14 gaps map to at least one checklist item across Phases 12-14 (verifiable by cross-checking gap-to-step mapping from plan)"
+      ]
+    }
+  ]
+}

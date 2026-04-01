@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/prajagopal/Developer/Work/astra/CLAUDE.md\"}",
+  "error": "File does not exist. Note: your current working directory is /Users/prajagopal/Developer/Work/astra.",
+  "timestamp": "2026-04-01T10:08:24.259Z",
+  "retry_count": 1
+}
