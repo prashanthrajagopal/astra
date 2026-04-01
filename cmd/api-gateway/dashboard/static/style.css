@@ -2084,6 +2084,22 @@ button#btn-refresh:focus-visible {
 .chat-widget-tts-toggle.tts-on {
   opacity: 1;
 }
+.chat-widget-voice-mode {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  opacity: 0.8;
+}
+.chat-widget-voice-mode:hover {
+  opacity: 1;
+}
+.chat-widget-voice-mode.voice-mode-on {
+  opacity: 1;
+}
 
 .chat-widget-panel[hidden] {
   display: none !important;
@@ -2190,6 +2206,12 @@ body.dashboard-redesign .chat-widget-tts-toggle {
 body.dashboard-redesign .chat-widget-tts-toggle.tts-on {
   color: var(--accent);
 }
+body.dashboard-redesign .chat-widget-voice-mode {
+  color: var(--text-secondary);
+}
+body.dashboard-redesign .chat-widget-voice-mode.voice-mode-on {
+  color: var(--accent);
+}
 
 /* Chat widget light theme */
 html[data-theme="light"] body.dashboard-redesign .chat-widget-toggle {
@@ -2253,6 +2275,9 @@ html[data-theme="light"] body.dashboard-redesign .chat-widget-mic.listening {
   border-color: var(--red);
 }
 html[data-theme="light"] body.dashboard-redesign .chat-widget-tts-toggle.tts-on {
+  color: var(--accent);
+}
+html[data-theme="light"] body.dashboard-redesign .chat-widget-voice-mode.voice-mode-on {
   color: var(--accent);
 }
 

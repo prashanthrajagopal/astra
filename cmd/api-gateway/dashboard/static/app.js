@@ -1089,6 +1089,7 @@ function widgetToggle() {
     if (badge) badge.hidden = true;
   } else {
     if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    widgetStopListening();
   }
 }
 
@@ -1163,7 +1164,7 @@ function widgetSend() {
       return widgetLoadMessages();
     })
     .then(function (messages) {
-      if (getTTSEnabled() && messages && messages.length > 0) {
+      if ((getTTSEnabled() || getVoiceMode()) && messages && messages.length > 0) {
         var last = messages[messages.length - 1];
         if (last.role === 'assistant' && (last.content || '').trim()) {
           widgetSpeak((last.content || '').trim());
@@ -1187,30 +1188,53 @@ function setTTSEnabled(on) {
   if (on) localStorage.setItem('astra_chat_tts_enabled', 'true');
   else localStorage.removeItem('astra_chat_tts_enabled');
 }
+function getVoiceMode() {
+  return localStorage.getItem('astra_chat_voice_mode') === 'true';
+}
+function setVoiceMode(on) {
+  if (on) localStorage.setItem('astra_chat_voice_mode', 'true');
+  else localStorage.removeItem('astra_chat_voice_mode');
+}
+
 function widgetSpeak(text) {
   if (!text || !text.trim()) return;
   if (typeof speechSynthesis === 'undefined') return;
   speechSynthesis.cancel();
   var u = new SpeechSynthesisUtterance(text);
   u.lang = navigator.language || 'en-US';
+  u.onstart = function () {
+    widgetSetStatus('Speaking…');
+  };
+  u.onend = function () {
+    widgetSetStatus('Connected');
+    if (getVoiceMode() && !widgetListening && widgetOpen && widgetSessionId) {
+      setTimeout(function () { widgetStartListening(); }, 300);
+    }
+  };
+  u.onerror = function () {
+    widgetSetStatus('Connected');
+  };
   speechSynthesis.speak(u);
 }
 
 var widgetRecognition = null;
 var widgetListening = false;
-function widgetMicClick() {
-  var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognitionAPI) {
-    widgetSetStatus('Voice not supported');
-    return;
-  }
-  var input = document.getElementById('chat-widget-input');
-  var micBtn = document.getElementById('chat-widget-mic');
+var widgetPreviousStatus = '';
+
+function widgetStopListening() {
   if (widgetListening && widgetRecognition) {
     widgetRecognition.stop();
-    return;
   }
-  var previousStatus = (document.getElementById('chat-widget-status') || {}).textContent || '';
+}
+
+function widgetStartListening() {
+  var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionAPI) return;
+  if (widgetListening && widgetRecognition) return;
+  if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+  var input = document.getElementById('chat-widget-input');
+  var micBtn = document.getElementById('chat-widget-mic');
+  widgetPreviousStatus = (document.getElementById('chat-widget-status') || {}).textContent || 'Connected';
   widgetRecognition = new SpeechRecognitionAPI();
   widgetRecognition.continuous = false;
   widgetRecognition.interimResults = false;
@@ -1220,12 +1244,17 @@ function widgetMicClick() {
     if (e.results && e.results.length > 0 && e.results[e.results.length - 1].length > 0) {
       transcript = e.results[e.results.length - 1][0].transcript || '';
     }
-    if (input && transcript) input.value = transcript;
+    if (input && transcript) {
+      input.value = transcript;
+      if (getVoiceMode() && transcript.trim()) {
+        setTimeout(function () { widgetSend(); }, 50);
+      }
+    }
   };
   widgetRecognition.onend = function () {
     widgetListening = false;
     if (micBtn) micBtn.classList.remove('listening');
-    widgetSetStatus(previousStatus || 'Connected');
+    widgetSetStatus(widgetPreviousStatus);
   };
   widgetRecognition.onerror = function (e) {
     widgetListening = false;
@@ -1236,6 +1265,19 @@ function widgetMicClick() {
   if (micBtn) micBtn.classList.add('listening');
   widgetSetStatus('Listening…');
   widgetRecognition.start();
+}
+
+function widgetMicClick() {
+  var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionAPI) {
+    widgetSetStatus('Voice not supported');
+    return;
+  }
+  if (widgetListening && widgetRecognition) {
+    widgetRecognition.stop();
+    return;
+  }
+  widgetStartListening();
 }
 
 function applyDashboardTheme(theme) {
@@ -1398,6 +1440,15 @@ document.addEventListener('DOMContentLoaded', function () {
       var on = !getTTSEnabled();
       setTTSEnabled(on);
       chatWidgetTts.classList.toggle('tts-on', on);
+    });
+  }
+  var chatWidgetVoiceMode = document.getElementById('chat-widget-voice-mode');
+  if (chatWidgetVoiceMode) {
+    chatWidgetVoiceMode.classList.toggle('voice-mode-on', getVoiceMode());
+    chatWidgetVoiceMode.addEventListener('click', function () {
+      var on = !getVoiceMode();
+      setVoiceMode(on);
+      chatWidgetVoiceMode.classList.toggle('voice-mode-on', on);
     });
   }
   initChatWidget();
