@@ -1,7 +1,7 @@
 {
   "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/prajagopal/Developer/Work/astra/CLAUDE.md\"}",
-  "error": "File does not exist. Note: your current working directory is /Users/prajagopal/Developer/Work/astra.",
-  "timestamp": "2026-04-01T10:08:24.259Z",
+  "tool_input_preview": "{\"file_path\":\"/Users/prajagopal/Developer/Work/astra/cmd/api-gateway/dashboard/static/style.css\"}",
+  "error": "File content (22803 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-04-01T11:15:29.082Z",
   "retry_count": 1
 }

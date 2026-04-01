@@ -230,16 +230,40 @@
       "type": "directory"
     },
     {
+      "path": "cmd/api-gateway/dashboard/index.html",
+      "accessCount": 12,
+      "lastAccessed": 1775042486085,
+      "type": "file"
+    },
+    {
       "path": "docs/olympus-implementation-status.md",
       "accessCount": 9,
       "lastAccessed": 1775041420224,
       "type": "file"
     },
     {
+      "path": "cmd/api-gateway/dashboard/static/style.css",
+      "accessCount": 7,
+      "lastAccessed": 1775042352910,
+      "type": "file"
+    },
+    {
       "path": "",
-      "accessCount": 2,
-      "lastAccessed": 1775041654056,
+      "accessCount": 4,
+      "lastAccessed": 1775042655596,
       "type": "directory"
+    },
+    {
+      "path": "docs/dashboard-ui-spec.md",
+      "accessCount": 4,
+      "lastAccessed": 1775042686085,
+      "type": "file"
+    },
+    {
+      "path": "docs/dashboard-material-theme-spec.md",
+      "accessCount": 2,
+      "lastAccessed": 1775042727500,
+      "type": "file"
     },
     {
       "path": "scripts/seed-agents.sh",
@@ -251,6 +275,60 @@
       "path": "scripts",
       "accessCount": 1,
       "lastAccessed": 1775041653464,
+      "type": "directory"
+    },
+    {
+      "path": "workspace/ecommerce-store/package.json",
+      "accessCount": 1,
+      "lastAccessed": 1775042047936,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/tailwind.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775042048119,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/src/components/Header.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1775042060871,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/src/pages/products.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1775042063914,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/src/pages/checkout.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1775042064016,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/next.config.js",
+      "accessCount": 1,
+      "lastAccessed": 1775042077408,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/src/pages/products/[id].tsx",
+      "accessCount": 1,
+      "lastAccessed": 1775042084987,
+      "type": "file"
+    },
+    {
+      "path": "workspace/ecommerce-store/src/layouts/Layout.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1775042088119,
+      "type": "file"
+    },
+    {
+      "path": "cmd/api-gateway/dashboard/static/app.js",
+      "accessCount": 1,
+      "lastAccessed": 1775042332782,
       "type": "directory"
     }
   ],

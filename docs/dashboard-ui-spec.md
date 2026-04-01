@@ -8,7 +8,7 @@
 
 ## Design Philosophy
 
-Utilitarian, information-dense, no decorative elements. Focus on complete platform visibility with minimal chrome. Monospace and system fonts, dark theme, high contrast.
+Glassmorphism — frosted glass surfaces over rich gradient backgrounds. Information-dense with depth cues from `backdrop-filter: blur()`, semi-transparent backgrounds, and subtle white-tinted borders. Supports both **dark** (default) and **light** themes switchable at runtime via the 🌙/☀️ toggle in the header (persisted to `localStorage` under `astra-theme`). Monospace font for code/logs; Roboto for UI chrome.
 
 ---
 
@@ -144,14 +144,18 @@ Use CSS variables for consistency. Dark theme base.
 | Latency OK (≤10ms) | (no class) | default | — |
 | Latency warning (>10ms) | `latency-warning` | `#f59e0b` | Exceeds 10ms target |
 
-**CSS variables to define:**
+**CSS variables (glass tokens — see `docs/dashboard-material-theme-spec.md` for full token list):**
 ```css
---color-healthy: #22c55e;
---color-unhealthy: #ef4444;
---color-warning: #f59e0b;
---color-text: #e5e7eb;
---color-bg: #111827;
---color-surface: #1f2937;
+/* Status colors — same in both themes */
+--md-ref-success: #7dd87d;       /* light: #2e7d32 */
+--md-ref-warning: #e6c547;       /* light: #f9a825 */
+--md-sys-color-error: #f2b8b5;   /* light: #ba1a1a */
+
+/* Glass surface tokens */
+--glass-bg: rgba(255,255,255,0.06);        /* light: 0.55 */
+--glass-bg-hover: rgba(255,255,255,0.10);  /* light: 0.72 */
+--glass-border: rgba(255,255,255,0.10);    /* light: 0.75 */
+--glass-blur: blur(20px);
 ```
 
 ---
