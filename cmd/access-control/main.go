@@ -24,11 +24,12 @@ import (
 var dangerousSubstrings = []string{"delete", "prod", "kubectl", "terraform"}
 
 type checkReq struct {
-	Subject      string `json:"subject"`
-	Action       string `json:"action"`
-	Resource     string `json:"resource"`
-	ToolName     string `json:"tool_name"`
-	IsSuperAdmin bool   `json:"is_super_admin"`
+	Subject      string  `json:"subject"`
+	Action       string  `json:"action"`
+	Resource     string  `json:"resource"`
+	ToolName     string  `json:"tool_name"`
+	IsSuperAdmin bool    `json:"is_super_admin"`
+	TrustScore   float64 `json:"trust_score,omitempty"`
 }
 
 type checkResp struct {
@@ -90,6 +91,7 @@ func main() {
 	mux.HandleFunc("POST /check", srv.handleCheck)
 	mux.HandleFunc("POST /approvals/{id}/approve", srv.handleApprove)
 	mux.HandleFunc("POST /approvals/{id}/deny", srv.handleDeny)
+	mux.HandleFunc("POST /approvals/{id}/decide", srv.handleDecide)
 	mux.HandleFunc("GET /approvals/pending", srv.handlePending)
 	mux.HandleFunc("GET /approvals/{id}", srv.handleGetByID)
 
@@ -138,6 +140,11 @@ func evaluatePolicy(req checkReq) checkResp {
 			return checkResp{Allowed: false, Reason: "super-admin cannot access execution details"}
 		}
 		return checkResp{Allowed: true}
+	}
+
+	// If trust score is provided and below threshold, require approval.
+	if req.TrustScore > 0 && req.TrustScore < 0.3 {
+		return checkResp{Allowed: false, ApprovalRequired: true, Reason: "low trust score requires approval"}
 	}
 
 	// Any authenticated user (subject set) can access; dangerous tools may require approval.
@@ -341,6 +348,136 @@ func scanApprovalRows(rows *sql.Rows) []approvalRequest {
 		list = append(list, ar)
 	}
 	return list
+}
+
+func (s *server) handleDecide(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	if _, err := uuid.Parse(idStr); err != nil {
+		http.Error(w, "invalid approval id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Decision string `json:"decision"`
+		UserID   string `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if req.Decision != "approved" && req.Decision != "denied" {
+		http.Error(w, `{"error":"decision must be 'approved' or 'denied'"}`, http.StatusBadRequest)
+		return
+	}
+
+	userID := r.Header.Get("X-User-Id")
+	if userID == "" {
+		userID = req.UserID
+	}
+	if userID == "" {
+		http.Error(w, `{"error":"user_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var status string
+	var requiredApprovals int
+	var approvalsJSON []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT status, COALESCE(required_approvals, 1), COALESCE(approvals, '[]'::jsonb)
+		 FROM approval_requests WHERE id::text = $1`, idStr).Scan(&status, &requiredApprovals, &approvalsJSON)
+	if err == sql.ErrNoRows {
+		http.Error(w, "approval not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("load approval failed", "id", idStr, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if status != "pending" {
+		http.Error(w, `{"error":"approval already decided"}`, http.StatusConflict)
+		return
+	}
+
+	var existingApprovals []map[string]interface{}
+	_ = json.Unmarshal(approvalsJSON, &existingApprovals)
+
+	for _, a := range existingApprovals {
+		if uid, ok := a["user_id"].(string); ok && uid == userID {
+			http.Error(w, `{"error":"user already voted"}`, http.StatusConflict)
+			return
+		}
+	}
+
+	newApproval := map[string]interface{}{
+		"user_id":   userID,
+		"decision":  req.Decision,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	existingApprovals = append(existingApprovals, newApproval)
+	updatedJSON, _ := json.Marshal(existingApprovals)
+
+	newStatus := "pending"
+	approvedCount := 0
+	for _, a := range existingApprovals {
+		if d, ok := a["decision"].(string); ok {
+			if d == "denied" {
+				newStatus = "denied"
+				break
+			}
+			if d == "approved" {
+				approvedCount++
+			}
+		}
+	}
+	if newStatus != "denied" && approvedCount >= requiredApprovals {
+		newStatus = "approved"
+	}
+
+	if newStatus != "pending" {
+		_, err = s.db.ExecContext(ctx,
+			`UPDATE approval_requests SET approvals = $1::jsonb, status = $2, decided_at = now(), decided_by = $3, updated_at = now()
+			 WHERE id::text = $4`,
+			updatedJSON, newStatus, userID, idStr)
+	} else {
+		_, err = s.db.ExecContext(ctx,
+			`UPDATE approval_requests SET approvals = $1::jsonb, updated_at = now()
+			 WHERE id::text = $2`,
+			updatedJSON, idStr)
+	}
+	if err != nil {
+		slog.Error("update approval failed", "id", idStr, "err", err)
+		http.Error(w, "update failed", http.StatusInternalServerError)
+		return
+	}
+
+	if newStatus == "approved" && s.goalServiceAddr != "" {
+		var requestType string
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(request_type, 'risky_task') FROM approval_requests WHERE id::text = $1`, idStr).Scan(&requestType)
+		if requestType == "plan" {
+			applyBody, _ := json.Marshal(map[string]string{"approval_id": idStr})
+			applyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.goalServiceAddr+"/internal/apply-plan", bytes.NewReader(applyBody))
+			if err == nil {
+				applyReq.Header.Set("Content-Type", "application/json")
+				resp, err := s.client.Do(applyReq)
+				if err != nil {
+					slog.Error("apply-plan call failed", "err", err)
+				} else {
+					resp.Body.Close()
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":             newStatus,
+		"approvals_received": len(existingApprovals),
+		"approvals_required": requiredApprovals,
+	})
 }
 
 func (s *server) handleGetByID(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/prashanth/Developer/astra/cmd/api-gateway/dashboard/static/style.css\"}",
+  "error": "File content (48386 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-04-01T20:07:20.716Z",
+  "retry_count": 2
+}

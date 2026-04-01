@@ -272,6 +272,27 @@ func main() {
 	mux.Handle("POST /agents/{id}/goals", auth.protect(handleAgentGoalsProxy(cfg.GoalServiceAddr, goalServiceClient, goalBreaker)))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
 	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
+
+	// Webhook ingest proxy — no auth required (signature validated by webhook-ingest service).
+	webhookIngestAddr := strings.TrimSuffix(os.Getenv("WEBHOOK_INGEST_ADDR"), "/")
+	if webhookIngestAddr == "" {
+		webhookIngestAddr = "http://localhost:8099"
+	}
+	mux.HandleFunc("POST /webhooks/{source_id}", makeWebhookIngestProxy(webhookIngestAddr))
+
+	// Internal goal creation: agent-to-agent posting (service-to-service auth via X-Source-Agent-ID).
+	goalServiceBase := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
+	mux.HandleFunc("POST /internal/goals", makeInternalGoalsProxy(goalServiceBase))
+
+	// Approval decision REST endpoint — auth headers forwarded from the protect middleware caller.
+	accessControlBase := strings.TrimSuffix(cfg.AccessControlAddr, "/")
+	mux.Handle("POST /approvals/{id}/decide", auth.protect(http.HandlerFunc(makeApprovalDecideProxy(accessControlBase))))
+
+	// Chat message injection: programmatic insert into chat_messages table.
+	mux.Handle("POST /chat/sessions/{id}/inject", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleChatInject(w, r, database)
+	})))
+
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 	})
@@ -465,30 +486,41 @@ const loginPageHTML = `<!doctype html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0f1117;--surface:#1a1d27;--surface2:#242736;--border:#2e3348;
-  --text:#e4e6f0;--text2:#9399b2;--primary:#6c8aff;--primary-hover:#8ba3ff;
-  --error:#f87171;--success:#34d399;
+  --bg:#000000;--surface:rgba(44,44,46,0.65);--surface2:rgba(58,58,60,0.65);--border:rgba(255,255,255,0.1);
+  --text:#FFFFFF;--text2:rgba(235,235,245,0.6);--primary:#0A84FF;--primary-hover:#409CFF;
+  --error:#FF453A;--success:#30D158;
 }
-body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
-  min-height:100vh;display:flex;align-items:center;justify-content:center}
-.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
-  padding:48px 40px;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  -webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;top:-200px;left:30%;width:600px;height:600px;
+  background:radial-gradient(circle,rgba(10,132,255,0.1) 0%,transparent 50%);pointer-events:none}
+body::after{content:'';position:fixed;bottom:-200px;right:20%;width:500px;height:500px;
+  background:radial-gradient(circle,rgba(191,90,242,0.07) 0%,transparent 50%);pointer-events:none}
+.login-card{background:rgba(44,44,46,0.55);backdrop-filter:blur(40px) saturate(180%);
+  -webkit-backdrop-filter:blur(40px) saturate(180%);border:0.5px solid rgba(255,255,255,0.12);
+  border-radius:20px;padding:48px 40px;width:100%;max-width:420px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.4),0 0 1px rgba(0,0,0,0.3)}
 .logo{font-size:1.75rem;font-weight:700;text-align:center;margin-bottom:8px;letter-spacing:-.02em}
 .logo span{color:var(--primary)}
 .subtitle{text-align:center;color:var(--text2);font-size:.875rem;margin-bottom:32px}
 .field{margin-bottom:20px}
 .field label{display:block;font-size:.8125rem;font-weight:500;color:var(--text2);margin-bottom:6px}
-.field input{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);
-  border-radius:8px;color:var(--text);font-size:.9375rem;outline:none;transition:border .15s}
-.field input:focus{border-color:var(--primary)}
-.field input::placeholder{color:var(--text2);opacity:.6}
-.btn{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:8px;
-  font-size:.9375rem;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
-.btn:hover{background:var(--primary-hover)}
+.field input{width:100%;padding:10px 14px;background:rgba(255,255,255,0.06);
+  border:0.5px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);
+  font-size:.9375rem;outline:none;transition:border .2s ease;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.field input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(10,132,255,0.2)}
+.field input::placeholder{color:var(--text2);opacity:.5}
+.btn{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:12px;
+  font-size:.9375rem;font-weight:600;cursor:pointer;transition:all .2s ease;margin-top:4px;
+  box-shadow:0 1px 4px rgba(10,132,255,0.3)}
+.btn:hover{background:var(--primary-hover);box-shadow:0 2px 8px rgba(10,132,255,0.4)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
-.msg{margin-top:16px;padding:10px 14px;border-radius:8px;font-size:.8125rem;display:none}
-.msg.error{display:block;background:rgba(248,113,113,.1);border:1px solid var(--error);color:var(--error)}
-.msg.success{display:block;background:rgba(52,211,153,.1);border:1px solid var(--success);color:var(--success)}
+.msg{margin-top:16px;padding:10px 14px;border-radius:10px;font-size:.8125rem;display:none;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.msg.error{display:block;background:rgba(255,69,58,.1);border:0.5px solid rgba(255,69,58,0.3);color:var(--error)}
+.msg.success{display:block;background:rgba(48,209,88,.1);border:0.5px solid rgba(48,209,88,0.3);color:var(--success)}
 .links{margin-top:24px;text-align:center;font-size:.8125rem;color:var(--text2)}
 .links a{color:var(--primary);text-decoration:none}
 .links a:hover{text-decoration:underline}
@@ -1436,6 +1468,44 @@ func kernelCtxWithAuth(r *http.Request, ctx context.Context) context.Context {
 
 func handleListAgents(w http.ResponseWriter, r *http.Request) {
 	// Route is registered as "GET /agents" so only GET reaches this handler.
+	tagFilter := r.URL.Query().Get("tag")
+
+	if tagFilter != "" {
+		// Tag-filtered list goes directly to the DB for an indexed GIN lookup.
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		rows, err := gatewayDB.QueryContext(ctx,
+			`SELECT id, name, actor_type, status FROM agents WHERE $1 = ANY(tags) ORDER BY created_at DESC`,
+			tagFilter)
+		if err != nil {
+			slog.Error("list agents by tag failed", "tag", tagFilter, "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "list agents failed: "+err.Error())
+			return
+		}
+		defer rows.Close()
+		var agents []map[string]interface{}
+		for rows.Next() {
+			var id, name, actorType, status string
+			if err := rows.Scan(&id, &name, &actorType, &status); err != nil {
+				continue
+			}
+			agents = append(agents, map[string]interface{}{
+				"id":         id,
+				"actor_type": actorType,
+				"name":       name,
+				"status":     status,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			slog.Error("list agents by tag scan failed", "tag", tagFilter, "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "list agents failed: "+err.Error())
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	ctx = kernelCtxWithAuth(r, ctx)
@@ -1529,6 +1599,8 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		IngestSourceType          *string          `json:"ingest_source_type"`
 		IngestSourceConfig        *json.RawMessage `json:"ingest_source_config"`
 		SlackNotificationsEnabled *bool            `json:"slack_notifications_enabled"`
+		Tags                      []string         `json:"tags"`
+		Metadata                  *json.RawMessage `json:"metadata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -1579,6 +1651,24 @@ func handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if err := docStore.UpdateAgentSlackNotifications(ctx, id, *req.SlackNotificationsEnabled); err != nil {
 			slog.Error("UpdateAgentSlackNotifications failed", "err", err)
 			writeJSONError(w, http.StatusInternalServerError, "update slack notifications failed: "+err.Error())
+			return
+		}
+	}
+	if req.Tags != nil {
+		if _, err := gatewayDB.ExecContext(ctx,
+			`UPDATE agents SET tags = $1, updated_at = now() WHERE id = $2`,
+			req.Tags, id); err != nil {
+			slog.Error("update agent tags failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "update tags failed: "+err.Error())
+			return
+		}
+	}
+	if req.Metadata != nil {
+		if _, err := gatewayDB.ExecContext(ctx,
+			`UPDATE agents SET metadata = $1, updated_at = now() WHERE id = $2`,
+			[]byte(*req.Metadata), id); err != nil {
+			slog.Error("update agent metadata failed", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "update metadata failed: "+err.Error())
 			return
 		}
 	}
@@ -1982,5 +2072,136 @@ func handleGraphs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tasks":        resp.Tasks,
 		"dependencies": resp.Dependencies,
+	})
+}
+
+// makeWebhookIngestProxy proxies POST /webhooks/{source_id} to the webhook-ingest service.
+// No gateway auth is applied — signature verification is the responsibility of webhook-ingest.
+func makeWebhookIngestProxy(webhookIngestAddr string) http.HandlerFunc {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func(w http.ResponseWriter, r *http.Request) {
+		sourceID := r.PathValue("source_id")
+		proxyURL := webhookIngestAddr + "/webhooks/" + sourceID
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, proxyURL, r.Body)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "proxy request failed")
+			return
+		}
+		for _, h := range []string{"X-Signature-256", "X-Hub-Signature-256", "Content-Type"} {
+			if v := r.Header.Get(h); v != "" {
+				proxyReq.Header.Set(h, v)
+			}
+		}
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			slog.Error("webhook proxy failed", "source_id", sourceID, "err", err)
+			writeJSONError(w, http.StatusBadGateway, "webhook service unavailable")
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// makeInternalGoalsProxy proxies POST /internal/goals to the goal-service for agent-to-agent goal posting.
+// Requires X-Source-Agent-ID header as service-to-service authentication.
+func makeInternalGoalsProxy(goalServiceBase string) http.HandlerFunc {
+	client := &http.Client{Timeout: 15 * time.Second}
+	return func(w http.ResponseWriter, r *http.Request) {
+		sourceAgentID := r.Header.Get("X-Source-Agent-ID")
+		if sourceAgentID == "" {
+			writeJSONError(w, http.StatusUnauthorized, "X-Source-Agent-ID header required")
+			return
+		}
+		proxyURL := goalServiceBase + "/internal/goals"
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, proxyURL, r.Body)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "proxy failed")
+			return
+		}
+		proxyReq.Header.Set(headerContentType, contentTypeJSON)
+		proxyReq.Header.Set("X-Source-Agent-ID", sourceAgentID)
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			slog.Error("internal goals proxy failed", "source_agent_id", sourceAgentID, "err", err)
+			writeJSONError(w, http.StatusBadGateway, "goal service unavailable")
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// makeApprovalDecideProxy proxies POST /approvals/{id}/decide to the access-control service.
+// Auth headers set by the protect middleware are forwarded downstream.
+func makeApprovalDecideProxy(accessControlBase string) http.HandlerFunc {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		proxyURL := accessControlBase + "/approvals/" + idStr + "/decide"
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, proxyURL, r.Body)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "proxy failed")
+			return
+		}
+		proxyReq.Header.Set(headerContentType, contentTypeJSON)
+		for _, h := range []string{"X-User-Id", "X-Email", "X-Is-Super-Admin", "Authorization"} {
+			if v := r.Header.Get(h); v != "" {
+				proxyReq.Header.Set(h, v)
+			}
+		}
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			slog.Error("approval decide proxy failed", "approval_id", idStr, "err", err)
+			writeJSONError(w, http.StatusBadGateway, "access-control unavailable")
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// handleChatInject inserts a message directly into the chat_messages table for programmatic injection.
+func handleChatInject(w http.ResponseWriter, r *http.Request, database *sql.DB) {
+	sessionID := r.PathValue("id")
+	if _, err := uuid.Parse(sessionID); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid session_id")
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+		Role    string `json:"role"`   // "system" or "assistant"
+		Source  string `json:"source"` // e.g., "cascade_engine"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Content == "" {
+		writeJSONError(w, http.StatusBadRequest, "content required")
+		return
+	}
+	if req.Role == "" {
+		req.Role = "system"
+	}
+	msgID := uuid.New()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	_, err := database.ExecContext(ctx,
+		`INSERT INTO chat_messages (id, session_id, role, content, created_at)
+		 VALUES ($1, $2, $3, $4, now())`,
+		msgID, sessionID, req.Role, req.Content)
+	if err != nil {
+		slog.Error("inject chat message failed", "session_id", sessionID, "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "inject failed")
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message_id": msgID.String(),
+		"status":     "injected",
 	})
 }

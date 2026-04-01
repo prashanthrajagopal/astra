@@ -16,12 +16,14 @@ import (
 type Scheduler struct {
 	store *tasks.Store
 	bus   *messaging.Bus
+	db    *sql.DB
 }
 
 func New(db *sql.DB, bus *messaging.Bus) *Scheduler {
 	return &Scheduler{
 		store: tasks.NewStore(db),
 		bus:   bus,
+		db:    db,
 	}
 }
 
@@ -76,6 +78,8 @@ func (s *Scheduler) tick(ctx context.Context) error {
 			slog.Error("auto-finalize goal failed", "goal_id", goalID, "err", err)
 		} else {
 			slog.Info("auto-finalized goal", "goal_id", goalID)
+			s.publishGoalCompleted(ctx, goalID)
+			s.checkGoalDependencies(ctx, goalID)
 		}
 	}
 
@@ -105,11 +109,75 @@ func taskStreamForShard(shard int) string {
 }
 
 func (s *Scheduler) dispatchToShard(ctx context.Context, taskID, agentID string, shardCount int) error {
+	// Get task priority for ordering.
+	priority := 100 // default
+	if task, err := s.store.GetTask(ctx, taskID); err == nil && task != nil {
+		priority = task.Priority
+	}
+
 	if err := s.store.Transition(ctx, taskID, tasks.StatusPending, tasks.StatusQueued, nil); err != nil {
 		return err
 	}
 	shard := shardForAgent(agentID, shardCount)
 	return s.bus.Publish(ctx, taskStreamForShard(shard), map[string]interface{}{
-		"task_id": taskID,
+		"task_id":  taskID,
+		"priority": priority,
 	})
+}
+
+// publishGoalCompleted fetches goal metadata and publishes a GoalCompleted event
+// to the "astra:goals:completed" Redis stream.
+func (s *Scheduler) publishGoalCompleted(ctx context.Context, goalID string) {
+	var cascadeID sql.NullString
+	var status string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(cascade_id::text, ''), status FROM goals WHERE id = $1`, goalID).Scan(&cascadeID, &status)
+	if err != nil {
+		slog.Warn("fetch goal for completion event failed", "goal_id", goalID, "err", err)
+		return
+	}
+	if err := s.bus.Publish(ctx, "astra:goals:completed", map[string]interface{}{
+		"goal_id":    goalID,
+		"cascade_id": cascadeID.String,
+		"status":     status,
+		"timestamp":  time.Now().Unix(),
+	}); err != nil {
+		slog.Warn("publish GoalCompleted failed", "goal_id", goalID, "err", err)
+	}
+}
+
+// checkGoalDependencies finds goals that depend on the completed goal and activates
+// any that now have all dependencies met.
+func (s *Scheduler) checkGoalDependencies(ctx context.Context, goalID string) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM goals WHERE $1 = ANY(depends_on_goal_ids) AND status = 'blocked'`, goalID)
+	if err != nil {
+		slog.Warn("check goal deps failed", "goal_id", goalID, "err", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var depGoalID string
+		if rows.Scan(&depGoalID) != nil {
+			continue
+		}
+		// Check if ALL dependencies of this goal are completed.
+		var unmetCount int
+		err := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM goals WHERE id = ANY(
+				(SELECT depends_on_goal_ids FROM goals WHERE id = $1)
+			) AND status != 'completed'`, depGoalID).Scan(&unmetCount)
+		if err != nil || unmetCount > 0 {
+			continue
+		}
+		// All deps met — activate the goal.
+		_, err = s.db.ExecContext(ctx,
+			`UPDATE goals SET status = 'pending' WHERE id = $1 AND status = 'blocked'`, depGoalID)
+		if err != nil {
+			slog.Warn("activate blocked goal failed", "goal_id", depGoalID, "err", err)
+		} else {
+			slog.Info("activated blocked goal (all deps met)", "goal_id", depGoalID)
+		}
+	}
 }

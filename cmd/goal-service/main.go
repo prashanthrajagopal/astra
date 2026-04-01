@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,7 +17,9 @@ import (
 	"astra/internal/agentdocs"
 	"astra/internal/events"
 	"astra/internal/goaladmission"
+	"astra/internal/goals"
 	"astra/internal/llm"
+	"astra/internal/messaging"
 	"astra/internal/planner"
 	"astra/internal/tasks"
 	"astra/pkg/config"
@@ -204,6 +207,44 @@ func assignApprovalToAdmin(ctx context.Context, database *sql.DB, approvalID, ag
 	// Single-platform: no agent_admins or org_memberships; approval stays unassigned or caller sets assigned_to.
 }
 
+// goalInitialStatus returns 'blocked' if any dependency goal is not yet completed,
+// otherwise returns 'pending'.
+func goalInitialStatus(ctx context.Context, database *sql.DB, depIDs []uuid.UUID) (string, error) {
+	if len(depIDs) == 0 {
+		return "pending", nil
+	}
+	// Build array literal for use with ANY($1::uuid[])
+	arrayLiteral := uuidSliceToArrayLiteral(depIDs)
+	var unmetCount int
+	err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM goals WHERE id = ANY($1::uuid[]) AND status != 'completed'`,
+		arrayLiteral).Scan(&unmetCount)
+	if err != nil {
+		return "", fmt.Errorf("goalInitialStatus: %w", err)
+	}
+	if unmetCount > 0 {
+		return "blocked", nil
+	}
+	return "pending", nil
+}
+
+// uuidSliceToArrayLiteral converts a []uuid.UUID to a PostgreSQL array literal string.
+func uuidSliceToArrayLiteral(ids []uuid.UUID) string {
+	if len(ids) == 0 {
+		return "{}"
+	}
+	out := make([]byte, 0, 2+len(ids)*37)
+	out = append(out, '{')
+	for i, id := range ids {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, id.String()...)
+	}
+	out = append(out, '}')
+	return string(out)
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -221,6 +262,11 @@ func main() {
 
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
+
+	bus := messaging.New(cfg.RedisAddr)
+	defer bus.Close()
+
+	depEngine := goals.NewStore(database, bus)
 
 	docStore := agentdocs.NewStore(database, rdb)
 	taskStore := tasks.NewStore(database)
@@ -249,6 +295,122 @@ func main() {
 		handleApplyPlan(w, r, database, taskStore)
 	})
 
+	// POST /internal/goals — agent-to-agent goal creation (service-to-service, no user JWT).
+	mux.HandleFunc("POST /internal/goals", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentID          string   `json:"agent_id"`
+			GoalText         string   `json:"goal_text"`
+			Priority         int      `json:"priority"`
+			SourceAgentID    string   `json:"source_agent_id"`
+			CascadeID        string   `json:"cascade_id,omitempty"`
+			DependsOnGoalIDs []string `json:"depends_on_goal_ids,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+			return
+		}
+		agentID, err := uuid.Parse(req.AgentID)
+		if err != nil {
+			http.Error(w, `{"error":"invalid agent_id"}`, http.StatusBadRequest)
+			return
+		}
+		if req.GoalText == "" {
+			http.Error(w, `{"error":"goal_text required"}`, http.StatusBadRequest)
+			return
+		}
+		sourceAgentID, err := uuid.Parse(req.SourceAgentID)
+		if err != nil {
+			http.Error(w, `{"error":"invalid source_agent_id"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Rate limiting: 100 goals/minute per source agent.
+		ctx := r.Context()
+		rateKey := fmt.Sprintf("agent:goals:rate:%s", sourceAgentID.String())
+		count, err := rdb.Incr(ctx, rateKey).Result()
+		if err != nil {
+			slog.Error("rate limit check failed", "source_agent_id", sourceAgentID, "err", err)
+			http.Error(w, `{"error":"rate limit check failed"}`, http.StatusInternalServerError)
+			return
+		}
+		if count == 1 {
+			rdb.Expire(ctx, rateKey, time.Minute)
+		}
+		if count > 100 {
+			http.Error(w, `{"error":"rate_limit_exceeded","message":"100 goals/minute limit reached"}`, http.StatusTooManyRequests)
+			return
+		}
+
+		priority := req.Priority
+		if priority <= 0 {
+			priority = 100
+		}
+
+		var cascadeVal sql.NullString
+		if req.CascadeID != "" {
+			parsed, err := uuid.Parse(req.CascadeID)
+			if err != nil {
+				http.Error(w, `{"error":"invalid cascade_id"}`, http.StatusBadRequest)
+				return
+			}
+			cascadeVal = sql.NullString{String: parsed.String(), Valid: true}
+		}
+
+		depIDs := make([]uuid.UUID, 0, len(req.DependsOnGoalIDs))
+		for _, s := range req.DependsOnGoalIDs {
+			parsed, err := uuid.Parse(s)
+			if err != nil {
+				http.Error(w, `{"error":"invalid depends_on_goal_ids entry"}`, http.StatusBadRequest)
+				return
+			}
+			depIDs = append(depIDs, parsed)
+		}
+
+		// Verify all referenced goals exist.
+		if len(depIDs) > 0 {
+			arrayLit := uuidSliceToArrayLiteral(depIDs)
+			var foundCount int
+			if err := database.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM goals WHERE id = ANY($1::uuid[])`, arrayLit).Scan(&foundCount); err != nil {
+				slog.Error("check dep goals existence failed", "err", err)
+				http.Error(w, `{"error":"dependency check failed"}`, http.StatusInternalServerError)
+				return
+			}
+			if foundCount != len(depIDs) {
+				http.Error(w, `{"error":"one or more depends_on_goal_ids not found"}`, http.StatusBadRequest)
+				return
+			}
+		}
+
+		initialStatus, err := goalInitialStatus(ctx, database, depIDs)
+		if err != nil {
+			slog.Error("determine initial goal status failed", "err", err)
+			http.Error(w, `{"error":"status check failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		goalID := uuid.New()
+		depArrayLit := uuidSliceToArrayLiteral(depIDs)
+
+		_, err = database.ExecContext(ctx,
+			`INSERT INTO goals (id, agent_id, goal_text, priority, status, cascade_id, depends_on_goal_ids, source_agent_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8)`,
+			goalID, agentID, req.GoalText, priority, initialStatus,
+			cascadeVal, depArrayLit, sourceAgentID)
+		if err != nil {
+			slog.Error("insert internal goal failed", "err", err)
+			http.Error(w, `{"error":"insert goal failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"goal_id":  goalID.String(),
+			"status":   initialStatus,
+		})
+	})
+
 	mux.HandleFunc("POST /goals", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 		if idempotencyKey != "" {
@@ -261,13 +423,16 @@ func main() {
 		}
 
 		var req struct {
-			AgentID     string `json:"agent_id"`
-			GoalText    string `json:"goal_text"`
-			Priority    int    `json:"priority"`
-			Workspace   string `json:"workspace"`
-			AutoApprove bool   `json:"auto_approve"`
-			UserID      string `json:"user_id"`
-			Documents   []struct {
+			AgentID          string   `json:"agent_id"`
+			GoalText         string   `json:"goal_text"`
+			Priority         int      `json:"priority"`
+			Workspace        string   `json:"workspace"`
+			AutoApprove      bool     `json:"auto_approve"`
+			UserID           string   `json:"user_id"`
+			CascadeID        string   `json:"cascade_id,omitempty"`
+			DependsOnGoalIDs []string `json:"depends_on_goal_ids,omitempty"`
+			SourceAgentID    string   `json:"source_agent_id,omitempty"`
+			Documents        []struct {
 				DocType  string          `json:"doc_type"`
 				Name     string          `json:"name"`
 				Content  *string         `json:"content,omitempty"`
@@ -318,13 +483,69 @@ func main() {
 			userVal = sql.NullString{String: parsed.String(), Valid: true}
 		}
 
+		var cascadeVal sql.NullString
+		if req.CascadeID != "" {
+			parsed, err := uuid.Parse(req.CascadeID)
+			if err != nil {
+				http.Error(w, `{"error":"invalid cascade_id"}`, http.StatusBadRequest)
+				return
+			}
+			cascadeVal = sql.NullString{String: parsed.String(), Valid: true}
+		}
+
+		var sourceAgentVal sql.NullString
+		if req.SourceAgentID != "" {
+			parsed, err := uuid.Parse(req.SourceAgentID)
+			if err != nil {
+				http.Error(w, `{"error":"invalid source_agent_id"}`, http.StatusBadRequest)
+				return
+			}
+			sourceAgentVal = sql.NullString{String: parsed.String(), Valid: true}
+		}
+
+		depIDs := make([]uuid.UUID, 0, len(req.DependsOnGoalIDs))
+		for _, s := range req.DependsOnGoalIDs {
+			parsed, err := uuid.Parse(s)
+			if err != nil {
+				http.Error(w, `{"error":"invalid depends_on_goal_ids entry"}`, http.StatusBadRequest)
+				return
+			}
+			depIDs = append(depIDs, parsed)
+		}
+
 		ctx := r.Context()
+
+		// Verify all referenced goals exist.
+		if len(depIDs) > 0 {
+			arrayLit := uuidSliceToArrayLiteral(depIDs)
+			var foundCount int
+			if err := database.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM goals WHERE id = ANY($1::uuid[])`, arrayLit).Scan(&foundCount); err != nil {
+				slog.Error("check dep goals existence failed", "err", err)
+				http.Error(w, `{"error":"dependency check failed"}`, http.StatusInternalServerError)
+				return
+			}
+			if foundCount != len(depIDs) {
+				http.Error(w, `{"error":"one or more depends_on_goal_ids not found"}`, http.StatusBadRequest)
+				return
+			}
+		}
+
+		initialStatus, err := goalInitialStatus(ctx, database, depIDs)
+		if err != nil {
+			slog.Error("determine initial goal status failed", "err", err)
+			http.Error(w, `{"error":"status check failed"}`, http.StatusInternalServerError)
+			return
+		}
+
 		goalID := uuid.New()
+		depArrayLit := uuidSliceToArrayLiteral(depIDs)
 
 		_, err = database.ExecContext(ctx,
-			`INSERT INTO goals (id, agent_id, goal_text, priority, status)
-			 VALUES ($1, $2, $3, $4, 'pending')`,
-			goalID, agentID, req.GoalText, priority)
+			`INSERT INTO goals (id, agent_id, goal_text, priority, status, cascade_id, depends_on_goal_ids, source_agent_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8)`,
+			goalID, agentID, req.GoalText, priority, initialStatus,
+			cascadeVal, depArrayLit, sourceAgentVal)
 		if err != nil {
 			slog.Error("insert goal failed", "err", err)
 			http.Error(w, `{"error":"insert goal failed"}`, http.StatusInternalServerError)
@@ -354,6 +575,21 @@ func main() {
 				Priority: pri,
 			}
 			_ = docStore.CreateDocument(ctx, doc)
+		}
+
+		// If the goal is blocked, skip planning — the planner runs when the goal is activated.
+		if initialStatus == "blocked" {
+			resp := map[string]interface{}{
+				"goal_id": goalID.String(),
+				"status":  initialStatus,
+			}
+			if idempotencyKey != "" {
+				setCachedGoalResponse(r.Context(), rdb, idempotencyKey, http.StatusCreated, resp)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(resp)
+			return
 		}
 
 		phaseRunID := uuid.New()
@@ -461,21 +697,66 @@ func main() {
 			return
 		}
 		var goal struct {
-			ID        string `json:"id"`
-			AgentID   string `json:"agent_id"`
-			GoalText  string `json:"goal_text"`
-			Priority  int    `json:"priority"`
-			Status    string `json:"status"`
-			CreatedAt string `json:"created_at"`
+			ID               string  `json:"id"`
+			AgentID          string  `json:"agent_id"`
+			GoalText         string  `json:"goal_text"`
+			Priority         int     `json:"priority"`
+			Status           string  `json:"status"`
+			CreatedAt        string  `json:"created_at"`
+			CascadeID        *string `json:"cascade_id,omitempty"`
+			SourceAgentID    *string `json:"source_agent_id,omitempty"`
+			CompletedAt      *string `json:"completed_at,omitempty"`
+			DependsOnGoalIDs []string `json:"depends_on_goal_ids,omitempty"`
 		}
+		var cascadeID sql.NullString
+		var sourceAgentID sql.NullString
+		var completedAt sql.NullString
+		var depArrayLit sql.NullString
+
 		err = database.QueryRowContext(r.Context(),
-			`SELECT id, agent_id, goal_text, priority, status, created_at::text FROM goals WHERE id = $1`,
-			id).Scan(&goal.ID, &goal.AgentID, &goal.GoalText, &goal.Priority, &goal.Status, &goal.CreatedAt)
+			`SELECT id, agent_id, goal_text, priority, status, created_at::text,
+			        COALESCE(cascade_id::text, ''), COALESCE(source_agent_id::text, ''),
+			        COALESCE(completed_at::text, ''), COALESCE(depends_on_goal_ids::text, '')
+			 FROM goals WHERE id = $1`,
+			id).Scan(&goal.ID, &goal.AgentID, &goal.GoalText, &goal.Priority, &goal.Status, &goal.CreatedAt,
+			&cascadeID.String, &sourceAgentID.String, &completedAt.String, &depArrayLit.String)
 		if err != nil {
 			slog.Error("get goal failed", "id", idStr, "err", err)
 			http.Error(w, `{"error":"goal not found"}`, http.StatusNotFound)
 			return
 		}
+
+		if cascadeID.String != "" {
+			s := cascadeID.String
+			goal.CascadeID = &s
+		}
+		if sourceAgentID.String != "" {
+			s := sourceAgentID.String
+			goal.SourceAgentID = &s
+		}
+		if completedAt.String != "" {
+			s := completedAt.String
+			goal.CompletedAt = &s
+		}
+		if depArrayLit.String != "" && depArrayLit.String != "{}" {
+			// Parse the PostgreSQL array literal "{uuid1,uuid2,...}"
+			lit := depArrayLit.String
+			if len(lit) >= 2 && lit[0] == '{' && lit[len(lit)-1] == '}' {
+				inner := lit[1 : len(lit)-1]
+				if inner != "" {
+					var parsed []string
+					start := 0
+					for i := 0; i <= len(inner); i++ {
+						if i == len(inner) || inner[i] == ',' {
+							parsed = append(parsed, inner[start:i])
+							start = i + 1
+						}
+					}
+					goal.DependsOnGoalIDs = parsed
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(goal)
 	})
@@ -555,14 +836,14 @@ func main() {
 			return
 		}
 		defer rows.Close()
-		var goals []map[string]interface{}
+		var goalsList []map[string]interface{}
 		for rows.Next() {
 			var id, aID, text, status, createdAt string
 			var priority int
 			if err := rows.Scan(&id, &aID, &text, &priority, &status, &createdAt); err != nil {
 				continue
 			}
-			goals = append(goals, map[string]interface{}{
+			goalsList = append(goalsList, map[string]interface{}{
 				"id":         id,
 				"agent_id":   aID,
 				"goal_text":  text,
@@ -572,7 +853,7 @@ func main() {
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"goals": goals})
+		json.NewEncoder(w).Encode(map[string]interface{}{"goals": goalsList})
 	})
 
 	mux.HandleFunc("POST /goals/{id}/finalize", func(w http.ResponseWriter, r *http.Request) {
@@ -651,6 +932,20 @@ func main() {
 		_, err = eventStore.Append(ctx, eventType, phaseRunID.String(), payload)
 		if err != nil {
 			slog.Warn("append event failed", "err", err)
+		}
+
+		// Fetch cascade_id for GoalCompleted event.
+		var cascadeIDStr string
+		_ = database.QueryRowContext(ctx,
+			`SELECT COALESCE(cascade_id::text, '') FROM goals WHERE id = $1`, goalID).Scan(&cascadeIDStr)
+
+		// Publish GoalCompleted event to Redis stream.
+		var cascadeUUID uuid.UUID
+		if cascadeIDStr != "" {
+			cascadeUUID, _ = uuid.Parse(cascadeIDStr)
+		}
+		if err := depEngine.PublishGoalCompleted(ctx, goalID, cascadeUUID, phaseStatus, summary); err != nil {
+			slog.Warn("publish GoalCompleted failed", "goal_id", goalID, "err", err)
 		}
 
 		resp := map[string]interface{}{

@@ -1,27 +1,36 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type Agent struct {
-	ID        uuid.UUID
-	Name      string
-	Status    string
-	Config    []byte
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           uuid.UUID
+	Name         string
+	Status       string
+	Config       []byte
+	TrustScore   float64
+	Tags         []string
+	Metadata     json.RawMessage
+	SystemPrompt string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type Goal struct {
-	ID        uuid.UUID
-	AgentID   uuid.UUID
-	GoalText  string
-	Priority  int
-	Status    string
-	CreatedAt time.Time
+	ID               uuid.UUID
+	AgentID          uuid.UUID
+	GoalText         string
+	Priority         int
+	Status           string
+	CascadeID        *uuid.UUID
+	DependsOnGoalIDs []uuid.UUID
+	CompletedAt      *time.Time
+	SourceAgentID    *uuid.UUID
+	CreatedAt        time.Time
 }
 
 type Event struct {

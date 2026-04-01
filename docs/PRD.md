@@ -2361,17 +2361,17 @@ Specs and runbooks: **docs/agent-restore-contract.md**, **docs/messaging-consume
 
 **Dependencies:** Phase 10 (Chat), Phase 11 (Multi-tenancy). Requires internal or org-scoped chat append-message API callable by adapter/worker.
 
-| Order | Deliverable |
-|-------|-------------|
-| 1 | DB migration: `slack_workspaces`, `slack_channel_bindings`, `slack_user_mappings` (optional: `slack_sessions`). |
-| 2 | Internal/org-scoped chat append-message path callable with service or org-scoped auth (if not already). |
-| 3 | **slack-adapter** service: Slack Request URL handler; verify signing secret; resolve org/agent/user; enqueue to Redis stream `astra:slack:incoming`; respond 200 within 3s. |
-| 4 | Slack worker: consume stream; load bot token from Vault; create/resume session; call chat API; post reply to Slack; retries and rate limits. |
-| 5 | **Platform Slack secrets UI:** Super-admin dashboard form to enter and save Slack app Signing Secret, Client ID, Client Secret, OAuth Redirect URL (stored encrypted in DB; env fallback). |
-| 6 | OAuth flow: org dashboard "Connect Slack" → Slack OAuth (using platform config) → store workspace + bot token in Vault; insert/update `slack_workspaces`. |
-| 7 | Org settings: default agent for Slack; per-channel agent binding; Slack user → Astra user mapping. |
-| 8 | Optional: slash command (e.g. `/astra-goal`) → goal submit via goal-service. |
-| 9 | Internal API: **POST /internal/slack/post** for proactive Slack messages; optional **notification_channel_id** per workspace. |
+| Order | Deliverable | Status |
+|-------|-------------|--------|
+| 1 | DB migration: `slack_workspaces`, `slack_channel_bindings`, `slack_user_mappings` (optional: `slack_sessions`). | ✅ Done (migrations 0019–0022) |
+| 2 | Internal/org-scoped chat append-message path callable with service or org-scoped auth (if not already). | ✅ Done (POST /chat/sessions/{id}/inject) |
+| 3 | **slack-adapter** service: Slack Request URL handler; verify signing secret; resolve org/agent/user; enqueue to Redis stream `astra:slack:incoming`; respond 200 within 3s. | ✅ Done (cmd/slack-adapter) |
+| 4 | Slack worker: consume stream; load bot token from Vault; create/resume session; call chat API; post reply to Slack; retries and rate limits. | ✅ Done (slack-adapter consumer) |
+| 5 | **Platform Slack secrets UI:** Super-admin dashboard form to enter and save Slack app Signing Secret, Client ID, Client Secret, OAuth Redirect URL (stored encrypted in DB; env fallback). | ✅ Done (dashboard Slack tab) |
+| 6 | OAuth flow: org dashboard "Connect Slack" → Slack OAuth (using platform config) → store workspace + bot token in Vault; insert/update `slack_workspaces`. | ❌ PENDING — no /slack/install or /slack/oauth/callback routes |
+| 7 | Org settings: default agent for Slack; per-channel agent binding; Slack user → Astra user mapping. | ❌ PENDING — requires multi-tenancy (Phase 11) |
+| 8 | Optional: slash command (e.g. `/astra-goal`) → goal submit via goal-service. | ❌ PENDING — no slash command handler |
+| 9 | Internal API: **POST /internal/slack/post** for proactive Slack messages; optional **notification_channel_id** per workspace. | ✅ Done (api-gateway /internal/slack/post) |
 
 **Acceptance:** Org admin connects a Slack workspace to an org; users in that workspace can message the bot in DMs or channels and receive agent replies. Replies are posted asynchronously; adapter responds to Slack within 3s. Design: **docs/slack-integration-design.md**.
 
@@ -2447,3 +2447,194 @@ Layer 4 (entrypoints — depend on Layer 3):
 ---
 
 *End of specification. This document is the single source of truth for building Astra.*
+
+---
+
+## Olympus Gap Analysis (LA28 Olympic Agent System)
+
+### Overview
+
+Astra was designed as a general-purpose autonomous agent operating system. Olympus is the first large-scale application built on Astra, purpose-built for the LA28 Olympics. This section identifies every gap between what Astra provides and what Olympus requires.
+
+The microkernel design, actor framework, task graph engine, scheduler, approval system, and message bus all map directly to Olympus needs. None of the modifications require changing the Astra kernel. All changes are at the service layer or SDK layer.
+
+### Ready — Use As-Is (12 capabilities)
+
+Agent lifecycle, task graph execution, scheduler (shard-aware), message bus (Redis Streams), approval system, LLM router + cost controls, memory (pgvector), tool runtime (Docker/WASM), event sourcing + audit, JWT auth + RBAC, dead letter + consumer retry, observability (Prometheus, OTel, Grafana).
+
+### Completed Modifications (April 2026)
+
+| Feature | Implementation |
+|---------|---------------|
+| Agent Profile & Context (Phase 9) | Migration 0013, internal/agentdocs, API endpoints, context assembly |
+| Goal-Level Dependencies | Migration 0026 (cascade_id, depends_on_goal_ids, completed_at, source_agent_id), internal/goals/deps.go |
+| External Agent Adapter Framework | internal/adapters (interface, registry, base), cmd/dtec-adapter |
+| Webhook Ingest Service | cmd/webhook-ingest, HMAC validation, olympus:triggers:raw stream |
+| Agent-to-Agent Goal Posting | pkg/sdk PostGoal, POST /internal/goals, rate limiting |
+| Dual-Approval (Two-Person Rule) | Migration 0028, POST /approvals/{id}/decide |
+| Trust Score Infrastructure | Migration 0027 (trust_score, tags, metadata), policy gating |
+| Tool Definitions Registry | internal/toolregistry/store.go (full CRUD) |
+| Agent Tags & Metadata | GET /agents?tag= filter, PATCH support |
+| Goal Completion Events | astra:goals:completed stream from scheduler + goal-service |
+| Chat Message Injection | POST /chat/sessions/{id}/inject |
+| Approval REST API | POST /approvals/{id}/decide with dual-approval |
+| Goal Priority in Scheduler | Priority field in task shard stream |
+
+### Remaining Pending (Deferred Past June 1 PoC)
+
+| Feature | What Remains |
+|---------|-------------|
+| Multi-Tenancy (Phase 11) | Full org/team/user tables, RBAC engine, org-scoped isolation |
+| Slack OAuth Install Flow | GET /slack/install, GET /slack/oauth/callback routes |
+| Slack Slash Commands | POST /slack/commands handler for /astra-goal |
+| AgentForce Adapter | cmd/agentforce-adapter (framework exists, adapter not built) |
+| Workday Adapter | cmd/workday-adapter (framework exists, adapter not built) |
+| Ops Dashboard (Situation Map) | Live cascade tracking UI |
+| Trust Score Dynamic Adaptation | Scoring engine with signals, weights, outcome-based adaptation |
+| Strict Priority Ordering | Workers consume FIFO; need sorted-set layer for strict ordering |
+
+### Olympus-Only Components (Not in Astra)
+
+Capability Catalog, Trigger Classification/Taxonomy, Cascade Engine, Trust Score Computation Logic, Triage Agent Logic, Venue/Sport Reference Data, Command Center UI, Governance Dashboard UI, OPP-to-Capability Converter, External Feed Connectors.
+
+### Critical Path for June 1
+
+Phase 9 → Goal Dependencies → Agent-to-Agent Goals → Adapter Framework → Slack. **All critical path items are complete.**
+
+### Database Migrations for Olympus
+
+| Migration | Status | Changes |
+|-----------|--------|---------|
+| 0013_agent_profile_and_documents.sql | Done | system_prompt on agents; agent_documents table |
+| 0026_goal_dependencies.sql | Done | cascade_id, depends_on_goal_ids, completed_at, source_agent_id on goals |
+| 0027_agent_trust_and_tags.sql | Done | trust_score, tags, metadata on agents |
+| 0028_dual_approval.sql | Done | required_approvals, approvals JSONB on approval_requests |
+
+### New API Endpoints for Olympus
+
+| Endpoint | Status |
+|----------|--------|
+| POST /goals (cascade_id, depends_on_goal_ids, source_agent_id, documents[]) | Done |
+| GET /goals/{id} (includes cascade fields) | Done |
+| PATCH /agents/{id} (system_prompt, tags, metadata) | Done |
+| GET /agents?tag= | Done |
+| POST /agents/{id}/documents | Done |
+| GET /agents/{id}/documents | Done |
+| GET /agents/{id}/profile | Done |
+| POST /approvals/{id}/decide | Done |
+| POST /internal/goals | Done |
+| POST /webhooks/{source_id} | Done |
+| POST /chat/sessions/{id}/inject | Done |
+
+### New Redis Streams
+
+| Stream | Purpose | Status |
+|--------|---------|--------|
+| astra:goals:completed | GoalCompleted events for cascade tracking | Done |
+| olympus:triggers:raw | Normalized triggers from webhook ingest | Done |
+
+---
+
+## Appendix A: Phase History
+
+### Phase 0 — Prep (Completed)
+Repo layout, proto codegen (buf), CI pipeline (vet/lint/test/build), deploy script (native-first), phase/usage/audit design and schema (migration 0009).
+
+### Phase 1 — Kernel MVP (Completed)
+Actors (BaseActor, mailbox, supervision), kernel (Spawn/Send/Stop), events store, Redis Streams messaging, task model + state machine, scheduler (shard dispatch, 100ms tick), agent actor, planner stub, gRPC services (kernel, task), REST gateway.
+
+### Phase 2 — Workers & Tool Runtime (Completed)
+Worker registry (DB-backed heartbeat), execution-worker (stream consumer), Docker sandbox (resource limits, network isolation), tool-runtime service, browser-worker stub, orphaned task re-queue.
+
+### Phase 3 — Memory & LLM Routing (Completed)
+Memory service (pgvector 1536-dim), embedding pipeline, LLM router with response caching, prompt-manager, cache-aside for tasks, token/cost metrics.
+
+### Phase 4 — Orchestration, Eval, Security (Completed)
+LLM-aware planner (DAG generation), goal-service (lifecycle endpoints), evaluation-service, identity service (JWT HS256), access-control (OPA policy), approval gates, async usage persistence.
+
+### Phase 5 — Scale & Production Hardening (Completed)
+K6 load tests, Grafana dashboards (cluster, agent health, cost), Prometheus alerts (5 rules), runbooks (7), cost-tracker service, Helm chart (HPA/PDB).
+
+### Phase 6 — SDK & Applications (Completed)
+AgentContext, MemoryClient, ToolClient, SimpleAgent example, SDK docs. pkg/sdk/ with context, client, memory, tool, goal modules.
+
+### Phase 7 — Security Compliance (Completed)
+gRPC/HTTP TLS support, Vault integration (KV-v2), config-driven TLS/mTLS, TLS rotation and Vault setup runbooks.
+
+### Phase 8 — Platform Dashboard (Completed)
+Built-in dashboard embedded in api-gateway binary, snapshot aggregation endpoint, services/workers/approvals/cost/logs/PIDs sections, auto-refresh, Apple glassmorphism theme with light/dark modes.
+
+### Phase 9 — Agent Profile & Context (Completed)
+Migration 0013, system_prompt column on agents, agent_documents table (rules, skills, context_docs, references), Redis cache-aside (5min TTL), context assembly into task payloads, CRUD API endpoints.
+
+### Phase 10 — Chat Agents (Completed)
+WebSocket streaming on api-gateway, session model, message protocol (chunk, message_start, message_end, tool_call, tool_result, done), REST session management, chat-capable flag on agents, chat widget in dashboard.
+
+---
+
+## Appendix B: Design Specifications (Consolidated)
+
+### Approval System Extensions
+Two approval types: `plan` (pre-graph) and `risky_task` (pre-execution). Plan approval stores plan_payload as JSONB; POST /internal/apply-plan creates graph on approval. Auto-approve via env or dashboard toggle. Extended with dual-approval: required_approvals count, individual approver tracking in approvals JSONB array.
+
+### Chat Agents Architecture
+WebSocket endpoint on api-gateway (v1). Session model with create/list/get/messages REST endpoints. Streaming response protocol. Reuses llm-router, tool-runtime, memory-service. Chat-capable flag on agents. External message injection via POST /chat/sessions/{id}/inject.
+
+### Slack Integration
+Events API + Bot user. slack-adapter service (HTTP handler + Redis stream consumer). astra:slack:incoming stream for async processing. Platform Slack secrets configurable from dashboard. POST /internal/slack/post for proactive messages. Pending: OAuth install flow, slash commands.
+
+### Circuit Breaker (API Gateway)
+Gateway downstream calls protected by circuit breaker. 5 failures in 30s opens circuit. 10s half-open cooldown. Returns 503 when open. Configurable via env.
+
+### Messaging Consumer Retry
+Max 3 retries per message. Per-message retry count in Redis hash (1h TTL). Dead letter stream (astra:dead_letter) for exhausted retries. XAutoClaim with 30s MinIdle.
+
+### Agent Restore Contract
+On agent-service startup, agents with status='active' loaded from DB and spawned into kernel via agent.NewFromExisting(). Runs before gRPC server accepts traffic.
+
+### Shard Ownership
+Task streams sharded by agent_id (FNV-1a hash % TASK_SHARD_COUNT). Default count 1. Streams: astra:tasks:shard:{0..N-1}. All components use same count. Workers consume all shards.
+
+### External Agent Adapter Framework
+Adapter interface: DispatchGoal, PollStatus, HandleCallback, ListCapabilities, HealthCheck. Thread-safe registry. BaseAdapter with HTTP client and retry logic. D.TEC adapter implemented. Execution worker delegates to adapters when task payload has provider_type != "astra_agent".
+
+### Webhook Ingest
+POST /webhooks/{source_id} with HMAC-SHA256 validation. webhook_sources table for per-source config. Publishes normalized events to olympus:triggers:raw Redis stream. 1MB body limit.
+
+### Goal-Level Dependencies
+Goals can depend on other goals via depends_on_goal_ids UUID[]. Dependency engine (internal/goals/deps.go) activates blocked goals when all dependencies complete. GoalCompleted events published to astra:goals:completed stream.
+
+---
+
+## Appendix C: Deployment & Operations
+
+### Local Deployment
+Single script: `scripts/deploy.sh`. Native-first infrastructure (Postgres, Redis, Memcached on host). Docker fallback for missing services. Supports MLX-LM (macOS Metal), Ollama, OpenAI/Anthropic/Gemini APIs. All services built to bin/ and run natively.
+
+### GCP Deployment
+`scripts/gcp-deploy.sh`. GKE Autopilot, Cloud SQL (Postgres), Memorystore (Redis), GCS for artifacts. Helm chart with HPA and PDB. No MinIO on GCP.
+
+### Mac Mini Deployment
+Same deploy script. Native hardware with Metal acceleration via Ollama. Services run natively in bin/.
+
+### Observability Stack
+Prometheus metrics (astra_* prefix): task latency, success/failure, queue depth, LLM usage/cost, worker heartbeat, events processed. Grafana dashboards (cluster, agent health, cost). OpenTelemetry tracing. Structured logging (slog JSON). Correlation IDs in logs.
+
+### Runbooks
+| Runbook | Trigger | Key Actions |
+|---------|---------|-------------|
+| worker-lost | AstraWorkerAvailabilityLow | Check worker-manager health, mark stale offline, re-queue tasks |
+| high-error-rate | AstraHighTaskFailureRate | Inspect logs, check recent deploy, rollback if needed |
+| db-redis | Startup failures / elevated latency | Check reachability, credentials, migration drift |
+| llm-cost-spike | AstraLLMCostSpike | Identify model/agent/tier, check cache regression, lower-cost routing |
+| shard-scaling | Manual | Update TASK_SHARD_COUNT env, restart scheduler + workers |
+| tls-rotation | Certificate expiration | Generate new certs, update K8s secrets, roll services in order |
+| vault-setup | Initial setup | Configure ASTRA_VAULT_ADDR/TOKEN/PATH, load secrets to KV-v2 |
+
+---
+
+## Appendix D: Codegen & Proto
+
+Protobuf generation uses buf with remote plugins. Generated `.pb.go` files committed so CI doesn't require buf. Files: buf.yaml, buf.gen.yaml, proto/kernel/kernel.proto, proto/tasks/task.proto, proto/memory/memory.proto, proto/llm/llm.proto.
+
+Commands: `buf lint && buf generate` after any .proto change.

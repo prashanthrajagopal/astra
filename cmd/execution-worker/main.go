@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -197,6 +200,15 @@ func processTask(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.Wo
 }
 
 func executeTask(ctx context.Context, task *tasks.Task, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient) ([]byte, error) {
+	// Check if task should be delegated to an external adapter.
+	var payload map[string]interface{}
+	if task.Payload != nil {
+		_ = json.Unmarshal(task.Payload, &payload)
+	}
+	if providerType, ok := payload["provider_type"].(string); ok && providerType != "" && providerType != "astra_agent" {
+		return executeViaAdapter(ctx, task, providerType, payload)
+	}
+
 	switch task.Type {
 	case "code_generate":
 		return executeCodeGen(ctx, task, wsRuntime, llmClient)
@@ -204,6 +216,104 @@ func executeTask(ctx context.Context, task *tasks.Task, wsRuntime *tools.Workspa
 		return executeShellExec(ctx, task, wsRuntime)
 	default:
 		return executeLegacy(ctx, task, legacyRuntime)
+	}
+}
+
+// executeViaAdapter dispatches a task to an external provider adapter via HTTP.
+// The adapter address is resolved from the environment as <PROVIDER_TYPE>_ADAPTER_ADDR.
+func executeViaAdapter(ctx context.Context, task *tasks.Task, providerType string, payload map[string]interface{}) ([]byte, error) {
+	adapterAddr := strings.TrimSuffix(os.Getenv(strings.ToUpper(providerType)+"_ADAPTER_ADDR"), "/")
+	if adapterAddr == "" {
+		return nil, fmt.Errorf("no adapter configured for provider_type: %s", providerType)
+	}
+
+	goalText, _ := payload["goal_text"].(string)
+	goalContext := map[string]interface{}{
+		"goal_id":   task.GoalID.String(),
+		"goal_text": goalText,
+		"agent_id":  task.AgentID.String(),
+		"priority":  task.Priority,
+		"payload":   payload,
+	}
+
+	body, _ := json.Marshal(goalContext)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, adapterAddr+"/dispatch", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create adapter request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("adapter dispatch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("adapter returned error: %s (status %d)", string(respBody), resp.StatusCode)
+	}
+
+	var result struct {
+		JobID  string          `json:"job_id"`
+		Status string          `json:"status"`
+		Output json.RawMessage `json:"output"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode adapter response: %w", err)
+	}
+
+	switch result.Status {
+	case "pending", "running":
+		return pollAdapterStatus(ctx, adapterAddr, result.JobID, client)
+	case "failed":
+		return nil, fmt.Errorf("adapter job failed")
+	}
+
+	out, _ := json.Marshal(result.Output)
+	return out, nil
+}
+
+// pollAdapterStatus polls the adapter's /status/{job_id} endpoint until the job completes or times out.
+func pollAdapterStatus(ctx context.Context, adapterAddr, jobID string, client *http.Client) ([]byte, error) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	timeout := time.After(5 * time.Minute)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout:
+			return nil, fmt.Errorf("adapter job timed out: %s", jobID)
+		case <-ticker.C:
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, adapterAddr+"/status/"+jobID, nil)
+			if err != nil {
+				return nil, fmt.Errorf("create adapter status request: %w", err)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				slog.Warn("adapter status poll failed, retrying", "job_id", jobID, "err", err)
+				continue
+			}
+			var statusResp struct {
+				Status string          `json:"status"`
+				Output json.RawMessage `json:"output"`
+				Error  string          `json:"error"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&statusResp)
+			resp.Body.Close()
+
+			switch statusResp.Status {
+			case "completed":
+				out, _ := json.Marshal(statusResp.Output)
+				return out, nil
+			case "failed":
+				return nil, fmt.Errorf("adapter job failed: %s", statusResp.Error)
+			}
+			// pending/running: continue polling
+		}
 	}
 }
 
