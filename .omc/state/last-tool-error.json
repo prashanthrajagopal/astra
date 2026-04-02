@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"gh auth switch --user prashanthrajagopal 2>&1\",\"description\":\"Switch to the keyring-based account\"}",
-  "error": "Exit code 1\nThe value of the GITHUB_TOKEN environment variable is being used for authentication.\nTo have GitHub CLI manage credentials instead, first clear the value from the environment.",
-  "timestamp": "2026-04-02T20:48:39.359Z",
-  "retry_count": 3
+  "tool_input_preview": "{\"command\":\"helm template astra deployments/helm/astra >/dev/null 2>&1 && echo \\\"OK\\\" || helm template astra deployments/helm/astra 2>&1\",\"description\":\"Verify helm template renders\"}",
+  "error": "Exit code 1\nError: template: astra/templates/deployment.yaml:70:24: executing \"astra/templates/deployment.yaml\" at <dig \"workspace\" \"root\" \"/workspace\" .Values>: error calling dig: interface conversion: interface {} is common.Values, not map[string]interface {}\n\nUse --debug flag to render out invalid YAML",
+  "timestamp": "2026-04-02T21:00:20.159Z",
+  "retry_count": 1
 }

@@ -67,9 +67,9 @@ spec:
             - name: LLM_GRPC_ADDR
               value: {{ .Values.service.llmGrpcAddr | default "astra-llm-router:9093" | quote }}
             - name: WORKSPACE_ROOT
-              value: {{ .Values.workspace.root | default "/workspace" | quote }}
+              value: {{ .Values.workspace.root | quote }}
             - name: ASTRA_JWT_SECRET
-              value: {{ .Values.jwt.secret | default "astra-dev-secret" | quote }}
+              value: {{ .Values.jwt.secret | quote }}
             - name: AUTO_APPROVE_PLANS
               value: {{ .Values.autoApprovePlans | default "true" | quote }}
             {{- if .Values.llm }}

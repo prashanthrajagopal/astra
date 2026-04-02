@@ -30,6 +30,12 @@ redis:
 memcached:
   addr: memcached:11211
 
+workspace:
+  root: /workspace
+
+jwt:
+  secret: astra-dev-secret
+
 autoscaling:
   enabled: true
   minReplicas: 1
