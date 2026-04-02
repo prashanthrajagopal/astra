@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/prashanth/Developer/astra/cmd/api-gateway/dashboard/static/style.css\"}",
-  "error": "File content (48386 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-04-01T20:07:20.716Z",
-  "retry_count": 2
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"go test -short -count=1 -coverprofile=cov_lib.out -covermode=atomic $(go list ./internal/... ./pkg/...) 2>&1 | grep -c PASS && echo \\\"packages passed\\\" && go tool cover -func=cov_lib.out |...",
+  "error": "Exit code 1\n0",
+  "timestamp": "2026-04-02T18:10:08.600Z",
+  "retry_count": 1
 }

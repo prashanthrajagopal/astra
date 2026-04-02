@@ -127,18 +127,19 @@ func main() {
 	defer database.Close()
 
 	store := identity.NewStore(database)
+	isrv := &identityServer{store: store, jwtSecret: cfg.JWTSecret}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /ready", health.ReadyHandler(database, nil))
 	mux.HandleFunc("POST /tokens", handleIssueServiceToken(cfg.JWTSecret))
-	mux.HandleFunc("POST /validate", handleValidate(cfg.JWTSecret))
-	mux.HandleFunc("POST /users/login", handleLogin(cfg.JWTSecret, store))
-	mux.HandleFunc("POST /users", handleCreateUser(store))
-	mux.HandleFunc("GET /users", handleListUsers(store))
-	mux.HandleFunc("GET /users/{id}", handleGetUser(store))
-	mux.HandleFunc("PATCH /users/{id}", handleUpdateUser(store))
-	mux.HandleFunc("POST /users/{id}/reset-password", handleResetPassword(store))
+	mux.HandleFunc("POST /validate", isrv.handleValidateToken)
+	mux.HandleFunc("POST /users/login", isrv.handleLogin)
+	mux.HandleFunc("POST /users", isrv.handleCreateUser)
+	mux.HandleFunc("GET /users", isrv.handleListUsers)
+	mux.HandleFunc("GET /users/{id}", isrv.handleGetUser)
+	mux.HandleFunc("PATCH /users/{id}", isrv.handleUpdateUser)
+	mux.HandleFunc("POST /users/{id}/reset-password", isrv.handleResetPassword)
 
 	addr := fmt.Sprintf(":%d", cfg.IdentityPort)
 	slog.Info("identity service started", "addr", addr)

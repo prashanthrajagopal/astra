@@ -226,38 +226,56 @@
   "hotPaths": [
     {
       "path": "cmd/api-gateway/main.go",
-      "accessCount": 23,
-      "lastAccessed": 1775074615744,
-      "type": "file"
-    },
-    {
-      "path": "",
-      "accessCount": 13,
-      "lastAccessed": 1775073975626,
-      "type": "directory"
-    },
-    {
-      "path": "cmd/access-control/main.go",
-      "accessCount": 7,
-      "lastAccessed": 1775073521376,
+      "accessCount": 27,
+      "lastAccessed": 1775161575392,
       "type": "file"
     },
     {
       "path": "cmd/goal-service/main.go",
-      "accessCount": 7,
-      "lastAccessed": 1775073583502,
+      "accessCount": 17,
+      "lastAccessed": 1775153190432,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 16,
+      "lastAccessed": 1775153010643,
+      "type": "directory"
+    },
+    {
+      "path": "cmd/access-control/main.go",
+      "accessCount": 9,
+      "lastAccessed": 1775152995471,
       "type": "file"
     },
     {
       "path": "cmd/execution-worker/main.go",
+      "accessCount": 8,
+      "lastAccessed": 1775153010537,
+      "type": "file"
+    },
+    {
+      "path": "cmd/slack-adapter/main.go",
+      "accessCount": 7,
+      "lastAccessed": 1775153099114,
+      "type": "file"
+    },
+    {
+      "path": "internal/messaging/bus.go",
       "accessCount": 6,
-      "lastAccessed": 1775073698364,
+      "lastAccessed": 1775108129862,
       "type": "file"
     },
     {
       "path": "pkg/models/models.go",
+      "accessCount": 6,
+      "lastAccessed": 1775108152313,
+      "type": "file"
+    },
+    {
+      "path": "internal/scheduler/scheduler.go",
       "accessCount": 5,
-      "lastAccessed": 1775073406262,
+      "lastAccessed": 1775108094750,
       "type": "file"
     },
     {
@@ -267,15 +285,21 @@
       "type": "directory"
     },
     {
-      "path": "internal/messaging/bus.go",
+      "path": "internal/goals/deps.go",
       "accessCount": 4,
-      "lastAccessed": 1775073448666,
+      "lastAccessed": 1775108079965,
       "type": "file"
     },
     {
-      "path": "internal/scheduler/scheduler.go",
+      "path": "internal/toolregistry/register.go",
       "accessCount": 4,
-      "lastAccessed": 1775073607417,
+      "lastAccessed": 1775108120229,
+      "type": "file"
+    },
+    {
+      "path": "internal/agentdocs/store.go",
+      "accessCount": 4,
+      "lastAccessed": 1775108142106,
       "type": "file"
     },
     {
@@ -291,57 +315,147 @@
       "type": "file"
     },
     {
-      "path": "internal/toolregistry/register.go",
+      "path": "internal/adapters/base.go",
       "accessCount": 3,
-      "lastAccessed": 1775073466478,
-      "type": "file"
-    },
-    {
-      "path": "internal/goals/deps.go",
-      "accessCount": 3,
-      "lastAccessed": 1775073469934,
-      "type": "file"
-    },
-    {
-      "path": "cmd/slack-adapter/main.go",
-      "accessCount": 3,
-      "lastAccessed": 1775073502426,
-      "type": "file"
-    },
-    {
-      "path": "internal/agentdocs/store.go",
-      "accessCount": 3,
-      "lastAccessed": 1775073582697,
-      "type": "file"
-    },
-    {
-      "path": "cmd/tool-runtime/main.go",
-      "accessCount": 2,
-      "lastAccessed": 1775073140623,
+      "lastAccessed": 1775108079141,
       "type": "file"
     },
     {
       "path": "internal/agent/agent.go",
-      "accessCount": 2,
-      "lastAccessed": 1775073199778,
-      "type": "file"
-    },
-    {
-      "path": "internal/adapters/base.go",
-      "accessCount": 2,
-      "lastAccessed": 1775073477527,
+      "accessCount": 3,
+      "lastAccessed": 1775108142145,
       "type": "file"
     },
     {
       "path": "internal/tasks/task.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073117975,
+      "accessCount": 3,
+      "lastAccessed": 1775108147881,
+      "type": "file"
+    },
+    {
+      "path": "pkg/config/config.go",
+      "accessCount": 3,
+      "lastAccessed": 1775108152547,
+      "type": "file"
+    },
+    {
+      "path": "internal/slack/store.go",
+      "accessCount": 3,
+      "lastAccessed": 1775108439889,
+      "type": "file"
+    },
+    {
+      "path": "cmd/dtec-adapter/main.go",
+      "accessCount": 3,
+      "lastAccessed": 1775153015273,
+      "type": "file"
+    },
+    {
+      "path": "cmd/tool-runtime/main.go",
+      "accessCount": 3,
+      "lastAccessed": 1775153015666,
+      "type": "file"
+    },
+    {
+      "path": "internal/planner/planner.go",
+      "accessCount": 3,
+      "lastAccessed": 1775153027070,
+      "type": "file"
+    },
+    {
+      "path": "internal/adapters/adapter.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108078735,
+      "type": "file"
+    },
+    {
+      "path": "internal/adapters/registry.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108079546,
       "type": "file"
     },
     {
       "path": "internal/rbac/rbac.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073121026,
+      "accessCount": 2,
+      "lastAccessed": 1775108089775,
+      "type": "file"
+    },
+    {
+      "path": "internal/rbac/middleware.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108090186,
+      "type": "file"
+    },
+    {
+      "path": "internal/goaladmission/admission.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108096190,
+      "type": "file"
+    },
+    {
+      "path": "internal/toolregistry/allow.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108119852,
+      "type": "file"
+    },
+    {
+      "path": "pkg/health/ready.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108119867,
+      "type": "file"
+    },
+    {
+      "path": "pkg/sdk/client.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108126387,
+      "type": "file"
+    },
+    {
+      "path": "pkg/sdk/goal.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108127539,
+      "type": "file"
+    },
+    {
+      "path": "internal/events/store.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108130815,
+      "type": "file"
+    },
+    {
+      "path": "internal/workers/worker.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108134366,
+      "type": "file"
+    },
+    {
+      "path": "pkg/httpx/httpx.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108135286,
+      "type": "file"
+    },
+    {
+      "path": "internal/tools/runtime.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108142954,
+      "type": "file"
+    },
+    {
+      "path": "pkg/db/db.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108157089,
+      "type": "file"
+    },
+    {
+      "path": "internal/tasks/store.go",
+      "accessCount": 2,
+      "lastAccessed": 1775108162569,
+      "type": "file"
+    },
+    {
+      "path": "cmd/scheduler-service/main.go",
+      "accessCount": 2,
+      "lastAccessed": 1775153021575,
       "type": "file"
     },
     {
@@ -369,57 +483,9 @@
       "type": "file"
     },
     {
-      "path": "internal/rbac/middleware.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073126408,
-      "type": "file"
-    },
-    {
-      "path": "internal/toolregistry/allow.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073129599,
-      "type": "file"
-    },
-    {
-      "path": "internal/tools/runtime.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073132329,
-      "type": "file"
-    },
-    {
-      "path": "internal/workers/worker.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073132579,
-      "type": "file"
-    },
-    {
-      "path": "internal/slack/store.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073132889,
-      "type": "file"
-    },
-    {
-      "path": "internal/planner/planner.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073135791,
-      "type": "file"
-    },
-    {
       "path": "migrations/0014_approval_requests_plan_type.sql",
       "accessCount": 1,
       "lastAccessed": 1775073149661,
-      "type": "file"
-    },
-    {
-      "path": "internal/goaladmission/admission.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073274295,
-      "type": "file"
-    },
-    {
-      "path": "internal/events/store.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073291262,
       "type": "file"
     },
     {
@@ -453,75 +519,9 @@
       "type": "file"
     },
     {
-      "path": "internal/adapters/adapter.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073418934,
-      "type": "file"
-    },
-    {
-      "path": "internal/adapters/registry.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073425891,
-      "type": "file"
-    },
-    {
-      "path": "cmd/scheduler-service/main.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073438171,
-      "type": "file"
-    },
-    {
-      "path": "internal/tasks/store.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073449237,
-      "type": "file"
-    },
-    {
-      "path": "cmd/dtec-adapter/main.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073470282,
-      "type": "file"
-    },
-    {
       "path": "migrations/0024_agent_platform_hardening.sql",
       "accessCount": 1,
       "lastAccessed": 1775073474051,
-      "type": "file"
-    },
-    {
-      "path": "pkg/sdk/client.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073507342,
-      "type": "file"
-    },
-    {
-      "path": "pkg/sdk/goal.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073507732,
-      "type": "file"
-    },
-    {
-      "path": "pkg/config/config.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073512362,
-      "type": "file"
-    },
-    {
-      "path": "pkg/db/db.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073512815,
-      "type": "file"
-    },
-    {
-      "path": "pkg/health/ready.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073518378,
-      "type": "file"
-    },
-    {
-      "path": "pkg/httpx/httpx.go",
-      "accessCount": 1,
-      "lastAccessed": 1775073518780,
       "type": "file"
     }
   ],

@@ -7,8 +7,37 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  go-build-test:
+    name: Go Build & Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: astra
+          POSTGRES_PASSWORD: astra
+          POSTGRES_DB: astra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U astra"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,15 +53,71 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # Prebuilt golangci-lint binaries lag Go; go.mod is 1.25 — compile linter with same toolchain
       - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           install-mode: goinstall
 
-      - name: Test
-        run: go test ./... -count=1
+      - name: Run migrations
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: astra
+          PGPASSWORD: astra
+          PGDATABASE: astra
+        run: |
+          for f in migrations/*.sql; do
+            psql -f "$f" 2>&1 || true
+          done
+
+      - name: Test with coverage
+        env:
+          POSTGRES_DSN: "postgres://astra:astra@localhost:5432/astra?sslmode=disable"
+          REDIS_ADDR: "localhost:6379"
+          MEMCACHED_ADDR: "localhost:11211"
+        run: |
+          # Run all tests with coverage
+          go test ./... -count=1 -short -coverprofile=coverage.out -covermode=atomic
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Library coverage (internal + pkg)
+        env:
+          POSTGRES_DSN: "postgres://astra:astra@localhost:5432/astra?sslmode=disable"
+          REDIS_ADDR: "localhost:6379"
+          MEMCACHED_ADDR: "localhost:11211"
+        run: |
+          # Measure library code coverage separately (excludes proto/, examples/, cmd/ main functions)
+          PACKAGES=$(go list ./internal/... ./pkg/... | grep -v '/proto/')
+          go test -count=1 -short -coverprofile=coverage_lib.out -covermode=atomic $PACKAGES
+          LIB_COVERAGE=$(go tool cover -func=coverage_lib.out | tail -1 | awk '{print $NF}' | sed 's/%//')
+          echo "Library coverage: ${LIB_COVERAGE}%"
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Scope | Coverage |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|----------|" >> $GITHUB_STEP_SUMMARY
+          TOTAL_COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $NF}')
+          echo "| Total (all packages) | ${TOTAL_COVERAGE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Library (internal + pkg) | ${LIB_COVERAGE}% |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Per-Package Coverage" >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=coverage_lib.out | grep -E 'total:|[89][0-9]\.[0-9]%|100\.0%' >> $GITHUB_STEP_SUMMARY
+
+      - name: Check coverage threshold
+        run: |
+          LIB_COVERAGE=$(go tool cover -func=coverage_lib.out | tail -1 | awk '{print $NF}' | sed 's/%//')
+          echo "Library coverage: ${LIB_COVERAGE}%"
+          if (( $(echo "$LIB_COVERAGE < 35" | bc -l) )); then
+            echo "::error::Library coverage ${LIB_COVERAGE}% is below 35% threshold"
+            exit 1
+          fi
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            coverage.out
+            coverage_lib.out
 
       - name: Build
         run: |
@@ -49,3 +134,140 @@ jobs:
 
       - name: Helm template check
         run: helm template astra deployments/helm/astra >/dev/null
+
+  e2e-tests:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    needs: go-build-test
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: astra
+          POSTGRES_PASSWORD: astra
+          POSTGRES_DB: astra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U astra"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build services
+        run: |
+          ASTRA_VERSION="$(cat VERSION 2>/dev/null || echo dev)"
+          LDFLAGS="-X astra/pkg/version.Version=${ASTRA_VERSION}"
+          for svc in cmd/*/; do
+            go build -ldflags "$LDFLAGS" -o "bin/$(basename $svc)" "./$svc"
+          done
+
+      - name: Run migrations
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: astra
+          PGPASSWORD: astra
+          PGDATABASE: astra
+        run: |
+          for f in migrations/*.sql; do
+            psql -f "$f" 2>&1 || true
+          done
+
+      - name: Seed admin user and agents
+        env:
+          POSTGRES_DSN: "postgres://astra:astra@localhost:5432/astra?sslmode=disable"
+          REDIS_ADDR: "localhost:6379"
+          MEMCACHED_ADDR: "localhost:11211"
+          ASTRA_SUPER_ADMIN_EMAIL: "admin@astra.local"
+          ASTRA_SUPER_ADMIN_PASSWORD: "changeme-admin"
+          JWT_SECRET: "ci-test-secret-key-minimum-32-chars"
+        run: |
+          # Start identity service to seed admin user
+          bin/identity &
+          sleep 2
+          # Seed default agents
+          bin/agent-service &
+          sleep 2
+          kill %1 %2 2>/dev/null || true
+
+      - name: Start Astra services
+        env:
+          POSTGRES_DSN: "postgres://astra:astra@localhost:5432/astra?sslmode=disable"
+          REDIS_ADDR: "localhost:6379"
+          MEMCACHED_ADDR: "localhost:11211"
+          JWT_SECRET: "ci-test-secret-key-minimum-32-chars"
+          AUTO_APPROVE_PLANS: "true"
+          LLM_GRPC_ADDR: "localhost:9093"
+        run: |
+          # Start core services in background
+          for svc in identity access-control task-service agent-service scheduler-service \
+                     execution-worker worker-manager goal-service api-gateway; do
+            if [ -f "bin/$svc" ]; then
+              bin/$svc &
+              sleep 0.5
+            fi
+          done
+          # Wait for API gateway to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Astra is ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Install Playwright
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: tests/e2e
+        env:
+          ASTRA_BASE_URL: http://localhost:8080
+          ASTRA_TEST_EMAIL: admin@astra.local
+          ASTRA_TEST_PASSWORD: changeme-admin
+        run: npx playwright test --project=chromium --project=api --reporter=list
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: tests/e2e/test-results/

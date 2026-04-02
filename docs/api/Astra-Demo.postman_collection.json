@@ -1,0 +1,592 @@
+{
+  "info": {
+    "name": "Astra Demo — Full Workflow",
+    "description": "Step-by-step demo collection for Astra presentations. Run requests in order (top to bottom) to walk through a complete agent lifecycle: authenticate → create agent → attach documents → submit goal → observe task graph → inspect execution → dashboard overview → cleanup.\n\nEach request auto-saves IDs to collection variables so subsequent requests just work.\n\n**Pre-requisite:** Run `./scripts/deploy.sh` to start all services locally.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080" },
+    { "key": "identity_url", "value": "http://localhost:8085" },
+    { "key": "goal_url", "value": "http://localhost:8088" },
+    { "key": "access_control_url", "value": "http://localhost:8086" },
+    { "key": "worker_manager_url", "value": "http://localhost:8082" },
+    { "key": "token", "value": "" },
+    { "key": "agent_id", "value": "" },
+    { "key": "goal_id", "value": "" },
+    { "key": "task_id", "value": "" },
+    { "key": "graph_id", "value": "" },
+    { "key": "doc_id", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "approval_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "1 — Health & Auth",
+      "description": "Verify the platform is running and get an auth token.",
+      "item": [
+        {
+          "name": "1.1 — Health Check (Gateway)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Gateway is healthy', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('ok');",
+                  "});",
+                  "console.log('✅ Gateway is up and healthy');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "description": "Confirms the API gateway is running. No auth required."
+          }
+        },
+        {
+          "name": "1.2 — Get JWT Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Token received', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  pm.expect(res.token).to.be.a('string');",
+                  "  pm.collectionVariables.set('token', res.token);",
+                  "  console.log('✅ JWT saved — all subsequent requests are authenticated');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"demo-presenter\",\n  \"scopes\": [\"admin\"],\n  \"ttl_seconds\": 7200\n}"
+            },
+            "url": "{{identity_url}}/tokens",
+            "description": "Authenticates with the Identity service. The JWT is automatically saved to the `token` variable and used by all subsequent requests via Bearer auth."
+          }
+        },
+        {
+          "name": "1.3 — Validate Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Token is valid', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  console.log('✅ Token validated — subject: ' + pm.response.json().subject);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{identity_url}}/validate",
+            "description": "Proves the token works. Shows the subject and scopes encoded in the JWT."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 — Create & Configure Agent",
+      "description": "Create a new autonomous agent and give it rules and context.",
+      "item": [
+        {
+          "name": "2.1 — Create Agent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Agent created', function () {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect(status).to.be.oneOf([200, 201]);",
+                  "  const res = pm.response.json();",
+                  "  const id = res.actor_id || res.id;",
+                  "  pm.expect(id).to.be.a('string');",
+                  "  pm.collectionVariables.set('agent_id', id);",
+                  "  console.log('✅ Agent created — ID: ' + id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_type\": \"fullstack-engineer\",\n  \"name\": \"Atlas\",\n  \"system_prompt\": \"You are Atlas, a senior full-stack engineer. You plan carefully, write production-grade TypeScript and Go code, and always include tests. You prefer Next.js for frontends and Go for backends.\",\n  \"config\": {\n    \"model_preference\": \"code\",\n    \"max_retries\": 3\n  }\n}"
+            },
+            "url": "{{base_url}}/agents",
+            "description": "Creates a new agent named 'Atlas'. The agent is registered in the kernel, assigned an actor, and given a system prompt that defines its personality and capabilities."
+          }
+        },
+        {
+          "name": "2.2 — Get Agent Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Profile retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  console.log('✅ Agent profile loaded');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/agents/{{agent_id}}/profile",
+            "description": "Shows the full agent profile including system prompt, config, status, and capabilities."
+          }
+        },
+        {
+          "name": "2.3 — Attach Rule Document",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Document attached', function () {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect(status).to.be.oneOf([200, 201]);",
+                  "  const res = pm.response.json();",
+                  "  if (res.id) { pm.collectionVariables.set('doc_id', res.id); }",
+                  "  console.log('✅ Rule document attached to agent');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doc_type\": \"rule\",\n  \"name\": \"code-standards\",\n  \"content\": \"All code must be TypeScript with strict mode enabled. Use functional components with hooks. All functions must have JSDoc comments. Error handling is required — no unhandled promises.\",\n  \"priority\": 100\n}"
+            },
+            "url": "{{base_url}}/agents/{{agent_id}}/documents",
+            "description": "Attaches a rule document to the agent. Rules are included in the agent's context when planning and executing tasks. This ensures the agent follows your coding standards."
+          }
+        },
+        {
+          "name": "2.4 — List Agent Documents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Documents listed', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  console.log('✅ Agent has ' + (pm.response.json().documents || []).length + ' document(s)');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/agents/{{agent_id}}/documents",
+            "description": "Lists all documents attached to the agent — rules, skills, context documents."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 — Submit Goal & Observe Execution",
+      "description": "Give the agent a goal and watch the task graph get created and executed.",
+      "item": [
+        {
+          "name": "3.1 — Submit Goal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Goal accepted', function () {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect(status).to.be.oneOf([200, 201, 202]);",
+                  "  const res = pm.response.json();",
+                  "  if (res.goal_id) { pm.collectionVariables.set('goal_id', res.goal_id); }",
+                  "  if (res.graph_id) { pm.collectionVariables.set('graph_id', res.graph_id); }",
+                  "  if (res.approval_request_id) { pm.collectionVariables.set('approval_id', res.approval_request_id); }",
+                  "  console.log('✅ Goal submitted — ID: ' + (res.goal_id || 'pending'));",
+                  "  if (res.approval_request_id) { console.log('⏳ Plan approval required — approval_id: ' + res.approval_request_id); }",
+                  "  if (res.graph_id) { console.log('📊 Task graph created — graph_id: ' + res.graph_id); }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agent_id}}\",\n  \"goal_text\": \"Build a task management API in Go with the following endpoints: POST /tasks (create), GET /tasks (list all), GET /tasks/:id (get one), PATCH /tasks/:id (update status), DELETE /tasks/:id (delete). Use an in-memory store. Include input validation and proper error responses. Write table-driven tests for each endpoint.\",\n  \"priority\": 100,\n  \"workspace\": \"./workspace/demo-task-api\",\n  \"auto_approve\": true\n}"
+            },
+            "url": "{{base_url}}/agents/{{agent_id}}/goals",
+            "description": "Submits a goal to the agent. The planner service breaks this into a DAG of tasks. With auto_approve=true, execution starts immediately. Without it, a plan approval is required first.\n\nWatch the console for goal_id, graph_id, and approval status."
+          }
+        },
+        {
+          "name": "3.2 — Get Goal Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Goal status retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  console.log('📋 Goal status: ' + (res.status || 'unknown'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{goal_url}}/goals/{{goal_id}}",
+            "description": "Checks the current status of the goal: pending, planning, running, completed, or failed."
+          }
+        },
+        {
+          "name": "3.3 — Get Goal Details with Tasks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Goal details retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  const tasks = res.tasks || [];",
+                  "  console.log('📊 Total tasks: ' + tasks.length);",
+                  "  tasks.forEach(function(t) {",
+                  "    console.log('  → [' + t.status + '] ' + (t.type || t.id));",
+                  "  });",
+                  "  if (tasks.length > 0 && tasks[0].id) {",
+                  "    pm.collectionVariables.set('task_id', tasks[0].id);",
+                  "  }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{goal_url}}/goals/{{goal_id}}/details",
+            "description": "Returns the full goal with all tasks in the task graph. Each task shows: id, type, status, payload, and result. Run this repeatedly to watch tasks progress through states: pending → queued → running → completed."
+          }
+        },
+        {
+          "name": "3.4 — Get Task Graph",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Graph retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  const tasks = res.tasks || [];",
+                  "  const deps = res.dependencies || [];",
+                  "  console.log('🔗 Graph: ' + tasks.length + ' tasks, ' + deps.length + ' dependencies');",
+                  "  deps.forEach(function(d) {",
+                  "    console.log('  → ' + d.task_id + ' depends on ' + d.depends_on);",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/graphs/{{graph_id}}",
+            "description": "Shows the task graph DAG — all tasks and their dependency relationships. This is the plan the planner created from the goal."
+          }
+        },
+        {
+          "name": "3.5 — Inspect a Single Task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Task details retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  console.log('🔍 Task: ' + res.id);",
+                  "  console.log('   Type: ' + res.type);",
+                  "  console.log('   Status: ' + res.status);",
+                  "  if (res.result) { console.log('   Result: ' + JSON.stringify(res.result).substring(0, 200)); }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/tasks/{{task_id}}",
+            "description": "Inspects a single task in the graph. Shows the full payload (what the task is supposed to do) and result (output after completion)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 — Platform Observability",
+      "description": "Use the superadmin dashboard APIs to observe the platform state.",
+      "item": [
+        {
+          "name": "4.1 — Dashboard Snapshot",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Snapshot received', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  console.log('📊 Dashboard Snapshot:');",
+                  "  if (res.agents) console.log('   Agents: ' + JSON.stringify(res.agents));",
+                  "  if (res.goals) console.log('   Goals: ' + JSON.stringify(res.goals));",
+                  "  if (res.tasks) console.log('   Tasks: ' + JSON.stringify(res.tasks));",
+                  "  const approvals = res.approvals || [];",
+                  "  if (approvals.length > 0) {",
+                  "    pm.collectionVariables.set('approval_id', approvals[0].id);",
+                  "    console.log('   Pending approvals: ' + approvals.length);",
+                  "  }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/snapshot",
+            "description": "Full platform snapshot: agent counts, goal counts, task counts, pending approvals, and system health. This is what the Astra dashboard UI displays."
+          }
+        },
+        {
+          "name": "4.2 — List Workers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Workers listed', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  const workers = res.workers || [];",
+                  "  console.log('👷 Active workers: ' + workers.length);",
+                  "  workers.forEach(function(w) {",
+                  "    console.log('  → ' + w.id + ' [' + (w.status || 'unknown') + ']');",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{worker_manager_url}}/workers",
+            "description": "Shows all registered workers — the execution units that process tasks from Redis streams."
+          }
+        },
+        {
+          "name": "4.3 — Agent Events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Events retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  const events = res.events || res || [];",
+                  "  const list = Array.isArray(events) ? events : [];",
+                  "  console.log('📜 Events for agent: ' + list.length);",
+                  "  list.slice(0, 10).forEach(function(e) {",
+                  "    console.log('  → [' + (e.event_type || e.type) + '] ' + (e.created_at || ''));",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/agents/{{agent_id}}/events?limit=20&offset=0",
+            "description": "Event log for the agent — every state transition, task completion, and system event. This is the event-sourced audit trail."
+          }
+        },
+        {
+          "name": "4.4 — Tool Catalog",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Tool catalog retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  console.log('🔧 Available tools: ' + JSON.stringify(pm.response.json()).substring(0, 300));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/tools",
+            "description": "Lists all tools available to agents — file operations, code execution, web access, etc. Each tool has a name, version, and permission requirements."
+          }
+        },
+        {
+          "name": "4.5 — LLM Saturation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('LLM saturation retrieved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  console.log('🧠 LLM saturation: ' + JSON.stringify(pm.response.json()));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/superadmin/api/dashboard/llm-saturation",
+            "description": "Shows LLM utilization across the platform — tokens in/out, model usage, and cost tracking."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 — Access Control Demo",
+      "description": "Demonstrate RBAC policy checks.",
+      "item": [
+        {
+          "name": "5.1 — Policy Check (Allowed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Policy check returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  console.log('🔐 Policy result: ' + (res.allowed ? 'ALLOWED ✅' : 'DENIED ❌'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"demo-presenter\",\n  \"action\": \"goal.create\",\n  \"resource\": \"goals\"\n}"
+            },
+            "url": "{{access_control_url}}/check",
+            "description": "Checks if the current user is allowed to create goals. Demonstrates the RBAC/OPA policy engine."
+          }
+        },
+        {
+          "name": "5.2 — Policy Check (Agent Delete)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Policy check returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const res = pm.response.json();",
+                  "  console.log('🔐 Delete agent policy: ' + (res.allowed ? 'ALLOWED ✅' : 'DENIED ❌'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"demo-presenter\",\n  \"action\": \"agent.delete\",\n  \"resource\": \"agents\"\n}"
+            },
+            "url": "{{access_control_url}}/check",
+            "description": "Checks if the user can delete agents. Shows how different actions have different policy results."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 — Cleanup",
+      "description": "Optional: clean up the demo resources.",
+      "item": [
+        {
+          "name": "6.1 — Cancel Goal (if running)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/superadmin/api/dashboard/goals/{{goal_id}}/cancel",
+            "description": "Cancels the running goal. All in-flight tasks are cancelled."
+          }
+        },
+        {
+          "name": "6.2 — Delete Agent",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/agents/{{agent_id}}",
+            "description": "Removes the demo agent from the system."
+          }
+        }
+      ]
+    }
+  ]
+}

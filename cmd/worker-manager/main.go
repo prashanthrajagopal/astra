@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"hash/fnv"
 	"log/slog"
 	"net/http"
@@ -105,22 +104,11 @@ func main() {
 		}
 	}()
 
+	hdlr := &server{registry: registry}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	mux.HandleFunc("GET /health", hdlr.handleHealth)
 	mux.HandleFunc("GET /ready", health.ReadyHandler(database, redisClient))
-	mux.HandleFunc("GET /workers", func(w http.ResponseWriter, r *http.Request) {
-		active, err := registry.ListActive(r.Context())
-		if err != nil {
-			slog.Error("list active workers failed", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(active)
-	})
+	mux.HandleFunc("GET /workers", hdlr.handleWorkers)
 
 	srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: mux}
 	go func() {

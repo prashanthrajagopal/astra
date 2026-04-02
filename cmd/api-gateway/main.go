@@ -1540,18 +1540,29 @@ func handleListAgents(w http.ResponseWriter, r *http.Request) {
 
 func handleAgents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ActorType    string `json:"actor_type"`
-		Config       string `json:"config"`
-		Name         string `json:"name"`
-		SystemPrompt string `json:"system_prompt"`
-		ChatCapable  bool   `json:"chat_capable"`
+		ActorType    string          `json:"actor_type"`
+		Config       json.RawMessage `json:"config"`
+		Name         string          `json:"name"`
+		SystemPrompt string          `json:"system_prompt"`
+		ChatCapable  bool            `json:"chat_capable"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Accept config as either a JSON object or a JSON string
 	configBytes := []byte(req.Config)
+	if len(configBytes) > 0 && configBytes[0] == '"' {
+		// It's a JSON string — unquote it
+		var s string
+		if json.Unmarshal(configBytes, &s) == nil {
+			configBytes = []byte(s)
+		}
+	}
+	if len(configBytes) == 0 {
+		configBytes = []byte("{}")
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	resp, err := agentClient.SpawnActor(ctx, &kernel_pb.SpawnActorRequest{
