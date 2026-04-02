@@ -117,25 +117,6 @@ func newMockDB(conn *mockConn) (*sql.DB, string) {
 	return db, name
 }
 
-// ---- mockBus for messaging.Bus ----
-
-type mockBus struct {
-	mu           sync.Mutex
-	publishedTo  []string
-	publishedFields []map[string]interface{}
-	publishErr   error
-}
-
-func (b *mockBus) Publish(_ context.Context, stream string, fields map[string]interface{}) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.publishErr != nil {
-		return b.publishErr
-	}
-	b.publishedTo = append(b.publishedTo, stream)
-	b.publishedFields = append(b.publishedFields, fields)
-	return nil
-}
 
 // ---- tests ----
 

@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"go test -short -count=1 -coverprofile=cov_lib.out -covermode=atomic $(go list ./internal/... ./pkg/...) 2>&1 | grep -c PASS && echo \\\"packages passed\\\" && go tool cover -func=cov_lib.out |...",
-  "error": "Exit code 1\n0",
-  "timestamp": "2026-04-02T18:10:08.600Z",
-  "retry_count": 1
+  "tool_input_preview": "{\"command\":\"gh auth switch --user prashanthrajagopal 2>&1\",\"description\":\"Switch to the keyring-based account\"}",
+  "error": "Exit code 1\nThe value of the GITHUB_TOKEN environment variable is being used for authentication.\nTo have GitHub CLI manage credentials instead, first clear the value from the environment.",
+  "timestamp": "2026-04-02T20:48:39.359Z",
+  "retry_count": 3
 }

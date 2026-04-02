@@ -329,7 +329,7 @@ func newAuthMiddleware(cfg *config.Config, identityAddr, accessControlAddr strin
 	return &authMiddleware{
 		identityAddr:         strings.TrimSuffix(identityAddr, "/"),
 		accessControlAddr:    strings.TrimSuffix(accessControlAddr, "/"),
-		client:                client,
+		client:               client,
 		accessControlBreaker: accessControlBreaker,
 	}, nil
 }
@@ -1941,9 +1941,9 @@ func handleAgentGoalsProxy(goalServiceAddr string, client *http.Client, breaker 
 			return
 		}
 		var req struct {
-			GoalText   string `json:"goal_text"`
-			Workspace  string `json:"workspace"`
-			Priority   int    `json:"priority"`
+			GoalText  string `json:"goal_text"`
+			Workspace string `json:"workspace"`
+			Priority  int    `json:"priority"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)

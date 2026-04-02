@@ -29,13 +29,9 @@ func TestHandleSlackEvents_BadBody(t *testing.T) {
 	srv := newTestServer("")
 	// body that causes read error — we simulate with a nil body (causes bad body)
 	req := httptest.NewRequest(http.MethodPost, "/slack/events", nil)
-	req.Body = nil
-	w := httptest.NewRecorder()
-	// nil body: readBody will fail on ReadFrom
-	// Actually http.NoBody is nil-safe; force an error by closing body.
 	// Use a custom ReadCloser that errors.
 	req.Body = errReader{}
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	srv.handleSlackEvents(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)

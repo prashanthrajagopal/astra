@@ -40,7 +40,7 @@ func TestHandleLogin_MissingEmail(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 	var resp map[string]string
-	json.NewDecoder(rr.Body).Decode(&resp)
+	_ = json.NewDecoder(rr.Body).Decode(&resp)
 	if resp["error"] != "email and password required" {
 		t.Errorf("error = %q, want %q", resp["error"], "email and password required")
 	}
@@ -58,7 +58,7 @@ func TestHandleLogin_MissingPassword(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 	var resp map[string]string
-	json.NewDecoder(rr.Body).Decode(&resp)
+	_ = json.NewDecoder(rr.Body).Decode(&resp)
 	if resp["error"] != "email and password required" {
 		t.Errorf("error = %q, want %q", resp["error"], "email and password required")
 	}
@@ -103,7 +103,7 @@ func TestHandleValidateToken_EmptyToken(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
 	}
 	var resp validateResp
-	json.NewDecoder(rr.Body).Decode(&resp)
+	_ = json.NewDecoder(rr.Body).Decode(&resp)
 	if resp.Valid {
 		t.Error("expected valid=false for empty token")
 	}
@@ -121,7 +121,7 @@ func TestHandleValidateToken_WhitespaceOnlyToken(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
 	}
 	var resp validateResp
-	json.NewDecoder(rr.Body).Decode(&resp)
+	_ = json.NewDecoder(rr.Body).Decode(&resp)
 	if resp.Valid {
 		t.Error("expected valid=false for whitespace token")
 	}
@@ -139,7 +139,7 @@ func TestHandleValidateToken_InvalidToken(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
 	}
 	var resp validateResp
-	json.NewDecoder(rr.Body).Decode(&resp)
+	_ = json.NewDecoder(rr.Body).Decode(&resp)
 	if resp.Valid {
 		t.Error("expected valid=false for invalid JWT")
 	}

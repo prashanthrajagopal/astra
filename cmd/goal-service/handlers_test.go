@@ -52,7 +52,7 @@ func TestHandleGetGoal_ValidIDReachesDB(t *testing.T) {
 
 	// This will panic with nil db — recover and verify we got past ID parsing.
 	func() {
-		defer func() { recover() }()
+		defer func() { _ = recover() }()
 		srv.handleGetGoal(rr, req)
 	}()
 

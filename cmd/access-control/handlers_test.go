@@ -233,7 +233,7 @@ func TestHandleDecide_ValidDecisionApproved(t *testing.T) {
 		// handleDecide will panic on nil DB after passing validation.
 		// Use recover to confirm we got past the decision/user_id checks.
 		func() {
-			defer func() { recover() }()
+			defer func() { _ = recover() }()
 			srv.handleDecide(w, req)
 		}()
 		// If we got 400, the decision was rejected as invalid — that's a failure.
@@ -268,7 +268,7 @@ func TestHandleGetByID_ValidUUID_PassesValidation(t *testing.T) {
 	req.SetPathValue("id", validUUID)
 	w := httptest.NewRecorder()
 	func() {
-		defer func() { recover() }()
+		defer func() { _ = recover() }()
 		srv.handleGetByID(w, req)
 	}()
 	// If we got 400, UUID validation failed — that's a bug.

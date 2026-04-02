@@ -21,8 +21,8 @@ import (
 	"astra/pkg/grpc"
 	"astra/pkg/logger"
 
-	"github.com/google/uuid"
 	kernel_pb "astra/proto/kernel"
+	"github.com/google/uuid"
 )
 
 func main() {

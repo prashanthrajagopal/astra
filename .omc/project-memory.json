@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1775072226588,
+  "lastScanned": 1775162672434,
   "projectRoot": "/Users/prashanth/Developer/astra",
   "techStack": {
     "languages": [
@@ -34,7 +34,6 @@
     "isMonorepo": false,
     "workspaces": [],
     "mainDirectories": [
-      "bin",
       "docs",
       "examples",
       "scripts",
@@ -47,51 +46,34 @@
   },
   "customNotes": [],
   "directoryMap": {
-    "bin": {
-      "path": "bin",
-      "purpose": "Executable scripts",
-      "fileCount": 17,
-      "lastAccessed": 1775072226568,
-      "keyFiles": [
-        "access-control",
-        "agent-service",
-        "api-gateway",
-        "browser-worker",
-        "cost-tracker"
-      ]
-    },
     "cmd": {
       "path": "cmd",
       "purpose": null,
-      "fileCount": 1,
-      "lastAccessed": 1775072226570,
+      "fileCount": 0,
+      "lastAccessed": 1775162672413,
       "keyFiles": []
     },
     "deployments": {
       "path": "deployments",
       "purpose": null,
-      "fileCount": 1,
-      "lastAccessed": 1775072226570,
+      "fileCount": 0,
+      "lastAccessed": 1775162672414,
       "keyFiles": []
     },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 30,
-      "lastAccessed": 1775072226570,
+      "fileCount": 1,
+      "lastAccessed": 1775162672416,
       "keyFiles": [
-        "PRD.md",
-        "agent-restore-contract.md",
-        "api-list-agents-workers-spec.md",
-        "approval-system-extension-spec.md",
-        "chat-agents-design.md"
+        "PRD.md"
       ]
     },
     "examples": {
       "path": "examples",
       "purpose": "Example code",
-      "fileCount": 2,
-      "lastAccessed": 1775072226572,
+      "fileCount": 1,
+      "lastAccessed": 1775162672417,
       "keyFiles": [
         "README.md"
       ]
@@ -99,28 +81,15 @@
     "internal": {
       "path": "internal",
       "purpose": null,
-      "fileCount": 1,
-      "lastAccessed": 1775072226572,
+      "fileCount": 0,
+      "lastAccessed": 1775162672418,
       "keyFiles": []
-    },
-    "logs": {
-      "path": "logs",
-      "purpose": null,
-      "fileCount": 834,
-      "lastAccessed": 1775072226574,
-      "keyFiles": [
-        "access-control.log",
-        "access-control.pid",
-        "agent-service.log",
-        "agent-service.pid",
-        "api-gateway.log"
-      ]
     },
     "migrations": {
       "path": "migrations",
       "purpose": "Database migrations",
-      "fileCount": 26,
-      "lastAccessed": 1775072226574,
+      "fileCount": 29,
+      "lastAccessed": 1775162672418,
       "keyFiles": [
         "0000_extensions.sql",
         "0001_initial_schema.sql",
@@ -133,28 +102,28 @@
       "path": "packages",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1775072226575,
+      "lastAccessed": 1775162672419,
       "keyFiles": []
     },
     "pkg": {
       "path": "pkg",
       "purpose": null,
-      "fileCount": 1,
-      "lastAccessed": 1775072226579,
+      "fileCount": 0,
+      "lastAccessed": 1775162672419,
       "keyFiles": []
     },
     "proto": {
       "path": "proto",
       "purpose": null,
-      "fileCount": 1,
-      "lastAccessed": 1775072226581,
+      "fileCount": 0,
+      "lastAccessed": 1775162672420,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 10,
-      "lastAccessed": 1775072226582,
+      "lastAccessed": 1775162672420,
       "keyFiles": [
         "apply-agent-template.sh",
         "create-python-expert-agent.sh",
@@ -166,22 +135,22 @@
     "tests": {
       "path": "tests",
       "purpose": "Test files",
-      "fileCount": 2,
-      "lastAccessed": 1775072226582,
+      "fileCount": 1,
+      "lastAccessed": 1775162672420,
       "keyFiles": []
     },
     "web": {
       "path": "web",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775072226582,
+      "lastAccessed": 1775162672422,
       "keyFiles": []
     },
     "workspace": {
       "path": "workspace",
       "purpose": null,
-      "fileCount": 2,
-      "lastAccessed": 1775072226582,
+      "fileCount": 1,
+      "lastAccessed": 1775162672423,
       "keyFiles": [
         "typescript"
       ]
@@ -189,9 +158,10 @@
     "docs/api": {
       "path": "docs/api",
       "purpose": "API routes",
-      "fileCount": 2,
-      "lastAccessed": 1775072226583,
+      "fileCount": 3,
+      "lastAccessed": 1775162672426,
       "keyFiles": [
+        "Astra-Demo.postman_collection.json",
         "Astra-Platform.postman_collection.json",
         "openapi.yaml"
       ]
@@ -199,35 +169,44 @@
     "pkg/config": {
       "path": "pkg/config",
       "purpose": "Configuration files",
-      "fileCount": 2,
-      "lastAccessed": 1775072226584,
+      "fileCount": 3,
+      "lastAccessed": 1775162672431,
       "keyFiles": [
         "config.go",
+        "config_extra_test.go",
         "config_test.go"
       ]
     },
     "pkg/models": {
       "path": "pkg/models",
       "purpose": "Data models",
-      "fileCount": 1,
-      "lastAccessed": 1775072226584,
+      "fileCount": 2,
+      "lastAccessed": 1775162672432,
       "keyFiles": [
-        "models.go"
+        "models.go",
+        "models_test.go"
       ]
     },
     "workspace/src": {
       "path": "workspace/src",
       "purpose": "Source code",
       "fileCount": 0,
-      "lastAccessed": 1775072226585,
+      "lastAccessed": 1775162672434,
+      "keyFiles": []
+    },
+    "workspace/tests": {
+      "path": "workspace/tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1775162672434,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
       "path": "cmd/api-gateway/main.go",
-      "accessCount": 27,
-      "lastAccessed": 1775161575392,
+      "accessCount": 28,
+      "lastAccessed": 1775163021716,
       "type": "file"
     },
     {

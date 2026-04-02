@@ -132,9 +132,9 @@ func TestEvaluatePolicy(t *testing.T) {
 			wantAllow: true,
 		},
 		{
-			name:      "tool name case insensitive dangerous check",
-			req:       checkReq{Action: "tool.execute", ToolName: "KUBECTL-APPLY"},
-			wantAllow: false,
+			name:         "tool name case insensitive dangerous check",
+			req:          checkReq{Action: "tool.execute", ToolName: "KUBECTL-APPLY"},
+			wantAllow:    false,
 			wantApproval: true,
 		},
 	}

@@ -66,7 +66,7 @@ func TestFloatsToBytes_RoundTrip_Table(t *testing.T) {
 		{"zero", []float32{0.0}},
 		{"positive", []float32{1.0, 2.0, 3.0}},
 		{"negative", []float32{-1.0, -2.5}},
-		{"mixed", []float32{0.25, -1.5, 42.0, 0.0, -0.0}},
+		{"mixed", []float32{0.25, -1.5, 42.0, 0.0}},
 		{"large", []float32{1e30, -1e30}},
 		{"small", []float32{1e-30, -1e-30}},
 		{"single", []float32{3.14159}},

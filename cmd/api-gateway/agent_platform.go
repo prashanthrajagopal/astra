@@ -319,7 +319,7 @@ func handleAgentForget(w http.ResponseWriter, r *http.Request, database *sql.DB,
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, _ = tx.ExecContext(ctx, `DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM chat_sessions WHERE agent_id = $1)`, aid)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE agent_id = $1`, aid)
 	_, _ = tx.ExecContext(ctx, `DELETE FROM memories WHERE agent_id = $1`, aid)

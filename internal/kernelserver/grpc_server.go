@@ -76,7 +76,7 @@ func (s *KernelGRPCServer) SendMessage(ctx context.Context, req *kernel_pb.SendM
 	if err := s.kernel.Send(ctx, target, msg); err != nil {
 		if errors.Is(err, actors.ErrMailboxFull) {
 			const retryAfterSec = 5
-			gogrpc.SetTrailer(ctx, metadata.Pairs("retry-after", strconv.Itoa(retryAfterSec)))
+			_ = gogrpc.SetTrailer(ctx, metadata.Pairs("retry-after", strconv.Itoa(retryAfterSec)))
 			return nil, status.Errorf(codes.ResourceExhausted, "actor mailbox full: %v", err)
 		}
 		return nil, status.Errorf(codes.NotFound, "send: %v", err)

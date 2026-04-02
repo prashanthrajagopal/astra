@@ -26,7 +26,6 @@ func (d *mockDriver) Open(_ string) (driver.Conn, error) {
 }
 
 type mockConn struct {
-	mu        sync.Mutex
 	execFunc  func(query string, args []driver.Value) (driver.Result, error)
 	queryFunc func(query string, args []driver.Value) (driver.Rows, error)
 }

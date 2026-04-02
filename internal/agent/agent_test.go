@@ -30,7 +30,7 @@ func TestNew_IDIsValidUUID(t *testing.T) {
 	k := newTestKernel()
 	p := planner.New()
 	a := New("test-agent", k, p, nil, nil)
-	defer a.Stop()
+	defer func() { _ = a.Stop() }()
 
 	if a.ID == uuid.Nil {
 		t.Error("agent ID is nil UUID")
@@ -57,7 +57,7 @@ func TestNew_NameIsSet(t *testing.T) {
 			k := newTestKernel()
 			p := planner.New()
 			a := New(tc.name, k, p, nil, nil)
-			defer a.Stop()
+			defer func() { _ = a.Stop() }()
 			if a.Name != tc.name {
 				t.Errorf("Name = %q, want %q", a.Name, tc.name)
 			}
@@ -69,7 +69,7 @@ func TestNew_StatusDefaultsToActive(t *testing.T) {
 	k := newTestKernel()
 	p := planner.New()
 	a := New("agent-status-test", k, p, nil, nil)
-	defer a.Stop()
+	defer func() { _ = a.Stop() }()
 
 	if a.Status != "active" {
 		t.Errorf("Status = %q, want active", a.Status)
@@ -81,8 +81,8 @@ func TestNew_UniqueIDs(t *testing.T) {
 	p := planner.New()
 	a1 := New("agent-1", k, p, nil, nil)
 	a2 := New("agent-2", k, p, nil, nil)
-	defer a1.Stop()
-	defer a2.Stop()
+	defer func() { _ = a1.Stop() }()
+	defer func() { _ = a2.Stop() }()
 
 	if a1.ID == a2.ID {
 		t.Errorf("two agents have the same ID: %v", a1.ID)
@@ -94,7 +94,7 @@ func TestNewFromExisting_UsesProvidedID(t *testing.T) {
 	p := planner.New()
 	id := uuid.New()
 	a := NewFromExisting(id, "restored-agent", k, p, nil, nil)
-	defer a.Stop()
+	defer func() { _ = a.Stop() }()
 
 	if a.ID != id {
 		t.Errorf("ID = %v, want %v", a.ID, id)
@@ -126,7 +126,7 @@ func TestWithSupervisor_Option(t *testing.T) {
 	onTerm := func(id string) { terminated = true }
 
 	a := New("supervised-agent", k, p, nil, nil, WithSupervisor(sup, onTerm))
-	defer a.Stop()
+	defer func() { _ = a.Stop() }()
 
 	if a.supervisor == nil {
 		t.Error("supervisor not set")
