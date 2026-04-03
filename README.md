@@ -206,6 +206,7 @@ Connect Astra agents to Slack workspaces. See [docs/slack-integration-design.md]
 
 ## Documentation
 
+- **[Wiki](https://prashanthr.net/astra/)** -- guides, architecture, and reference docs
 - **[docs/PRD.md](docs/PRD.md)** -- product requirements document (source of truth)
 - **[docs/api/openapi.yaml](docs/api/openapi.yaml)** -- OpenAPI spec
 - **[docs/api/Astra-Platform.postman_collection.json](docs/api/Astra-Platform.postman_collection.json)** -- Postman collection
