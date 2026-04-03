@@ -11,7 +11,7 @@
 *.crt
 
 /bin/
-/dist/
+dist/
 /vendor/
 /access-control
 /api-gateway
