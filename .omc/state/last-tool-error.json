@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"helm template astra deployments/helm/astra >/dev/null 2>&1 && echo \\\"OK\\\" || helm template astra deployments/helm/astra 2>&1\",\"description\":\"Verify helm template renders\"}",
-  "error": "Exit code 1\nError: template: astra/templates/deployment.yaml:70:24: executing \"astra/templates/deployment.yaml\" at <dig \"workspace\" \"root\" \"/workspace\" .Values>: error calling dig: interface conversion: interface {} is common.Values, not map[string]interface {}\n\nUse --debug flag to render out invalid YAML",
-  "timestamp": "2026-04-02T21:00:20.159Z",
-  "retry_count": 1
-}

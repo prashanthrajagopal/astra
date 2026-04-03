@@ -41,3 +41,10 @@ workspace/node_modules/
 # prashantr.net — local-only Cursor agents & skill (do not commit)
 .cursor/agents/prashantr-*.md
 .cursor/skills/prashantr-site/
+
+.omc
+.claude
+CLAUDE.md
+deck
+workspace/*
+.cursor
