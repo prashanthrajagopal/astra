@@ -16,8 +16,9 @@ A production-grade, microkernel-style operating system for autonomous agents. Bu
 - **Multi-tenancy** -- organizations, teams, users, RBAC, and agent visibility hierarchy (global/public/team/private)
 - **Chat** -- WebSocket streaming, session management, and a built-in dashboard chat widget
 - **Approvals** -- human-in-the-loop gates for plans and risky operations
-- **LLM flexibility** -- pluggable providers (OpenAI, Ollama, MLX on Apple Silicon)
+- **LLM flexibility** -- pluggable providers (OpenAI, Anthropic, Gemini, Ollama, MLX) with DB-backed config and dashboard UI
 - **Slack integration** -- connect agents to Slack workspaces with OAuth and token rotation
+- **External app integration** -- dispatch goals, poll structured results via `GET /goals/{id}/result`, use `http_fetch` tool to query external APIs from agents
 
 ## Architecture
 
@@ -201,6 +202,22 @@ Connect Astra agents to Slack workspaces. See [docs/slack-integration-design.md]
 3. Start the adapter: `go run ./cmd/slack-adapter`
 4. Connect workspace via **Org Dashboard > Integrations > Connect Slack**
 5. Invite the bot to a channel and send a message
+
+---
+
+## Connecting external applications
+
+Any external application can integrate with Astra without knowing about the internal task graph or LLM execution:
+
+1. **Create an agent** with a system prompt that returns a JSON execution plan
+2. **Dispatch a goal**: `POST /agents/{id}/goals` with `{"goal_text": "...", "workspace_tag": "my-app"}`
+3. **Poll for results**: `GET /goals/{id}/result` returns `{status, result_payload, workspace_tag, completed_at}`
+4. **Read the plan**: when `status == "completed"`, parse `result_payload` as `{version, summary, actions[{type, payload}]}`
+5. **Execute the actions** in your application
+
+The `http_fetch` tool lets agents query external APIs during execution (configured via `HTTP_FETCH_ALLOWLIST`).
+
+See [docs/integration-guide.md](docs/integration-guide.md) for the full guide.
 
 ---
 

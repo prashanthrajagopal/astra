@@ -54,6 +54,7 @@ func (s *goalServer) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		CascadeID        string   `json:"cascade_id,omitempty"`
 		DependsOnGoalIDs []string `json:"depends_on_goal_ids,omitempty"`
 		SourceAgentID    string   `json:"source_agent_id,omitempty"`
+		WorkspaceTag     string   `json:"workspace_tag,omitempty"`
 		Documents        []struct {
 			DocType  string          `json:"doc_type"`
 			Name     string          `json:"name"`
@@ -163,11 +164,16 @@ func (s *goalServer) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 	goalID := uuid.New()
 	depArrayLit := uuidSliceToArrayLiteral(depIDs)
 
+	var workspaceTagVal sql.NullString
+	if req.WorkspaceTag != "" {
+		workspaceTagVal = sql.NullString{String: req.WorkspaceTag, Valid: true}
+	}
+
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO goals (id, agent_id, goal_text, priority, status, cascade_id, depends_on_goal_ids, source_agent_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8)`,
+		`INSERT INTO goals (id, agent_id, goal_text, priority, status, cascade_id, depends_on_goal_ids, source_agent_id, workspace_tag)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9)`,
 		goalID, agentID, req.GoalText, priority, initialStatus,
-		cascadeVal, depArrayLit, sourceAgentVal)
+		cascadeVal, depArrayLit, sourceAgentVal, workspaceTagVal)
 	if err != nil {
 		slog.Error("insert goal failed", "err", err)
 		http.Error(w, `{"error":"insert goal failed"}`, http.StatusInternalServerError)
@@ -747,4 +753,51 @@ func (s *goalServer) handleCreateInternalGoal(w http.ResponseWriter, r *http.Req
 		"goal_id": goalID.String(),
 		"status":  initialStatus,
 	})
+}
+
+// handleGetGoalResult returns the result_payload and status for a completed goal.
+// External applications poll this endpoint to retrieve the structured execution plan.
+func (s *goalServer) handleGetGoalResult(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	goalID, err := uuid.Parse(id)
+	if err != nil {
+		http.Error(w, `{"error":"invalid goal id"}`, http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+
+	var status, workspaceTag string
+	var resultPayload []byte
+	var completedAt sql.NullTime
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id, status, COALESCE(workspace_tag,''), result_payload, completed_at FROM goals WHERE id=$1`,
+		goalID).Scan(&goalID, &status, &workspaceTag, &resultPayload, &completedAt)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error":"goal not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("handleGetGoalResult: query failed", "err", err)
+		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"goal_id":      goalID.String(),
+		"status":       status,
+		"workspace_tag": workspaceTag,
+	}
+	if len(resultPayload) > 0 {
+		resp["result_payload"] = json.RawMessage(resultPayload)
+	} else {
+		resp["result_payload"] = nil
+	}
+	if completedAt.Valid {
+		resp["completed_at"] = completedAt.Time.Format(time.RFC3339)
+	} else {
+		resp["completed_at"] = nil
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

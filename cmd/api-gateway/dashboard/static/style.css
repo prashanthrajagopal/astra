@@ -4351,3 +4351,47 @@ html[data-theme="light"] .agent-create-panel .approval-modal-backdrop {
 .agent-rev-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); font-size: 0.85rem; }
 .agent-rev-list button { font-size: 0.75rem; padding: 4px 8px; }
 #agent-edit-tools-wrap label { display: block; margin: 4px 0; font-size: 0.85rem; }
+
+/* ─── LLM Provider Settings ─────────────────────────────── */
+.llm-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.llm-provider-card {
+  background: var(--md-sys-color-surface-container, #1e1e2e);
+  border: 1px solid var(--md-sys-color-outline-variant, #333);
+  border-radius: 12px;
+  padding: 16px;
+}
+.llm-provider-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.llm-provider-name {
+  font-weight: 600;
+  font-size: 1rem;
+  flex: 1;
+}
+.llm-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.llm-provider-fields {
+  display: grid;
+  gap: 8px;
+}
+.llm-field-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface-variant, #aaa);
+  margin-top: 4px;
+}

@@ -17,6 +17,7 @@
       <div class="nav-tabs">
         <button class="nav-tab active" data-tab="overview">Overview</button>
         <button class="nav-tab" data-tab="slack">Slack</button>
+        <button class="nav-tab" data-tab="llm">LLM Providers</button>
       </div>
     </div>
     <div class="topnav-right" id="dashboard-meta">
@@ -273,6 +274,22 @@
             <button type="button" id="btn-save-slack-config" class="green-btn">Save</button>
             <span id="slack-config-status" class="modal-error" style="margin-left:8px"></span>
           </div>
+        </section>
+      </div>
+
+      <div id="tab-llm" class="tab-panel" hidden>
+        <section class="section">
+          <div class="section-head">
+            <div class="section-head-left">
+              <span class="section-name">LLM Provider Settings</span>
+            </div>
+            <div class="section-head-right">
+              <button type="button" id="btn-save-llm-config" class="green-btn">Save All</button>
+              <span id="llm-config-status" class="modal-error" style="margin-left:8px"></span>
+            </div>
+          </div>
+          <p class="section-desc">Configure API keys, host URLs, and model defaults for each LLM provider. Set one provider as the default. API keys are masked — enter a new value to update.</p>
+          <div id="llm-provider-cards" class="llm-provider-grid"></div>
         </section>
       </div>
     </div>
