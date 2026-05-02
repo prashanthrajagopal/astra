@@ -1492,6 +1492,7 @@ document.addEventListener('DOMContentLoaded', function () {
       var panel = document.getElementById('tab-' + target);
       if (panel) panel.hidden = false;
       if (target === 'slack') loadSlackConfig();
+      if (target === 'llm') loadLLMConfig();
     });
   });
 
@@ -1527,6 +1528,90 @@ document.addEventListener('DOMContentLoaded', function () {
       })
       .catch(function() { btnSaveSlackConfig.disabled = false; if (statusEl) statusEl.textContent = 'Request failed'; });
   });
+
+  // ─── LLM Provider config ─────────────────────────────────
+  var llmProviderOrder = ['openai', 'anthropic', 'gemini', 'ollama', 'mlx'];
+  var llmProviderLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama', mlx: 'MLX (Apple Silicon)' };
+  var llmConfigCache = [];
+
+  function loadLLMConfig() {
+    authFetch('/superadmin/api/llm/config')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        llmConfigCache = d.providers || [];
+        renderLLMProviderCards(llmConfigCache);
+      }).catch(function() {
+        var el = document.getElementById('llm-config-status');
+        if (el) el.textContent = 'Failed to load';
+      });
+  }
+
+  function renderLLMProviderCards(providers) {
+    var container = document.getElementById('llm-provider-cards');
+    if (!container) return;
+    var byProvider = {};
+    (providers || []).forEach(function(p) { byProvider[p.provider] = p; });
+    var html = '';
+    llmProviderOrder.forEach(function(pid) {
+      var p = byProvider[pid] || { provider: pid, api_key: '', host_url: '', model_name: '', enabled: false, is_default: false, max_tokens: 0 };
+      var label = llmProviderLabels[pid] || pid;
+      html += '<div class="llm-provider-card" data-provider="' + esc(pid) + '">' +
+        '<div class="llm-provider-header">' +
+          '<span class="llm-provider-name">' + esc(label) + '</span>' +
+          '<label class="llm-toggle-label"><input type="checkbox" class="llm-enabled" ' + (p.enabled ? 'checked' : '') + '> Enabled</label>' +
+          '<label class="llm-toggle-label"><input type="radio" name="llm-default" class="llm-default" value="' + esc(pid) + '" ' + (p.is_default ? 'checked' : '') + '> Default</label>' +
+        '</div>' +
+        '<div class="llm-provider-fields">' +
+          '<label class="llm-field-label">API Key</label>' +
+          '<input type="password" class="llm-api-key modal-input" placeholder="' + (p.api_key === '***' ? 'Set (leave blank to keep)' : 'Enter API key') + '" autocomplete="off" />' +
+          '<label class="llm-field-label">Host URL</label>' +
+          '<input type="url" class="llm-host-url modal-input" value="' + esc(p.host_url) + '" placeholder="https://api.openai.com/v1" />' +
+          '<label class="llm-field-label">Model Name</label>' +
+          '<input type="text" class="llm-model-name modal-input" value="' + esc(p.model_name) + '" placeholder="gpt-4o-mini" />' +
+          '<label class="llm-field-label">Max Tokens (0 = provider default)</label>' +
+          '<input type="number" class="llm-max-tokens modal-input" value="' + (p.max_tokens || 0) + '" min="0" />' +
+        '</div>' +
+      '</div>';
+    });
+    container.innerHTML = html;
+  }
+
+  var btnSaveLLMConfig = document.getElementById('btn-save-llm-config');
+  if (btnSaveLLMConfig) btnSaveLLMConfig.addEventListener('click', saveLLMConfig);
+
+  function saveLLMConfig() {
+    var statusEl = document.getElementById('llm-config-status');
+    var cards = document.querySelectorAll('.llm-provider-card');
+    var providers = [];
+    cards.forEach(function(card) {
+      var pid = card.dataset.provider;
+      var apiKeyInput = card.querySelector('.llm-api-key').value;
+      var existingKey = '***';
+      llmConfigCache.forEach(function(c) { if (c.provider === pid) existingKey = c.api_key; });
+      providers.push({
+        provider: pid,
+        api_key: apiKeyInput || existingKey,
+        host_url: card.querySelector('.llm-host-url').value,
+        model_name: card.querySelector('.llm-model-name').value,
+        enabled: card.querySelector('.llm-enabled').checked,
+        is_default: card.querySelector('.llm-default').checked,
+        max_tokens: parseInt(card.querySelector('.llm-max-tokens').value, 10) || 0
+      });
+    });
+    if (btnSaveLLMConfig) btnSaveLLMConfig.disabled = true;
+    if (statusEl) statusEl.textContent = 'Saving...';
+    authFetch('/superadmin/api/llm/config', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({providers: providers}) })
+      .then(function(r) { return r.json().then(function(d) { return {ok:r.ok,data:d}; }); })
+      .then(function(res) {
+        if (btnSaveLLMConfig) btnSaveLLMConfig.disabled = false;
+        if (statusEl) statusEl.textContent = res.ok ? 'Saved.' : (res.data.error || 'Save failed');
+        if (res.ok) loadLLMConfig();
+      })
+      .catch(function() {
+        if (btnSaveLLMConfig) btnSaveLLMConfig.disabled = false;
+        if (statusEl) statusEl.textContent = 'Request failed';
+      });
+  }
 
   // ─── Edit Agent Modal (data source & Slack) ───────────────────────────
   var agentEditModal = document.getElementById('agent-edit-modal');

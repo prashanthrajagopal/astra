@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"astra/internal/codegen"
+	"astra/internal/executionplan"
 	"astra/internal/messaging"
 	"astra/internal/tasks"
 	"astra/internal/tools"
@@ -83,7 +85,7 @@ func main() {
 	shardCount := getTaskShardCount()
 	slog.Info("execution worker started", "worker_id", w.ID, "hostname", hostname, "shard_count", shardCount)
 
-	handler := newTaskHandler(bus, taskStore, wsRuntime, legacyRuntime, llmClient, w.ID.String())
+	handler := newTaskHandler(bus, taskStore, wsRuntime, legacyRuntime, llmClient, w.ID.String(), database)
 	for shard := 0; shard < shardCount; shard++ {
 		s := shard
 		go func() {
@@ -96,13 +98,13 @@ func main() {
 	slog.Info("execution worker stopped", "worker_id", w.ID)
 }
 
-func newTaskHandler(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID string) func(redis.XMessage) error {
+func newTaskHandler(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID string, database *sql.DB) func(redis.XMessage) error {
 	return func(msg redis.XMessage) error {
 		taskID := extractTaskID(msg)
 		if taskID == "" {
 			return nil
 		}
-		return processTask(bus, taskStore, wsRuntime, legacyRuntime, llmClient, workerID, taskID)
+		return processTask(bus, taskStore, wsRuntime, legacyRuntime, llmClient, workerID, taskID, database)
 	}
 }
 
@@ -152,7 +154,7 @@ func publishDeadLetterIf(bus *messaging.Bus, ctx context.Context, taskID, goalID
 	}
 }
 
-func processTask(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID, taskID string) error {
+func processTask(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient, workerID, taskID string, database *sql.DB) error {
 	runCtx := context.Background()
 
 	if err := taskStore.Transition(runCtx, taskID, tasks.StatusQueued, tasks.StatusScheduled, nil); err != nil {
@@ -183,6 +185,25 @@ func processTask(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.Wo
 		return nil
 	}
 
+	// Mock execution mode: return a stub execution plan without running the real task.
+	if os.Getenv("ASTRA_MOCK_EXECUTION") == "true" {
+		mockPlan := map[string]interface{}{
+			"version": "1",
+			"summary": "mock execution plan",
+			"actions": []map[string]interface{}{
+				{"type": "mock", "payload": map[string]string{"task_id": taskID}},
+			},
+		}
+		result, _ := json.Marshal(mockPlan)
+		if err := taskStore.CompleteTask(runCtx, taskID, result); err != nil {
+			slog.Error("complete mock task failed", "task_id", taskID, "err", err)
+			return nil
+		}
+		writeResultPayloadIfPlan(runCtx, database, task.GoalID.String(), result)
+		slog.Info("task completed (mock)", "task_id", taskID)
+		return nil
+	}
+
 	result, taskErr := executeTask(runCtx, task, wsRuntime, legacyRuntime, llmClient)
 	if taskErr != nil {
 		slog.Error("task execution failed", "task_id", taskID, "type", task.Type, "err", taskErr)
@@ -195,8 +216,27 @@ func processTask(bus *messaging.Bus, taskStore *tasks.Store, wsRuntime *tools.Wo
 		slog.Error("complete task failed", "task_id", taskID, "err", err)
 		return nil
 	}
+
+	// Write result_payload to the goals table if result is a valid execution plan.
+	writeResultPayloadIfPlan(runCtx, database, task.GoalID.String(), result)
+
 	slog.Info("task completed", "task_id", taskID, "type", task.Type)
 	return nil
+}
+
+// writeResultPayloadIfPlan writes the result to goals.result_payload when the result is a valid execution plan.
+func writeResultPayloadIfPlan(ctx context.Context, database *sql.DB, goalID string, result []byte) {
+	if database == nil || goalID == "" {
+		return
+	}
+	if !executionplan.IsExecutionPlan(result) {
+		return
+	}
+	if _, err := database.ExecContext(ctx,
+		`UPDATE goals SET result_payload = $1 WHERE id = $2`,
+		result, goalID); err != nil {
+		slog.Warn("writeResultPayloadIfPlan: update failed", "goal_id", goalID, "err", err)
+	}
 }
 
 func executeTask(ctx context.Context, task *tasks.Task, wsRuntime *tools.WorkspaceRuntime, legacyRuntime tools.Runtime, llmClient llmpb.LLMRouterClient) ([]byte, error) {

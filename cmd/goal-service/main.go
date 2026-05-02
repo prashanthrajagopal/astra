@@ -304,6 +304,7 @@ func main() {
 	mux.HandleFunc("POST /internal/goals", gsrv.handleCreateInternalGoal)
 	mux.HandleFunc("POST /goals", gsrv.handleCreateGoal)
 	mux.HandleFunc("GET /goals/{id}", gsrv.handleGetGoal)
+	mux.HandleFunc("GET /goals/{id}/result", gsrv.handleGetGoalResult)
 	mux.HandleFunc("GET /goals/{id}/details", gsrv.handleGetGoalDetails)
 	mux.HandleFunc("GET /goals", gsrv.handleListGoals)
 	mux.HandleFunc("POST /goals/{id}/finalize", gsrv.handleFinalizeGoal)

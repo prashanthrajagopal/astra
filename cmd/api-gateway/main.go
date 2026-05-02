@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -217,6 +218,12 @@ func main() {
 	chatStore := chat.NewStore(database)
 	llmBackend := llm.NewEndpointBackendFromEnv()
 
+	llmConfigStore := llm.NewConfigStore(database)
+	if err := llmConfigStore.Load(context.Background()); err != nil {
+		slog.Warn("llm config store initial load failed", "err", err)
+	}
+	llmConfigStore.StartRefresh(context.Background())
+
 	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr, accessControlBreaker)
 	if err != nil {
 		slog.Error("failed to initialize auth middleware client", "err", err)
@@ -249,7 +256,7 @@ func main() {
 			memoryStore = nil
 		}
 	}
-	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth, rdb)
+	registerDashboardRoutes(mux, cfg, dashCollector, dashboardClient, docStore, chatStore, database, llmBackend, memoryStore, auth, rdb, llmConfigStore)
 	mux.HandleFunc("GET /login", handleLoginPage)
 	mux.HandleFunc("POST /login", makeLoginProxyHandler(dashboardClient, cfg.IdentityAddr))
 	if cfg.ChatEnabled {
@@ -270,6 +277,62 @@ func main() {
 	mux.Handle("GET /agents/{id}/documents", auth.protect(http.HandlerFunc(handleListDocuments)))
 	mux.Handle("DELETE /agents/{id}/documents/{doc_id}", auth.protect(http.HandlerFunc(handleDeleteDocument)))
 	mux.Handle("POST /agents/{id}/goals", auth.protect(handleAgentGoalsProxy(cfg.GoalServiceAddr, goalServiceClient, goalBreaker)))
+	mux.Handle("GET /goals/{id}/result", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		goalSvcBase := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
+		if goalSvcBase == "" {
+			goalSvcBase = fmt.Sprintf("http://localhost:%d", cfg.GoalServicePort)
+			if cfg.GoalServicePort == 0 {
+				goalSvcBase = "http://localhost:8088"
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, goalSvcBase+"/goals/"+id+"/result", nil)
+		if err != nil {
+			http.Error(w, "request build failed", http.StatusInternalServerError)
+			return
+		}
+		resp, err := goalServiceClient.Do(req)
+		if err != nil {
+			http.Error(w, "goal service unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	})))
+	mux.Handle("GET /agents/{id}/goals", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		goalSvcBase := strings.TrimSuffix(cfg.GoalServiceAddr, "/")
+		if goalSvcBase == "" {
+			goalSvcBase = fmt.Sprintf("http://localhost:%d", cfg.GoalServicePort)
+			if cfg.GoalServicePort == 0 {
+				goalSvcBase = "http://localhost:8088"
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		reqURL := goalSvcBase + "/goals?agent_id=" + agentID
+		if q := r.URL.RawQuery; q != "" {
+			reqURL = goalSvcBase + "/goals?agent_id=" + agentID + "&" + q
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			http.Error(w, "request build failed", http.StatusInternalServerError)
+			return
+		}
+		resp, err := goalServiceClient.Do(req)
+		if err != nil {
+			http.Error(w, "goal service unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	})))
 	mux.Handle("/tasks/{rest...}", auth.protect(http.HandlerFunc(handleTasks)))
 	mux.Handle("/graphs/{rest...}", auth.protect(http.HandlerFunc(handleGraphs)))
 
@@ -590,7 +653,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware, rdb *redis.Client) {
+func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *dashboard.Collector, client *http.Client, store *agentdocs.Store, chatStore *chat.Store, database *sql.DB, llmBackend *llm.EndpointBackend, memStore *memory.Store, auth *authMiddleware, rdb *redis.Client, llmConfigStore *llm.ConfigStore) {
 	sub, err := fs.Sub(dashboardFS, "dashboard")
 	if err != nil {
 		slog.Error("dashboard embed setup failed", "err", err)
@@ -646,6 +709,68 @@ func registerDashboardRoutes(mux *http.ServeMux, cfg *config.Config, collector *
 	slackStore := slack.NewStore(database)
 	mux.Handle("GET /superadmin/api/slack/config", auth.protect(handleSlackConfigGet(slackStore)))
 	mux.Handle("PUT /superadmin/api/slack/config", auth.protect(handleSlackConfigPut(slackStore)))
+
+	// LLM provider config routes
+	mux.Handle("GET /superadmin/api/llm/config", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		configs := llmConfigStore.GetAll()
+		// Mask API keys — return sentinel "***" so the UI knows a key is set
+		for i := range configs {
+			if configs[i].APIKey != "" {
+				configs[i].APIKey = "***"
+			}
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"providers": configs})
+	})))
+	mux.Handle("PUT /superadmin/api/llm/config", auth.protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Providers []llm.ProviderConfig `json:"providers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		hasDefault := 0
+		for _, p := range req.Providers {
+			if p.IsDefault {
+				hasDefault++
+			}
+		}
+		if hasDefault > 1 {
+			http.Error(w, `{"error":"only one provider may be set as default"}`, http.StatusBadRequest)
+			return
+		}
+		for _, p := range req.Providers {
+			if p.HostURL != "" {
+				if err := validateLLMHostURL(p.HostURL, true); err != nil {
+					http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+					return
+				}
+			}
+			// Preserve existing API key if sentinel value sent
+			if p.APIKey == "***" {
+				if existing, ok := llmConfigStore.Get(p.Provider); ok {
+					p.APIKey = existing.APIKey
+				} else {
+					p.APIKey = ""
+				}
+			}
+			if err := llmConfigStore.Upsert(ctx, p); err != nil {
+				slog.Error("llm config upsert failed", "provider", p.Provider, "err", err)
+				http.Error(w, `{"error":"save failed"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := llmConfigStore.Load(ctx); err != nil {
+			slog.Warn("llm config reload after save failed", "err", err)
+		}
+		slog.Info("llm provider config updated", "count", len(req.Providers))
+		w.Header().Set(headerContentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})))
+
 	goalServiceBase := fmt.Sprintf("http://localhost:%d", cfg.GoalServicePort)
 	if cfg.GoalServicePort == 0 {
 		goalServiceBase = "http://localhost:8088"
@@ -2215,4 +2340,26 @@ func handleChatInject(w http.ResponseWriter, r *http.Request, database *sql.DB) 
 		"message_id": msgID.String(),
 		"status":     "injected",
 	})
+}
+
+// validateLLMHostURL validates a URL provided for an LLM provider host.
+// It rejects non-http(s) schemes and cloud metadata endpoints (SSRF protection).
+// When allowLocalhost is true, localhost and 127.x addresses are permitted.
+func validateLLMHostURL(rawURL string, allowLocalhost bool) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("scheme %q not allowed; use http or https", u.Scheme)
+	}
+	host := strings.ToLower(u.Hostname())
+	// Block cloud metadata endpoints
+	if strings.HasPrefix(host, "169.254.") || host == "metadata.google.internal" {
+		return fmt.Errorf("metadata/link-local addresses not allowed")
+	}
+	if !allowLocalhost && (host == "localhost" || strings.HasPrefix(host, "127.")) {
+		return fmt.Errorf("localhost addresses not allowed")
+	}
+	return nil
 }

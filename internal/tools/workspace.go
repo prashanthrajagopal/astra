@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"astra/internal/tools/httptool"
 )
 
 // WorkspaceRuntime executes tools scoped to a project workspace directory.
@@ -40,9 +42,21 @@ func (w *WorkspaceRuntime) Execute(ctx context.Context, req ToolRequest) (ToolRe
 		return w.shellExec(ctx, req)
 	case "list_files":
 		return w.listFiles(ctx, req)
+	case "http_fetch":
+		return w.httpFetch(ctx, req)
 	default:
 		return w.shellExec(ctx, req)
 	}
+}
+
+// httpFetch executes an HTTP request to an allow-listed external URL.
+func (w *WorkspaceRuntime) httpFetch(ctx context.Context, req ToolRequest) (ToolResult, error) {
+	executor := httptool.New()
+	out, err := executor.Execute(ctx, req.Input)
+	if err != nil {
+		return ToolResult{Output: []byte(err.Error()), ExitCode: 1}, nil
+	}
+	return ToolResult{Output: out, ExitCode: 0}, nil
 }
 
 // FileWriteRequest is the JSON input for the file_write tool.
