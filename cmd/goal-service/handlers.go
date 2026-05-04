@@ -251,25 +251,11 @@ func (s *goalServer) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 
 	var actorType string
 	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(actor_type, '') FROM agents WHERE id = $1`, agentID).Scan(&actorType)
-	if actorType != "" {
-		if adapterAddr := os.Getenv(strings.ToUpper(actorType) + "_ADAPTER_ADDR"); adapterAddr != "" {
-			if err := s.dispatchViaAdapter(ctx, phaseRunID, goalID, agentID, req.GoalText, actorType); err != nil {
-				slog.Error("dispatch via adapter failed", "err", err)
-				http.Error(w, `{"error":"dispatch failed"}`, http.StatusInternalServerError)
-				return
-			}
-			resp := map[string]interface{}{"goal_id": goalID.String(), "status": "pending"}
-			if idempotencyKey != "" {
-				setCachedGoalResponse(r.Context(), s.rdb, idempotencyKey, http.StatusCreated, resp)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(resp)
-			return
-		}
-	}
 
-	planOpts := &planner.PlanOptions{Workspace: req.Workspace, AgentContext: agentCtxJSON}
+	planOpts := &planner.PlanOptions{Workspace: req.Workspace, AgentContext: agentCtxJSON, ActorType: actorType}
+	if actorType != "" && os.Getenv(strings.ToUpper(actorType)+"_ADAPTER_ADDR") != "" {
+		planOpts.DefaultTaskType = "adapter_dispatch"
+	}
 	graph, err := s.planner.Plan(ctx, goalID, req.GoalText, agentID, planOpts)
 	if err != nil {
 		slog.Error("plan failed", "err", err)
