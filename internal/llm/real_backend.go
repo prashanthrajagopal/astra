@@ -7,120 +7,63 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
 
 type EndpointBackend struct {
-	openAIKey       string
-	anthropicKey    string
-	geminiKey       string
-	ollamaHost      string
-	mlxHost         string // e.g. "http://localhost:8888"
-	mlxModel        string // e.g. "Qwen2.5-7B-Instruct-4bit"
-	defaultProvider string // "mlx" or "ollama"
-	fallback        string
-	httpClient      *http.Client
+	store      *ConfigStore
+	httpClient *http.Client
 }
 
-func NewEndpointBackendFromEnv() *EndpointBackend {
-	host := strings.TrimSuffix(strings.TrimSpace(os.Getenv("OLLAMA_HOST")), "/")
-	if host == "" {
-		host = "http://localhost:11434"
-	}
-	fallback := strings.TrimSpace(os.Getenv("OLLAMA_MODEL"))
-	if fallback == "" {
-		fallback = "llama3:8b"
-	}
-	mlxHost := strings.TrimSuffix(strings.TrimSpace(os.Getenv("MLX_HOST")), "/")
-	if mlxHost == "" {
-		mlxHost = "http://localhost:8888"
-	}
-	mlxModel := strings.TrimSpace(os.Getenv("MLX_MODEL"))
-	if mlxModel == "" {
-		mlxModel = "Qwen2.5-7B-Instruct-4bit"
-	}
-	defaultProvider := strings.ToLower(strings.TrimSpace(os.Getenv("LLM_DEFAULT_PROVIDER")))
-	if defaultProvider == "" {
-		defaultProvider = "ollama"
-	}
+func NewEndpointBackendFromDB(store *ConfigStore) *EndpointBackend {
 	return &EndpointBackend{
-		openAIKey:       strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
-		anthropicKey:    strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")),
-		geminiKey:       strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
-		ollamaHost:      host,
-		mlxHost:         mlxHost,
-		mlxModel:        mlxModel,
-		defaultProvider: defaultProvider,
-		fallback:        fallback,
-		httpClient:      &http.Client{Timeout: 300 * time.Second},
+		store:      store,
+		httpClient: &http.Client{Timeout: 300 * time.Second},
 	}
 }
 
 func (b *EndpointBackend) Complete(ctx context.Context, model string, prompt string) (string, int, int, error) {
 	provider, modelName := splitModel(model)
-	switch provider {
-	case "openai":
-		if b.openAIKey != "" {
-			if r, in, out, err := b.openAIComplete(ctx, modelName, prompt); err == nil {
-				return r, in, out, nil
-			}
+
+	if cfg, ok := b.store.Get(provider); ok && cfg.Enabled {
+		if modelName == "" {
+			modelName = cfg.ModelName
 		}
-	case "anthropic":
-		if b.anthropicKey != "" {
-			if r, in, out, err := b.anthropicComplete(ctx, modelName, prompt); err == nil {
-				return r, in, out, nil
-			}
-		}
-	case "gemini", "google":
-		if b.geminiKey != "" {
-			if r, in, out, err := b.geminiComplete(ctx, modelName, prompt); err == nil {
-				return r, in, out, nil
-			}
-		}
-	case "ollama":
-		if r, in, out, err := b.ollamaComplete(ctx, modelName, prompt); err == nil {
+		if r, in, out, err := b.completeWith(ctx, cfg, modelName, prompt); err == nil {
 			return r, in, out, nil
 		}
-	case "mlx":
-		if b.mlxHost != "" {
-			m := modelName
-			if m == "" {
-				m = b.mlxModel
-			}
-			if r, in, out, err := b.mlxComplete(ctx, m, prompt); err == nil {
-				return r, in, out, nil
-			}
-		}
 	}
 
-	// Fallback path: try preferred local provider first, then the other.
-	if b.defaultProvider == "mlx" {
-		if resp, in, out, err := b.mlxComplete(ctx, b.mlxModel, prompt); err == nil {
-			return resp, in, out, nil
-		}
-		resp, in, out, err := b.ollamaComplete(ctx, b.fallback, prompt)
-		if err != nil {
-			return "", 0, 0, fmt.Errorf("llm fallback failed (mlx then ollama): %w", err)
-		}
-		return resp, in, out, nil
+	def, ok := b.store.GetDefault()
+	if !ok {
+		return "", 0, 0, fmt.Errorf("no default LLM provider configured")
 	}
-	// Default: Ollama first, then MLX
-	if resp, in, out, err := b.ollamaComplete(ctx, b.fallback, prompt); err == nil {
-		return resp, in, out, nil
+	r, in, out, err := b.completeWith(ctx, def, def.ModelName, prompt)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("llm fallback to %s failed: %w", def.Provider, err)
 	}
-	if b.mlxHost != "" {
-		resp, in, out, err := b.mlxComplete(ctx, b.mlxModel, prompt)
-		if err != nil {
-			return "", 0, 0, fmt.Errorf("llm fallback failed (ollama then mlx): %w", err)
-		}
-		return resp, in, out, nil
-	}
-	return "", 0, 0, fmt.Errorf("llm fallback to ollama failed")
+	return r, in, out, nil
 }
 
-func (b *EndpointBackend) openAIComplete(ctx context.Context, model string, prompt string) (string, int, int, error) {
+func (b *EndpointBackend) completeWith(ctx context.Context, cfg ProviderConfig, modelName string, prompt string) (string, int, int, error) {
+	switch cfg.Provider {
+	case "openai":
+		return b.openAIComplete(ctx, modelName, prompt, cfg.HostURL, cfg.APIKey)
+	case "anthropic":
+		return b.anthropicComplete(ctx, modelName, prompt, cfg.HostURL, cfg.APIKey)
+	case "gemini", "google":
+		return b.geminiComplete(ctx, modelName, prompt, cfg.HostURL, cfg.APIKey)
+	case "ollama":
+		return b.ollamaComplete(ctx, modelName, prompt, cfg.HostURL)
+	case "mlx":
+		return b.mlxComplete(ctx, modelName, prompt, cfg.HostURL)
+	default:
+		return "", 0, 0, fmt.Errorf("unknown provider: %s", cfg.Provider)
+	}
+}
+
+func (b *EndpointBackend) openAIComplete(ctx context.Context, model, prompt, hostURL, apiKey string) (string, int, int, error) {
 	reqBody := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
@@ -138,8 +81,9 @@ func (b *EndpointBackend) openAIComplete(ctx context.Context, model string, prom
 			CompletionTokens int `json:"completion_tokens"`
 		} `json:"usage"`
 	}
-	err := b.postJSON(ctx, "https://api.openai.com/v1/chat/completions", reqBody, map[string]string{
-		"Authorization": "Bearer " + b.openAIKey,
+	url := strings.TrimSuffix(hostURL, "/") + "/chat/completions"
+	err := b.postJSON(ctx, url, reqBody, map[string]string{
+		"Authorization": "Bearer " + apiKey,
 	}, &resp)
 	if err != nil {
 		return "", 0, 0, err
@@ -150,7 +94,7 @@ func (b *EndpointBackend) openAIComplete(ctx context.Context, model string, prom
 	return resp.Choices[0].Message.Content, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, nil
 }
 
-func (b *EndpointBackend) anthropicComplete(ctx context.Context, model string, prompt string) (string, int, int, error) {
+func (b *EndpointBackend) anthropicComplete(ctx context.Context, model, prompt, hostURL, apiKey string) (string, int, int, error) {
 	reqBody := map[string]any{
 		"model":      model,
 		"max_tokens": 512,
@@ -167,8 +111,9 @@ func (b *EndpointBackend) anthropicComplete(ctx context.Context, model string, p
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	err := b.postJSON(ctx, "https://api.anthropic.com/v1/messages", reqBody, map[string]string{
-		"x-api-key":         b.anthropicKey,
+	url := strings.TrimSuffix(hostURL, "/") + "/messages"
+	err := b.postJSON(ctx, url, reqBody, map[string]string{
+		"x-api-key":         apiKey,
 		"anthropic-version": "2023-06-01",
 	}, &resp)
 	if err != nil {
@@ -180,7 +125,7 @@ func (b *EndpointBackend) anthropicComplete(ctx context.Context, model string, p
 	return resp.Content[0].Text, resp.Usage.InputTokens, resp.Usage.OutputTokens, nil
 }
 
-func (b *EndpointBackend) geminiComplete(ctx context.Context, model string, prompt string) (string, int, int, error) {
+func (b *EndpointBackend) geminiComplete(ctx context.Context, model, prompt, hostURL, apiKey string) (string, int, int, error) {
 	reqBody := map[string]any{
 		"contents": []map[string]any{
 			{"parts": []map[string]string{{"text": prompt}}},
@@ -199,7 +144,7 @@ func (b *EndpointBackend) geminiComplete(ctx context.Context, model string, prom
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, b.geminiKey)
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", strings.TrimSuffix(hostURL, "/"), model, apiKey)
 	err := b.postJSON(ctx, url, reqBody, nil, &resp)
 	if err != nil {
 		return "", 0, 0, err
@@ -210,9 +155,7 @@ func (b *EndpointBackend) geminiComplete(ctx context.Context, model string, prom
 	return resp.Candidates[0].Content.Parts[0].Text, resp.UsageMetadata.PromptTokenCount, resp.UsageMetadata.CandidatesTokenCount, nil
 }
 
-// ollamaComplete calls Ollama /api/generate. Token counts come from prompt_eval_count and eval_count.
-// Note: Ollama may return 0 for prompt_eval_count when the prompt is cached server-side.
-func (b *EndpointBackend) ollamaComplete(ctx context.Context, model string, prompt string) (string, int, int, error) {
+func (b *EndpointBackend) ollamaComplete(ctx context.Context, model, prompt, hostURL string) (string, int, int, error) {
 	reqBody := map[string]any{
 		"model":  model,
 		"prompt": prompt,
@@ -223,17 +166,14 @@ func (b *EndpointBackend) ollamaComplete(ctx context.Context, model string, prom
 		PromptEvalCount int    `json:"prompt_eval_count"`
 		EvalCount       int    `json:"eval_count"`
 	}
-	err := b.postJSON(ctx, b.ollamaHost+"/api/generate", reqBody, nil, &resp)
+	err := b.postJSON(ctx, strings.TrimSuffix(hostURL, "/")+"/api/generate", reqBody, nil, &resp)
 	if err != nil {
 		return "", 0, 0, err
 	}
 	return resp.Response, resp.PromptEvalCount, resp.EvalCount, nil
 }
 
-func (b *EndpointBackend) mlxComplete(ctx context.Context, model string, prompt string) (string, int, int, error) {
-	if model == "" {
-		model = b.mlxModel
-	}
+func (b *EndpointBackend) mlxComplete(ctx context.Context, model, prompt, hostURL string) (string, int, int, error) {
 	reqBody := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
@@ -251,8 +191,7 @@ func (b *EndpointBackend) mlxComplete(ctx context.Context, model string, prompt 
 			CompletionTokens int `json:"completion_tokens"`
 		} `json:"usage"`
 	}
-	// Try OpenAI-style path first; some mlx_lm.server versions only expose /chat/completions
-	base := strings.TrimSuffix(b.mlxHost, "/")
+	base := strings.TrimSuffix(hostURL, "/")
 	err := b.postJSON(ctx, base+"/v1/chat/completions", reqBody, nil, &resp)
 	if err != nil && isNotFound(err) {
 		err = b.postJSON(ctx, base+"/chat/completions", reqBody, nil, &resp)
@@ -266,7 +205,6 @@ func (b *EndpointBackend) mlxComplete(ctx context.Context, model string, prompt 
 	return resp.Choices[0].Message.Content, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, nil
 }
 
-// isNotFound reports whether err is an HTTP 404 from postJSON.
 func isNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "status 404")
 }

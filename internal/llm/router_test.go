@@ -32,7 +32,7 @@ func TestComplete_StubBackend_NoCache(t *testing.T) {
 func TestComplete_StubBackend_CustomOptions(t *testing.T) {
 	ctx := context.Background()
 	stub := &StubBackend{Response: "custom", TokensIn: 5, TokensOut: 15}
-	r := NewRouterWithCache(stub, nil, 0)
+	r := NewRouterWithCache(stub, nil, nil, 0)
 	resp, usage, err := r.Complete(ctx, "premium", "hi", &CompletionOptions{ModelHint: "premium"})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -81,7 +81,7 @@ func TestComplete_WithCache_SecondCallDoesNotCallBackend(t *testing.T) {
 		t.Skipf("Memcached not available: %v", err)
 	}
 	backend := &countingBackend{resp: "first"}
-	r := NewRouterWithCache(backend, mc, 60)
+	r := NewRouterWithCache(backend, nil, mc, 60)
 	ctx := context.Background()
 	prompt := "identical prompt for cache"
 
@@ -114,6 +114,7 @@ func TestComplete_WithCache_SecondCallDoesNotCallBackend(t *testing.T) {
 }
 
 func TestResolveModel(t *testing.T) {
+	r := &routerImpl{} // no store — uses fallback constants
 	tests := []struct {
 		hint string
 		want string
@@ -123,36 +124,33 @@ func TestResolveModel(t *testing.T) {
 		{"premium", ModelPremium},
 		{"code", ModelCode},
 		{"custom/model", "custom/model"},
-		{"mlx", "mlx/Qwen2.5-7B-Instruct-4bit"},
+		{"ollama", ModelLocal},
 	}
 	for _, tt := range tests {
-		// Ensure default env for deterministic results (no LLM_DEFAULT_PROVIDER=mlx)
-		t.Setenv("LLM_DEFAULT_PROVIDER", "")
-		t.Setenv("MLX_MODEL", "")
-		got := resolveModel(tt.hint)
+		got := r.resolveModel(tt.hint)
 		if got != tt.want {
 			t.Errorf("resolveModel(%q) = %q, want %q", tt.hint, got, tt.want)
 		}
 	}
+}
 
-	t.Run("local with LLM_DEFAULT_PROVIDER=mlx", func(t *testing.T) {
-		t.Setenv("LLM_DEFAULT_PROVIDER", "mlx")
-		t.Setenv("MLX_MODEL", "")
-		got := resolveModel("local")
-		want := "mlx/Qwen2.5-7B-Instruct-4bit"
-		if got != want {
-			t.Errorf("resolveModel(\"local\") with MLX = %q, want %q", got, want)
-		}
-	})
+func TestResolveModel_WithStore(t *testing.T) {
+	store := &ConfigStore{
+		configs: map[string]ProviderConfig{
+			"ollama": {Provider: "ollama", ModelName: "llama3.2", HostURL: "http://localhost:11434", Enabled: true, IsDefault: true},
+		},
+	}
+	r := &routerImpl{store: store}
 
-	t.Run("mlx with MLX_MODEL override", func(t *testing.T) {
-		t.Setenv("MLX_MODEL", "custom-model")
-		got := resolveModel("mlx")
-		want := "mlx/custom-model"
-		if got != want {
-			t.Errorf("resolveModel(\"mlx\") with override = %q, want %q", got, want)
-		}
-	})
+	if got := r.resolveModel("local"); got != "ollama/llama3.2" {
+		t.Errorf("resolveModel(local) = %q, want ollama/llama3.2", got)
+	}
+	if got := r.resolveModel("ollama"); got != "ollama/llama3.2" {
+		t.Errorf("resolveModel(ollama) = %q, want ollama/llama3.2", got)
+	}
+	if got := r.resolveModel(""); got != "ollama/llama3.2" {
+		t.Errorf("resolveModel('') = %q, want ollama/llama3.2", got)
+	}
 }
 
 func TestCacheKey(t *testing.T) {

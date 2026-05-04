@@ -266,8 +266,13 @@ func main() {
 
 	eventStore := events.NewStore(database)
 
+	configStore := llm.NewConfigStore(database)
+	if err := configStore.Load(context.Background()); err != nil {
+		slog.Warn("llm config initial load failed", "err", err)
+	}
+	configStore.StartRefresh(context.Background())
 	mc := memcache.New(cfg.MemcachedAddr)
-	router := llm.NewRouterWithCache(llm.NewEndpointBackendFromEnv(), mc, cacheTTL)
+	router := llm.NewRouterWithCache(llm.NewEndpointBackendFromDB(configStore), configStore, mc, cacheTTL)
 	srv := &llmRouterServer{router: router, bus: bus, rdb: rdb}
 	grpcSrv, err := grpc.NewServerFromConfig(cfg)
 	if err != nil {

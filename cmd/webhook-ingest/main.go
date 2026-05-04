@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -13,10 +14,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"astra/internal/messaging"
 	"astra/pkg/config"
 	"astra/pkg/db"
 	"astra/pkg/health"
@@ -60,7 +61,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	bus := messaging.New(cfg.RedisAddr)
+	forwardURL := getEnv("WEBHOOK_FORWARD_URL", "")
+	forwardSecret := getEnv("WEBHOOK_FORWARD_SECRET", "")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +72,7 @@ func main() {
 	})
 	mux.HandleFunc("GET /ready", health.ReadyHandler(database, rdb))
 	mux.HandleFunc("POST /webhooks/{source_id}", func(w http.ResponseWriter, r *http.Request) {
-		handleWebhook(w, r, database, bus)
+		handleWebhook(w, r, database, forwardURL, forwardSecret)
 	})
 	mux.HandleFunc("POST /webhook-sources", func(w http.ResponseWriter, r *http.Request) {
 		handleCreateSource(w, r, database)
@@ -122,7 +124,7 @@ func migrate(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-func handleWebhook(w http.ResponseWriter, r *http.Request, database *sql.DB, bus *messaging.Bus) {
+func handleWebhook(w http.ResponseWriter, r *http.Request, database *sql.DB, forwardURL, forwardSecret string) {
 	sourceID := r.PathValue("source_id")
 	if sourceID == "" {
 		http.Error(w, `{"error":"missing source_id"}`, http.StatusBadRequest)
@@ -165,17 +167,19 @@ func handleWebhook(w http.ResponseWriter, r *http.Request, database *sql.DB, bus
 	}
 
 	triggerID := uuid.New().String()
-	err = bus.Publish(r.Context(), "olympus:triggers:raw", map[string]interface{}{
+	event := map[string]interface{}{
 		"trigger_id":  triggerID,
 		"source_id":   sourceID,
 		"source_name": source.Name,
 		"payload":     string(body),
 		"received_at": time.Now().Unix(),
-	})
-	if err != nil {
-		slog.Error("publish webhook event failed", "source_id", sourceID, "err", err)
-		http.Error(w, `{"error":"publish failed"}`, http.StatusInternalServerError)
-		return
+	}
+	if forwardURL != "" {
+		if err := forwardEvent(r.Context(), forwardURL, forwardSecret, event); err != nil {
+			slog.Error("forward webhook event failed", "source_id", sourceID, "err", err)
+			http.Error(w, `{"error":"forward failed"}`, http.StatusBadGateway)
+			return
+		}
 	}
 
 	slog.Info("webhook received", "source_id", sourceID, "trigger_id", triggerID)
@@ -185,6 +189,33 @@ func handleWebhook(w http.ResponseWriter, r *http.Request, database *sql.DB, bus
 		"trigger_id": triggerID,
 		"status":     "accepted",
 	})
+}
+
+func forwardEvent(ctx context.Context, forwardURL, secret string, event map[string]interface{}) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(forwardURL, "/")+"/ingest/webhook", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret != "" {
+		req.Header.Set("X-Astra-Secret", secret)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("forward returned %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 func validateHMAC(body []byte, signature, secret string) bool {
