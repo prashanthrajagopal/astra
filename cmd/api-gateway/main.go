@@ -216,13 +216,12 @@ func main() {
 	gatewayDB = database
 	docStore = agentdocs.NewStore(database, rdb)
 	chatStore := chat.NewStore(database)
-	llmBackend := llm.NewEndpointBackendFromEnv()
-
 	llmConfigStore := llm.NewConfigStore(database)
 	if err := llmConfigStore.Load(context.Background()); err != nil {
 		slog.Warn("llm config store initial load failed", "err", err)
 	}
 	llmConfigStore.StartRefresh(context.Background())
+	llmBackend := llm.NewEndpointBackendFromDB(llmConfigStore)
 
 	auth, err := newAuthMiddleware(cfg, cfg.IdentityAddr, cfg.AccessControlAddr, accessControlBreaker)
 	if err != nil {

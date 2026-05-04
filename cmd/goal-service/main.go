@@ -270,9 +270,13 @@ func main() {
 	taskStore := tasks.NewStore(database)
 	eventStore := events.NewStore(database)
 
-	backend := llm.NewEndpointBackendFromEnv()
+	llmConfigStore := llm.NewConfigStore(database)
+	if err := llmConfigStore.Load(context.Background()); err != nil {
+		slog.Warn("llm config initial load failed", "err", err)
+	}
+	llmConfigStore.StartRefresh(context.Background())
 	mc := memcache.New(cfg.MemcachedAddr)
-	router := llm.NewRouterWithCache(backend, mc, 86400)
+	router := llm.NewRouterWithCache(llm.NewEndpointBackendFromDB(llmConfigStore), llmConfigStore, mc, 86400)
 	p := planner.NewWithRouter(router)
 
 	port := cfg.GoalServicePort
@@ -310,6 +314,11 @@ func main() {
 	mux.HandleFunc("POST /goals/{id}/finalize", gsrv.handleFinalizeGoal)
 	mux.HandleFunc("GET /stats", gsrv.handleStats)
 
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	defer cancelCtx()
+
+	go gsrv.retryPendingGoals(ctx)
+
 	httpSrv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: mux}
 	go func() {
 		slog.Info("goal service listening", "port", port)
@@ -322,6 +331,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
+	cancelCtx()
 	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
