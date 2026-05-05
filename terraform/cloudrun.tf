@@ -30,7 +30,7 @@ locals {
 resource "google_cloud_run_v2_service" "identity" {
   name     = "identity"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -95,13 +95,6 @@ resource "google_cloud_run_v2_service" "identity" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "identity_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.identity.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # access-control
@@ -109,7 +102,7 @@ resource "google_cloud_run_v2_service_iam_member" "identity_public" {
 resource "google_cloud_run_v2_service" "access_control" {
   name     = "access-control"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -173,13 +166,6 @@ resource "google_cloud_run_v2_service" "access_control" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "access_control_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.access_control.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # goal-service — creates and tracks goals, runs planner
@@ -187,7 +173,7 @@ resource "google_cloud_run_v2_service_iam_member" "access_control_public" {
 resource "google_cloud_run_v2_service" "goal_service" {
   name     = "goal-service"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -252,13 +238,6 @@ resource "google_cloud_run_v2_service" "goal_service" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "goal_service_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.goal_service.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # worker-manager
@@ -266,7 +245,7 @@ resource "google_cloud_run_v2_service_iam_member" "goal_service_public" {
 resource "google_cloud_run_v2_service" "worker_manager" {
   name     = "worker-manager"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -330,13 +309,6 @@ resource "google_cloud_run_v2_service" "worker_manager" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "worker_manager_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.worker_manager.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # webhook-ingest — receives external webhook events
@@ -344,7 +316,7 @@ resource "google_cloud_run_v2_service_iam_member" "worker_manager_public" {
 resource "google_cloud_run_v2_service" "webhook_ingest" {
   name     = "webhook-ingest"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -414,13 +386,6 @@ resource "google_cloud_run_v2_service" "webhook_ingest" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "webhook_ingest_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.webhook_ingest.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # scheduler-service
@@ -428,7 +393,7 @@ resource "google_cloud_run_v2_service_iam_member" "webhook_ingest_public" {
 resource "google_cloud_run_v2_service" "scheduler_service" {
   name     = "scheduler-service"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -492,13 +457,6 @@ resource "google_cloud_run_v2_service" "scheduler_service" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "scheduler_service_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.scheduler_service.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # memory-service
@@ -506,7 +464,7 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_service_public" {
 resource "google_cloud_run_v2_service" "memory_service" {
   name     = "memory-service"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -571,13 +529,6 @@ resource "google_cloud_run_v2_service" "memory_service" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "memory_service_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.memory_service.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # prompt-manager
@@ -585,7 +536,7 @@ resource "google_cloud_run_v2_service_iam_member" "memory_service_public" {
 resource "google_cloud_run_v2_service" "prompt_manager" {
   name     = "prompt-manager"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -649,13 +600,6 @@ resource "google_cloud_run_v2_service" "prompt_manager" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "prompt_manager_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.prompt_manager.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # planner-service
@@ -663,7 +607,7 @@ resource "google_cloud_run_v2_service_iam_member" "prompt_manager_public" {
 resource "google_cloud_run_v2_service" "planner_service" {
   name     = "planner-service"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -727,13 +671,6 @@ resource "google_cloud_run_v2_service" "planner_service" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "planner_service_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.planner_service.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # evaluation-service
@@ -741,7 +678,7 @@ resource "google_cloud_run_v2_service_iam_member" "planner_service_public" {
 resource "google_cloud_run_v2_service" "evaluation_service" {
   name     = "evaluation-service"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -805,13 +742,6 @@ resource "google_cloud_run_v2_service" "evaluation_service" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "evaluation_service_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.evaluation_service.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # cost-tracker
@@ -819,7 +749,7 @@ resource "google_cloud_run_v2_service_iam_member" "evaluation_service_public" {
 resource "google_cloud_run_v2_service" "cost_tracker" {
   name     = "cost-tracker"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -883,13 +813,6 @@ resource "google_cloud_run_v2_service" "cost_tracker" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "cost_tracker_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.cost_tracker.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # browser-worker
@@ -897,7 +820,7 @@ resource "google_cloud_run_v2_service_iam_member" "cost_tracker_public" {
 resource "google_cloud_run_v2_service" "browser_worker" {
   name     = "browser-worker"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -961,13 +884,6 @@ resource "google_cloud_run_v2_service" "browser_worker" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "browser_worker_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.browser_worker.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # tool-runtime
@@ -975,7 +891,7 @@ resource "google_cloud_run_v2_service_iam_member" "browser_worker_public" {
 resource "google_cloud_run_v2_service" "tool_runtime" {
   name     = "tool-runtime"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -1039,13 +955,6 @@ resource "google_cloud_run_v2_service" "tool_runtime" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "tool_runtime_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.tool_runtime.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 # ---------------------------------------------------------------------------
 # astra-engine — multi-container: llm-router (main) + execution-worker (sidecar)
@@ -1206,7 +1115,7 @@ resource "google_cloud_run_v2_service" "astra_engine" {
 resource "google_cloud_run_v2_service" "astra_gateway" {
   name     = "astra-gateway"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   depends_on = [
     google_project_service.apis["run.googleapis.com"],
     google_sql_database_instance.postgres,
@@ -1408,10 +1317,3 @@ resource "google_cloud_run_v2_service" "astra_gateway" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "astra_gateway_public" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.astra_gateway.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
