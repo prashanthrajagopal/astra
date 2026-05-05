@@ -223,57 +223,6 @@ func (s *goalServer) processPendingGoals(ctx context.Context) {
 	wg.Wait()
 }
 
-// dispatchViaAdapter bypasses the code planner and creates a single passthrough task
-// routed to the external adapter registered for actorType.
-func (s *goalServer) dispatchViaAdapter(ctx context.Context, phaseRunID, goalID, agentID uuid.UUID, goalText, actorType string) error {
-	agentCtx, err := s.docStore.AssembleContext(ctx, agentID, &goalID)
-	var agentCtxJSON json.RawMessage
-	if err == nil && agentCtx != nil {
-		agentCtxJSON, _ = agentdocs.SerializeContext(agentCtx)
-	}
-
-	taskPayload, _ := json.Marshal(map[string]any{
-		"provider_type": actorType,
-		"goal_text":     goalText,
-		"agent_context": agentCtxJSON,
-	})
-	graphID := uuid.New()
-	graph := tasks.Graph{
-		ID: graphID,
-		Tasks: []tasks.Task{{
-			ID:      uuid.New(),
-			GraphID: graphID,
-			GoalID:  goalID,
-			AgentID: agentID,
-			Type:    "general",
-			Status:  tasks.StatusCreated,
-			Payload: taskPayload,
-		}},
-	}
-
-	if !s.autoApprovePlans {
-		planPayload := buildPlanPayload(&graph, goalID, agentID, goalText)
-		planPayloadJSON, _ := json.Marshal(planPayload)
-		approvalID := uuid.New()
-		if _, err := s.db.ExecContext(ctx,
-			`INSERT INTO approval_requests (id, request_type, goal_id, graph_id, plan_payload, status, requested_by)
-			 VALUES ($1, 'plan', $2, $3, $4, 'pending', $5)`,
-			approvalID, goalID, graphID, planPayloadJSON, "system"); err != nil {
-			return err
-		}
-		assignApprovalToAdmin(ctx, s.db, approvalID, agentID)
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE phase_runs SET status='completed', ended_at=now(), updated_at=now() WHERE id=$1`, phaseRunID)
-		return nil
-	}
-
-	if err := s.taskStore.CreateGraph(ctx, &graph); err != nil {
-		return err
-	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE goals SET status='active' WHERE id=$1`, goalID)
-	return nil
-}
-
 // planGoal runs the planner for an existing pending goal and either enqueues tasks
 // (when autoApprovePlans is true) or creates a pending approval request.
 func (s *goalServer) planGoal(ctx context.Context, goalID, agentID uuid.UUID, goalText, workspaceTag string) error {
@@ -286,11 +235,6 @@ func (s *goalServer) planGoal(ctx context.Context, goalID, agentID uuid.UUID, go
 
 	var actorType string
 	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(actor_type, '') FROM agents WHERE id = $1`, agentID).Scan(&actorType)
-	if actorType != "" {
-		if adapterAddr := os.Getenv(strings.ToUpper(actorType) + "_ADAPTER_ADDR"); adapterAddr != "" {
-			return s.dispatchViaAdapter(ctx, phaseRunID, goalID, agentID, goalText, actorType)
-		}
-	}
 
 	agentCtx, err := s.docStore.AssembleContext(ctx, agentID, &goalID)
 	var agentCtxJSON json.RawMessage
@@ -298,7 +242,10 @@ func (s *goalServer) planGoal(ctx context.Context, goalID, agentID uuid.UUID, go
 		agentCtxJSON, _ = agentdocs.SerializeContext(agentCtx)
 	}
 
-	planOpts := &planner.PlanOptions{Workspace: workspaceTag, AgentContext: agentCtxJSON}
+	planOpts := &planner.PlanOptions{Workspace: workspaceTag, AgentContext: agentCtxJSON, ActorType: actorType}
+	if actorType != "" && os.Getenv(strings.ToUpper(actorType)+"_ADAPTER_ADDR") != "" {
+		planOpts.DefaultTaskType = "adapter_dispatch"
+	}
 	graph, err := s.planner.Plan(ctx, goalID, goalText, agentID, planOpts)
 	if err != nil {
 		_, _ = s.db.ExecContext(ctx,

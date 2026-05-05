@@ -73,7 +73,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := registry.Register(ctx, w.ID.String(), hostname, []string{"general", "code_generate", "shell_exec"}); err != nil {
+	if err := registry.Register(ctx, w.ID.String(), hostname, []string{"general", "code_generate", "shell_exec", "adapter_dispatch", "llm_response"}); err != nil {
 		slog.Error("failed to register worker", "err", err)
 		os.Exit(1)
 	}
@@ -254,6 +254,11 @@ func executeTask(ctx context.Context, task *tasks.Task, wsRuntime *tools.Workspa
 		return executeCodeGen(ctx, task, wsRuntime, llmClient)
 	case "shell_exec":
 		return executeShellExec(ctx, task, wsRuntime)
+	case "llm_response":
+		return executeLLMResponse(ctx, task, llmClient)
+	case "adapter_dispatch":
+		// provider_type in payload routes to the adapter above; only reach here if unset.
+		return executeLegacy(ctx, task, legacyRuntime)
 	default:
 		return executeLegacy(ctx, task, legacyRuntime)
 	}
@@ -386,6 +391,35 @@ func executeShellExec(ctx context.Context, task *tasks.Task, wsRuntime *tools.Wo
 		return nil, fmt.Errorf("%s", result.Error)
 	}
 	out, _ := json.Marshal(result)
+	return out, nil
+}
+
+func executeLLMResponse(ctx context.Context, task *tasks.Task, llmClient llmpb.LLMRouterClient) ([]byte, error) {
+	if llmClient == nil {
+		return nil, fmt.Errorf("llm-router not available for llm_response task")
+	}
+	var payload struct {
+		Instructions   string `json:"instructions"`
+		ResponseFormat string `json:"response_format"`
+	}
+	if task.Payload != nil {
+		_ = json.Unmarshal(task.Payload, &payload)
+	}
+	if payload.Instructions == "" {
+		return nil, fmt.Errorf("llm_response task missing instructions")
+	}
+	resp, err := llmClient.Complete(ctx, &llmpb.CompletionRequest{
+		Prompt:    payload.Instructions,
+		ModelHint: "code",
+		MaxTokens: 4096,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("llm_response: %w", err)
+	}
+	out, _ := json.Marshal(map[string]string{
+		"content":         resp.GetContent(),
+		"response_format": payload.ResponseFormat,
+	})
 	return out, nil
 }
 
