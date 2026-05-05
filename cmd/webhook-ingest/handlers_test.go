@@ -31,7 +31,7 @@ func TestHandleWebhook_MissingSourceID(t *testing.T) {
 	// via the mux so path extraction works.
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhooks/{source_id}", func(w http.ResponseWriter, r *http.Request) {
-		handleWebhook(w, r, nil, nil)
+		handleWebhook(w, r, nil, "", "")
 	})
 
 	// Hitting /webhooks/ (no source_id segment) will 404 from the mux pattern
