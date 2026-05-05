@@ -48,3 +48,11 @@ CLAUDE.md
 deck
 workspace/*
 .cursor
+
+# Terraform — state and secrets must never be committed
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/*.tfplan

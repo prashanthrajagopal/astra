@@ -1,0 +1,9 @@
+FROM alpine:3.20
+RUN apk --no-cache add postgresql16-client
+
+COPY migrations/ /migrations/
+
+COPY scripts/run_migrations.sh /run_migrations.sh
+RUN chmod +x /run_migrations.sh
+
+ENTRYPOINT ["/run_migrations.sh"]
