@@ -1,9 +1,20 @@
 # Copy this file to terraform.tfvars and fill in your values.
 # terraform.tfvars is gitignored — never commit it.
 
-project_id  = "your-gcp-project-id"
+# Service project where Astra runs
+project_id  = "your-astra-service-project-id"
+
+# Shared VPC host project (choose one)
+# Non-prod: vpc-host-nonprod-xz142-ib904
+# Prod:     vpc-host-prod-sn824-er021
+host_project_id   = "vpc-host-nonprod-xz142-ib904"
+shared_vpc_name   = "shared-vpc"           # actual VPC network name in host project
+shared_vpc_subnet = "astra-subnet"         # subnet name allocated to this service project
+
+environment = "nonprod"    # nonprod or prod
 region      = "us-central1"
-image_tag   = "latest"              # or a specific tag like "v0.8.0"
+image_tag   = "latest"     # or a specific tag like "v0.8.0"
+
 db_password = "change-me-strong-password"
 jwt_secret  = "change-me-jwt-secret-min-32-chars"
 

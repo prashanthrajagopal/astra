@@ -1,6 +1,7 @@
-# e2-micro VM running Redis — cheaper than Cloud Memorystore for dev/small deployments
+# e2-micro VM running Redis — cheaper than Cloud Memorystore for dev/small deployments.
+# Attached to the shared VPC subnet; no external IP (outbound via host project's Cloud NAT).
 resource "google_compute_instance" "redis" {
-  name         = "astra-redis"
+  name         = "astra-redis-${var.environment}"
   machine_type = var.redis_machine_type
   zone         = "${var.region}-a"
   tags         = ["astra-redis"]
@@ -14,12 +15,11 @@ resource "google_compute_instance" "redis" {
   }
 
   network_interface {
-    network    = google_compute_network.vpc.id
-    subnetwork = google_compute_subnetwork.subnet.id
-    # No external IP — outbound via Cloud NAT
+    network    = data.google_compute_network.shared_vpc.id
+    subnetwork = data.google_compute_subnetwork.shared_subnet.id
+    # No external IP — outbound internet via host project's Cloud NAT
   }
 
-  # Install Redis and bind to all interfaces within VPC
   metadata_startup_script = <<-SCRIPT
     #!/bin/bash
     apt-get update -y
@@ -34,6 +34,4 @@ resource "google_compute_instance" "redis" {
     email  = google_service_account.astra.email
     scopes = ["cloud-platform"]
   }
-
-  depends_on = [google_compute_network.vpc]
 }

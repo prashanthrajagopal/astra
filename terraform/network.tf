@@ -1,87 +1,45 @@
-resource "google_compute_network" "vpc" {
-  name                    = "astra-vpc"
-  auto_create_subnetworks = false
-  depends_on              = [google_project_service.apis["compute.googleapis.com"]]
+# ---------------------------------------------------------------------------
+# Shared VPC — Astra is a service project; it does NOT own the VPC.
+# The host project owns the network, subnets, router, NAT, and firewall rules.
+# We only reference the shared resources and create the VPC Access Connector
+# in the service project so Cloud Run can reach private VPC resources.
+# ---------------------------------------------------------------------------
+
+# Read the shared VPC network from the host project
+data "google_compute_network" "shared_vpc" {
+  name    = var.shared_vpc_name
+  project = var.host_project_id
 }
 
-resource "google_compute_subnetwork" "subnet" {
-  name          = "astra-subnet"
-  ip_cidr_range = "10.0.0.0/20"
-  region        = var.region
-  network       = google_compute_network.vpc.id
-}
-
-# Private Services Access — required for Cloud SQL private IP
-resource "google_compute_global_address" "private_ip_range" {
-  name          = "astra-private-ip-range"
-  purpose       = "VPC_PEERING"
-  address_type  = "INTERNAL"
-  prefix_length = 16
-  network       = google_compute_network.vpc.id
-  depends_on    = [google_project_service.apis["compute.googleapis.com"]]
-}
-
-resource "google_service_networking_connection" "private_vpc" {
-  network                 = google_compute_network.vpc.id
-  service                 = "servicenetworking.googleapis.com"
-  reserved_peering_ranges = [google_compute_global_address.private_ip_range.name]
-  depends_on              = [google_project_service.apis["servicenetworking.googleapis.com"]]
-}
-
-# Serverless VPC Connector — bridges Cloud Run to private VPC resources
-resource "google_vpc_access_connector" "connector" {
-  name          = "astra-connector"
-  region        = var.region
-  ip_cidr_range = "10.8.0.0/28"
-  network       = google_compute_network.vpc.name
-  depends_on    = [google_project_service.apis["vpcaccess.googleapis.com"]]
-}
-
-# Cloud Router + NAT — outbound internet for Redis VM startup script and LLM calls
-resource "google_compute_router" "router" {
-  name    = "astra-router"
-  network = google_compute_network.vpc.id
+# Read the subnet allocated for this service project's workloads
+data "google_compute_subnetwork" "shared_subnet" {
+  name    = var.shared_vpc_subnet
   region  = var.region
+  project = var.host_project_id
 }
 
-resource "google_compute_router_nat" "nat" {
-  name                               = "astra-nat"
-  router                             = google_compute_router.router.name
-  region                             = var.region
-  nat_ip_allocate_option             = "AUTO_ONLY"
-  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+# VPC Access Connector — created in the service project but attached to the
+# shared VPC subnet so Cloud Run services can reach Cloud SQL and Redis.
+# The host project must have already granted this service project Compute Network User
+# on the subnet (done by the host project admin via Shared VPC IAM).
+resource "google_vpc_access_connector" "connector" {
+  name    = "astra-connector"
+  region  = var.region
+  project = var.project_id
+
+  subnet {
+    name       = data.google_compute_subnetwork.shared_subnet.name
+    project_id = var.host_project_id
+  }
+
+  depends_on = [google_project_service.apis["vpcaccess.googleapis.com"]]
 }
 
-# Allow all internal VPC traffic
-resource "google_compute_firewall" "internal" {
-  name    = "astra-allow-internal"
-  network = google_compute_network.vpc.name
-
-  allow {
-    protocol = "tcp"
-    ports    = ["0-65535"]
-  }
-  allow {
-    protocol = "udp"
-    ports    = ["0-65535"]
-  }
-  allow {
-    protocol = "icmp"
-  }
-
-  source_ranges = ["10.0.0.0/8"]
-}
-
-# IAP SSH for Redis VM maintenance
-resource "google_compute_firewall" "iap_ssh" {
-  name    = "astra-iap-ssh"
-  network = google_compute_network.vpc.name
-
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-
-  source_ranges = ["35.235.240.0/20"]
-  target_tags   = ["astra-redis"]
-}
+# NOTE: Private Services Access (for Cloud SQL private IP) must be configured
+# in the HOST project — not here. The host project admin runs:
+#   gcloud services vpc-peerings connect \
+#     --service=servicenetworking.googleapis.com \
+#     --ranges=<allocated-range> \
+#     --network=<shared-vpc-name> \
+#     --project=<host-project-id>
+# This is a one-time operation per host project and is likely already done.

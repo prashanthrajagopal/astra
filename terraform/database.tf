@@ -1,10 +1,11 @@
 resource "google_sql_database_instance" "postgres" {
-  name             = "astra-postgres"
+  name             = "astra-postgres-${var.environment}"
   database_version = "POSTGRES_15"
   region           = var.region
 
-  # Private IP requires the VPC peering connection to exist first
-  depends_on = [google_service_networking_connection.private_vpc]
+  # Private Services Access peering is managed by the host project.
+  # Cloud SQL private IP is allocated on the shared VPC network.
+  depends_on = [google_project_service.apis["sqladmin.googleapis.com"]]
 
   settings {
     tier              = var.db_tier
@@ -14,7 +15,7 @@ resource "google_sql_database_instance" "postgres" {
 
     ip_configuration {
       ipv4_enabled    = false
-      private_network = google_compute_network.vpc.id
+      private_network = data.google_compute_network.shared_vpc.id
     }
 
     database_flags {
