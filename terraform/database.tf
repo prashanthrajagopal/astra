@@ -5,7 +5,10 @@ resource "google_sql_database_instance" "postgres" {
 
   # Private Services Access peering is managed by the host project.
   # Cloud SQL private IP is allocated on the shared VPC network.
-  depends_on = [google_project_service.apis["sqladmin.googleapis.com"]]
+  depends_on = [
+    google_project_service.apis["sqladmin.googleapis.com"],
+    time_sleep.iam_propagation,
+  ]
 
   settings {
     tier              = var.db_tier

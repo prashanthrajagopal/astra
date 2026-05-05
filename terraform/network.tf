@@ -32,7 +32,10 @@ resource "google_vpc_access_connector" "connector" {
     project_id = var.host_project_id
   }
 
-  depends_on = [google_project_service.apis["vpcaccess.googleapis.com"]]
+  depends_on = [
+    google_project_service.apis["vpcaccess.googleapis.com"],
+    time_sleep.iam_propagation,
+  ]
 }
 
 # NOTE: Private Services Access (for Cloud SQL private IP) must be configured

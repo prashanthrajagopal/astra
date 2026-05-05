@@ -9,11 +9,24 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
+    }
   }
 }
 
 provider "google" {
   project = var.project_id
+  region  = var.region
+}
+
+# Alias for managing resources in the Shared VPC host project.
+# The identity running terraform apply must have compute.xpnAdmin
+# (or equivalent) on the host project.
+provider "google" {
+  alias   = "host"
+  project = var.host_project_id
   region  = var.region
 }
 
